@@ -1,0 +1,9 @@
+#!/bin/bash
+# Monthly FULL SiteLink pull for the Cinch Portal (all 13 reports → Supabase).
+# Installed as a launchd job (com.cinch.portal.monthlypull.plist) that runs on the 2nd of each month.
+# Run by hand any time with:  bash scripts/monthly-pull.sh
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"   # homebrew (Apple Silicon / Intel)
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"                   # nvm, if used
+cd "$HOME/Documents/Claude/Projects/Cinch Portal/sitelink-backend" || exit 1
+mkdir -p logs
+{ echo "=== $(date) — full pull (all reports) ==="; npm run pull; echo; } >> logs/monthly-pull.log 2>&1
