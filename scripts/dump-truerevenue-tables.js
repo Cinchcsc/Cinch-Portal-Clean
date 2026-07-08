@@ -36,8 +36,15 @@ console.log(`extractRows() currently returns ${rows.length} rows for ${siteCode}
 console.log(`Sample row:`, rows[0] || '(none)');
 const truePeriodSum = rows.reduce((a, r) => a + (Number(r.TruePeriod) || 0), 0);
 const adjSum = rows.reduce((a, r) => a + (Number(r.ThisPeriodAdjustments) || 0), 0);
+// ADDED 8 Jul 2026 (Michael: "tax adjustments is 0 fix it") — reportMap.js's true_revenue.parse()
+// was reading the wrong column name for this field ('Tax1AdjustmentsThisPeriod' vs the real
+// 'ThisPeriodTax1Adjustments', fixed same day) — this line sums the REAL column directly so a single
+// run of this script proves whether that fix is producing a genuinely non-zero total for this site/
+// month, instead of needing to eyeball the live page or a 790-row sample.
+const taxAdjSum = rows.reduce((a, r) => a + (Number(r.ThisPeriodTax1Adjustments) || 0), 0);
 console.log(`\nRaw TruePeriod sum across all ${rows.length} rows: ${truePeriodSum.toFixed(2)}`);
 console.log(`Raw ThisPeriodAdjustments sum: ${adjSum.toFixed(2)}`);
+console.log(`Raw ThisPeriodTax1Adjustments sum ("Tax Adj" column): ${taxAdjSum.toFixed(2)}`);
 console.log(`TruePeriod - Adjustments (this is the Real Rate numerator before dividing by area): ${(truePeriodSum - adjSum).toFixed(2)}`);
 if (rows.length === 0) console.log('\n0 rows back from SiteLink for this site/month — that alone would explain a 0 or near-0 Real Rate, no parsing bug needed. Worth checking directly in the legacy SiteLink UI whether this site genuinely has no True Revenue data for this month.');
 console.log('');
@@ -69,8 +76,17 @@ for (const t of tables) {
   console.log(`${t.name} (${t.count} rows) — keys: ${t.sampleKeys.join(', ')}`);
 }
 if (tables.length > 1) {
-  console.log('\n>1 table found — this is almost certainly the doubling bug. Compare row counts/keys above');
-  console.log('to see if one table is a per-(ChargeDesc,UnitType) detail table and another is a subtotal/');
-  console.log('summary table at a coarser grain (e.g. per-ChargeDesc only, or a single portfolio total row).');
+  // UPDATED 8 Jul 2026: this used to say ">1 table = almost certainly the doubling bug" — RULED OUT
+  // since (see check-truerevenue-freshness.js-era investigation): extractRows() picks the SINGLE
+  // LARGEST table only (`if (v.length > found.length) found = v`), confirmed above as rows.length
+  // matching that largest table's count exactly, every time — no concatenation across tables occurs.
+  // The actual ~2x doubling bug (found and fixed the same day) was in lib/buildPayload.js's
+  // mergeRowsAcrossMonths(), unrelated to this multi-table shape. The 2 smaller tables here are a
+  // genuine, still-unexplained curiosity (their contents/purpose are unknown) but are NOT currently
+  // read or summed anywhere, so they are not a live bug.
+  console.log(`\n${tables.length} tables found (${tables.map(t => t.count).join('/')} rows) — extractRows() only`);
+  console.log('ever keeps the largest one (confirmed: rows.length above matches it exactly), so the smaller');
+  console.log('tables are silently unused, not double-counted. Their contents are still unidentified but');
+  console.log('this is NOT the ~2x doubling bug (that was mergeRowsAcrossMonths(), already fixed).');
 }
 process.exit(0);
