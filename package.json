@@ -59,6 +59,7 @@
     "check:debtor-auction-exclusion": "node --env-file=.env scripts/check-debtor-auction-exclusion.js",
     "dump:managementsummary-tables": "node --env-file=.env scripts/dump-managementsummary-tables.js",
     "dump:truerevenue-tables": "node --env-file=.env scripts/dump-truerevenue-tables.js",
+    "dump:financial-vs-moveins": "node --env-file=.env scripts/dump-financial-vs-moveins.js",
     "check:month-site-coverage": "node --env-file=.env scripts/check-month-site-coverage.js",
     "check:truerevenue-duplicates": "node --env-file=.env scripts/check-truerevenue-duplicates.js",
     "check:occupancy-totalunits": "node --env-file=.env scripts/check-occupancy-totalunits.js",
