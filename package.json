@@ -76,7 +76,8 @@
     "probe:site-anomaly": "node --env-file=.env scripts/probe-site-anomaly.js",
     "check:rates-enquiries-state": "node --env-file=.env scripts/check-rates-enquiries-state.js",
     "check:range-vs-payload": "node --env-file=.env scripts/check-range-vs-payload.js",
-    "verify:realrate-truerev-fix": "node --env-file=.env scripts/verify-realrate-truerev-fix.js"
+    "verify:realrate-truerev-fix": "node --env-file=.env scripts/verify-realrate-truerev-fix.js",
+    "check:truerevenue-freshness": "node --env-file=.env scripts/check-truerevenue-freshness.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
