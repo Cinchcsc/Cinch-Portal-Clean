@@ -1516,13 +1516,18 @@ export default function PortalV2Page() {
         ['Indoor Self Storage', 45803, 9161, 622, -7916, 37428, -36131, 2695, 416, 41395], ['Drive Up', 9309, 1862, 256, -1349, 6898, -6563, 1281, 0, 7693],
         ['Enterprise', 6097, 1219, -1219, -5352, 5375, 0, 0, 0, 6120], ['Office', 5650, 1130, 0, -1130, 5078, -1889, 0, 0, 2461], ['Mailbox', 62, 12, 0, -12, 24, -30, 0, 0, 69],
       ].map((r) => ({ desc: r[0], invoiced: r[1] * f, taxInvoiced: r[2] * f, taxAdj: r[3] * f, netTax: r[4] * f, deferred: r[5] * f, deferredPrev: r[6] * f, adj: r[7] * f, adjPrev: r[8] * f, truePeriod: r[9] * f }));
-      // Coloring: legacy portal's True Revenue table shows every money column in red/green/black
-      // (Michael's screenshot) — verified the rule is sign-based per cell (negative=red, positive=green,
-      // zero=black), not a fixed color per column, so `color: 'delta'` is applied to all 9 money columns.
+      // Coloring REMOVED 8 Jul 2026 (Michael: "change all the values in the tables to grey/black but
+      // keep the color on the changes at the bottom") — the sign-based red/green rule this used to be
+      // (added 3 Jul 2026, "verified against Michael's screenshot") turned out to not match legacy at
+      // all: legacy's per-cell color tracks something else entirely (not the value's own sign — most
+      // of these values are positive but legacy still shows a mix of red/green), and rather than guess
+      // legacy's real per-column rule, Michael opted to drop per-value coloring entirely here. Every
+      // cell now renders in the same plain grey/black as any other table. The totals-row "vs last
+      // month" chips (DataTable's totalsPrev handling) are untouched — that color is intentionally kept.
       const revCols = [
-        { key: 'desc', label: 'Description', type: 'text' }, { key: 'invoiced', label: 'Invoiced', type: 'money', align: 'right', color: 'delta' }, { key: 'taxInvoiced', label: 'Tax Invoiced', type: 'money', align: 'right', color: 'delta' },
-        { key: 'taxAdj', label: 'Tax Adj', type: 'money', align: 'right', color: 'delta' }, { key: 'netTax', label: 'Net Tax', type: 'money', align: 'right', color: 'delta' }, { key: 'deferred', label: 'Deferred Rev', type: 'money', align: 'right', color: 'delta' },
-        { key: 'deferredPrev', label: 'Deferred Prev', type: 'money', align: 'right', color: 'delta' }, { key: 'adj', label: 'Adjustments', type: 'money', align: 'right', color: 'delta' }, { key: 'adjPrev', label: 'Adj Prev', type: 'money', align: 'right', color: 'delta' }, { key: 'truePeriod', label: 'True Period', type: 'money', align: 'right', color: 'delta' },
+        { key: 'desc', label: 'Description', type: 'text' }, { key: 'invoiced', label: 'Invoiced', type: 'money', align: 'right' }, { key: 'taxInvoiced', label: 'Tax Invoiced', type: 'money', align: 'right' },
+        { key: 'taxAdj', label: 'Tax Adj', type: 'money', align: 'right' }, { key: 'netTax', label: 'Net Tax', type: 'money', align: 'right' }, { key: 'deferred', label: 'Deferred Rev', type: 'money', align: 'right' },
+        { key: 'deferredPrev', label: 'Deferred Prev', type: 'money', align: 'right' }, { key: 'adj', label: 'Adjustments', type: 'money', align: 'right' }, { key: 'adjPrev', label: 'Adj Prev', type: 'money', align: 'right' }, { key: 'truePeriod', label: 'True Period', type: 'money', align: 'right' },
       ];
       if (!finT || !finT.trueRevenueByDesc?.length) console.warn('[portal-v2] True Revenue tables rendering with mock data (no live true_revenue data yet — run npm run pull after adding true_revenue to the pipeline).');
       // Totals rows (legacy parity: both True Revenue tables end with a totals row — the legacy
