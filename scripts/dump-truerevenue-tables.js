@@ -24,6 +24,7 @@
 // sites this month, rather than a table-multiplicity bug. Month now defaults to the CURRENT month
 // (was hardcoded to June 2026) so this can actually check the month where the gap shows up.
 import { callCustomReport, extractRows } from '../lib/sitelink.js';
+import { REPORTS } from '../lib/reportMap.js';
 
 const siteCode = process.argv[2] || 'L012';
 const monthArg = process.argv[3]; // optional YYYY-MM, defaults to current month
@@ -47,6 +48,24 @@ console.log(`Raw ThisPeriodAdjustments sum: ${adjSum.toFixed(2)}`);
 console.log(`Raw ThisPeriodTax1Adjustments sum ("Tax Adj" column): ${taxAdjSum.toFixed(2)}`);
 console.log(`TruePeriod - Adjustments (this is the Real Rate numerator before dividing by area): ${(truePeriodSum - adjSum).toFixed(2)}`);
 if (rows.length === 0) console.log('\n0 rows back from SiteLink for this site/month — that alone would explain a 0 or near-0 Real Rate, no parsing bug needed. Worth checking directly in the legacy SiteLink UI whether this site genuinely has no True Revenue data for this month.');
+console.log('');
+
+// ADDED 8 Jul 2026 (Michael: "the color changed but its still 0" -- taxAdj still reading 0 on the
+// live page even after the taxInvoiced-minus-netTax derivation fix and a full rebuild+restart).
+// Runs the REAL, same-as-production parser (not a hand-rolled sum like taxAdjSum above) so this
+// shows exactly what the live page is computing right now for this site/month, taxInvoiced/netTax/
+// taxAdj per ChargeDesc row plus the portfolio-style total -- proves whether taxAdj is genuinely
+// zero everywhere (a real data characteristic for this site) or the derivation isn't producing what
+// it should (a real remaining bug).
+const parsed = REPORTS.true_revenue.parse(rows);
+console.log(`=== REPORTS.true_revenue.parse() output for ${siteCode}, by ChargeDesc (same function production uses) ===`);
+for (const r of parsed.by_desc) {
+  console.log(`  ${r.desc.padEnd(28)} taxInvoiced=${r.taxInvoiced.toFixed(2).padStart(10)}  netTax=${r.netTax.toFixed(2).padStart(10)}  taxAdj=${r.taxAdj.toFixed(2).padStart(10)}`);
+}
+const taxAdjParsedSum = parsed.by_desc.reduce((a, r) => a + r.taxAdj, 0);
+const taxInvoicedSum = parsed.by_desc.reduce((a, r) => a + r.taxInvoiced, 0);
+const netTaxSum = parsed.by_desc.reduce((a, r) => a + r.netTax, 0);
+console.log(`\n${siteCode} totals via the real parser — taxInvoiced=${taxInvoicedSum.toFixed(2)}  netTax=${netTaxSum.toFixed(2)}  taxAdj=${taxAdjParsedSum.toFixed(2)} (should equal taxInvoiced-netTax: ${(taxInvoicedSum - netTaxSum).toFixed(2)})`);
 console.log('');
 
 // Find the diffgram, then list EVERY table found inside it (name + row count + first row's keys),
