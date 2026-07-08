@@ -4,27 +4,42 @@
 // category). Both move_ins_outs and financial are pulled with the IDENTICAL month-to-date date range
 // (lib/pull.js's endOf() caps every report at "now"), so a simple numerator/denominator month-scope
 // mismatch is ruled out by inspection.
-// UPDATE 8 Jul 2026, first live run (L001): the multi-table / wrong-POS-source hypotheses below are
-// now RULED OUT — extractRows() correctly picks the 63-row Charge table (the real detail table), and
-// Charge-filtered-by-category='POS' (£100.00) matches the dedicated POSCharges subtotal table's own
-// total (£100.00) exactly. Numerator is NOT the problem, at least not for L001. New leading hypothesis,
-// found by reading buildPayload.js directly: the Ancillaries page's `moveIns` denominator is NOT
-// sourced from MoveInsAndMoveOuts (move_ins_outs.parse(), used below only for comparison) — it's
-// `mg.move_ins`, read from ManagementSummary's own labelled UnitActivity row instead. Two totally
-// different reports/counting methods that had never been compared side by side for the same
-// site/period. This now pulls both and prints them together.
+// UPDATE 8 Jul 2026, second live run (L001): the moveIns-source-mismatch hypothesis is ALSO dead —
+// ManagementSummary and MoveInsAndMoveOuts agree exactly (5 move-ins both ways). Numerator confirmed
+// 2 independent ways, denominator confirmed 2 independent ways, all landing on the same £20.00/customer
+// for L001. That number is internally solid — the mystery is no longer "is our arithmetic wrong," it's
+// "why does a solid per-site number still roll up to an ~11x-too-high portfolio figure." Leading
+// hypothesis now: TIMING, not calculation. Today is the 8th of the month — "month-to-date" is only ~8
+// days of data, and a *ratio* of two small counts (a handful of move-ins, a handful of POS sales) is
+// naturally noisy/volatile early in the month in a way a raw count isn't. Legacy may be showing the
+// last COMPLETE month (June, ~30 days, much larger/stabler sample) for this specific ratio widget,
+// while ours (since the 7 Jul revert to always show real current-month partial data for flow metrics)
+// now shows the live partial month. Added optional monthArg so this can be re-run against a closed
+// month for direct comparison — same endOf() capping convention as reparse-report.js.
 // Read-only, no writes, no PII (site codes + counts/sums only, no tenant/charge descriptions beyond
 // the category code already used in production).
-// Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-financial-vs-moveins.js [siteCode]
+// Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-financial-vs-moveins.js [siteCode] [YYYY-MM]
+// Example: node --env-file=.env scripts/dump-financial-vs-moveins.js L001 2026-06   (last complete month)
 import { callReport, extractRows } from '../lib/sitelink.js';
 import { REPORTS } from '../lib/reportMap.js';
 
 const siteCode = process.argv[2] || 'L001';
+const monthArg = process.argv[3]; // optional YYYY-MM; defaults to current month-to-date
 const now = new Date();
-const start = new Date(now.getFullYear(), now.getMonth(), 1);
-const end = now; // month-to-date, matching lib/pull.js's endOf()
+let start, end;
+if (monthArg) {
+  const [y, m] = monthArg.split('-').map(Number);
+  start = new Date(y, m - 1, 1);
+  const fullMonthEnd = new Date(y, m, 0);
+  const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+  end = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
+} else {
+  start = new Date(now.getFullYear(), now.getMonth(), 1);
+  end = now; // month-to-date, matching lib/pull.js's endOf()
+}
+const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-console.log(`=== FinancialSummary vs MoveInsAndMoveOuts, ${siteCode}, ${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)} ===\n`);
+console.log(`=== FinancialSummary vs MoveInsAndMoveOuts, ${siteCode}, ${fmt(start)} to ${fmt(end)} ===\n`);
 
 const { rows: finRows, raw: finRaw } = await callReport('FinancialSummary', siteCode, start, end);
 console.log(`extractRows() returns ${finRows.length} FinancialSummary rows for ${siteCode}.`);
