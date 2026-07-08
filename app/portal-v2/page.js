@@ -178,12 +178,21 @@ function chip(delta, dir) {
 function deltaTick(cur, prev, kind) {
   if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return { delta: null, dir: null };
   const diff = cur - prev;
-  const eps = kind === 'money' || kind === 'moneyWhole' ? 0.005 : kind === 'count' ? 0.5 : 0.05;
+  const eps = kind === 'money' || kind === 'moneyWhole' ? 0.005 : kind === 'count' || kind === 'ft' ? 0.5 : 0.05;
   if (Math.abs(diff) < eps) return { delta: null, dir: null };
   const abs = Math.abs(diff);
-  const delta = kind === 'money' ? `£${abs.toFixed(2)}` : kind === 'moneyWhole' ? money(abs) : kind === 'count' ? intFmt(Math.round(abs)) : `${abs.toFixed(1)}%`;
+  // 'ft' ADDED 8 Jul 2026 alongside DataTable's totals-row deltas (see DELTA_KIND_FOR_TYPE below) —
+  // same whole-number rounding as 'count', suffixed to match formatCell's 'ft' column type.
+  const delta = kind === 'money' ? `£${abs.toFixed(2)}` : kind === 'moneyWhole' ? money(abs) : kind === 'count' ? intFmt(Math.round(abs)) : kind === 'ft' ? intFmt(Math.round(abs)) + ' ft²' : `${abs.toFixed(1)}%`;
   return { delta, dir: diff > 0 ? 'up' : 'down' };
 }
+
+// Maps a DataTable column's `type` to the `kind` deltaTick() expects — lets DataTable's totals-row
+// "vs last month" indicators (added 8 Jul 2026, Michael: "add an arrow up or down and the net change
+// by each total compared to last month at the bottom totals bar... across the dashboard and every
+// widget that it is appropriate for") format each column's delta the same way the column itself is
+// formatted, without every call site needing to know or repeat that mapping.
+const DELTA_KIND_FOR_TYPE = { money: 'moneyWhole', money2: 'money', int: 'count', ft: 'ft' };
 
 // Custom widget builder field catalog — every numeric column available on a live site record
 // (lib/buildPayload.js's recordFor()), grouped for the picker UI, plus a `mock` accessor so the
@@ -540,7 +549,7 @@ function thresholdColor(value) {
 // summed and rates/percentages are re-derived sum-then-divide by the CALLER (same rule as
 // computeTotals — never average per-site rates here). `totalsLabel` is the first-column label
 // ("Total" or "Average").
-function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel }) {
+function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev }) {
   // REMOVED 8 Jul 2026 (Michael: "remove the scroll bar and scrolling thing on the big widgets... it
   // makes navigating annoying") — this used to cap tall tables to a fixed ~pageSize-row viewport with
   // their own internal scrollbar (6 Jul 2026 change, replacing Prev/Next pagination). In practice that
@@ -590,11 +599,29 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
           {totals && (
             <tfoot>
               <tr>
-                {columns.map((c, ci) => (
-                  <td key={c.key} style={{ padding: '11px 18px', textAlign: c.align === 'right' ? 'right' : 'left', color: '#101828', fontWeight: 700, background: '#F9FAFB', borderTop: '2px solid #EAECF0', fontVariantNumeric: c.type && c.type !== 'text' ? 'tabular-nums' : undefined }}>
-                    {ci === 0 ? (totalsLabel || 'Total') : (totals[c.key] != null ? formatCell(c.type, totals[c.key]) : '')}
-                  </td>
-                ))}
+                {columns.map((c, ci) => {
+                  // "vs last month" totals-row indicator (8 Jul 2026, Michael: "add an arrow up or
+                  // down and the net change by each total compared to last month at the bottom
+                  // totals bar"). totalsPrev is optional and the SAME shape as totals (keyed by
+                  // column key) — absent/missing per-key whenever no single-month comparison is
+                  // available (multi-month range, earliest stored month, fetch failure), in which
+                  // case this silently renders no chip, same graceful-degradation rule the KPI stat
+                  // card arrows already follow.
+                  const curVal = totals[c.key];
+                  const prevVal = totalsPrev ? totalsPrev[c.key] : null;
+                  const { delta, dir } = (ci !== 0 && curVal != null && prevVal != null)
+                    ? deltaTick(curVal, prevVal, DELTA_KIND_FOR_TYPE[c.type])
+                    : { delta: null, dir: null };
+                  const { deltaStyle, deltaArrow } = chip(delta, dir);
+                  return (
+                    <td key={c.key} style={{ padding: '11px 18px', textAlign: c.align === 'right' ? 'right' : 'left', color: '#101828', fontWeight: 700, background: '#F9FAFB', borderTop: '2px solid #EAECF0', fontVariantNumeric: c.type && c.type !== 'text' ? 'tabular-nums' : undefined }}>
+                      {ci === 0 ? (totalsLabel || 'Total') : (curVal != null ? formatCell(c.type, curVal) : '')}
+                      {delta != null && (
+                        <div style={{ ...deltaStyle, justifyContent: c.align === 'right' ? 'flex-end' : 'flex-start' }}>{deltaArrow} {delta}</div>
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             </tfoot>
           )}
@@ -931,14 +958,23 @@ export default function PortalV2Page() {
         name: s.name, occupied: s.occ || 0, total: s.tot || 0, occPct: s.occPC || 0, claPct: s.areaPC || 0, rentRoll: s.rent || 0,
       })) : null;
       if (!liveOccRows) console.warn('[portal-v2] Portfolio Occupancy table rendering with mock RAW_STORES data (no live sites available).');
+      // "vs last month" totals-row deltas (8 Jul 2026) — computeTotals() on the SAME livePrevSites
+      // snapshot already fetched for the KPI card arrows (see fetchLiveRange's prevKey fetch), scoped
+      // by the same store filter. null whenever no single-month comparison is available (matches
+      // livePrevSites' own null cases: multi-month range, earliest stored month, fetch failure) — the
+      // totals row then simply shows no chip, same as an individual KPI card with no arrow.
+      const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
       // Totals row (legacy parity: the legacy portal's per-store tables all end with a portfolio
       // totals row). Sums for units/rent; occupancy %s re-derived sum-then-divide (t.occPC/t.claPC
       // from computeTotals on the live path — never an average of per-site %s).
       const occTotals = (liveOccRows && t)
         ? { occupied: t.occ ?? 0, total: t.tot ?? 0, occPct: t.occPC ?? 0, claPct: t.claPC ?? 0, rentRoll: t.rent ?? 0 }
         : { occupied: agg.occupied, total: agg.total, occPct: +occPct.toFixed(1), claPct: +claPct.toFixed(1), rentRoll: agg.rentRoll };
+      const occTotalsPrev = (liveOccRows && prevT)
+        ? { occupied: prevT.occ ?? 0, total: prevT.tot ?? 0, occPct: prevT.occPC ?? 0, claPct: prevT.claPC ?? 0, rentRoll: prevT.rent ?? 0 }
+        : null;
       out.tables = [{
-        title: 'Portfolio Occupancy', live: true, pageSize: 12, wide: true, totals: occTotals, totalsLabel: 'Total',
+        title: 'Portfolio Occupancy', live: true, pageSize: 12, wide: true, totals: occTotals, totalsPrev: occTotalsPrev, totalsLabel: 'Total',
         columns: liveOccRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' }, { key: 'total', label: 'Total', type: 'int', align: 'right' },
@@ -974,8 +1010,11 @@ export default function PortalV2Page() {
             const w = (k) => aSum ? R2(mockRateRows.reduce((a, r) => a + r[k] * r.area, 0) / aSum) : 0;
             return { selfRate: w('selfRate'), totalRate: w('totalRate'), realRate: w('realRate'), realTotal: w('realTotal'), area: aSum };
           })();
+      const rateTotalsPrev = (liveRateRows && prevT)
+        ? { selfRate: prevT.ssRate ?? 0, totalRate: prevT.rate ?? 0, realRate: prevT.ssReal ?? 0, realTotal: prevT.realRate ?? 0, area: prevT.occA ?? 0 }
+        : null;
       out.tables.push({
-        title: 'Rates per ft² (All Stores)', live: true, pageSize: 12, wide: true, totals: rateTotals, totalsLabel: 'Average',
+        title: 'Rates per ft² (All Stores)', live: true, pageSize: 12, wide: true, totals: rateTotals, totalsPrev: rateTotalsPrev, totalsLabel: 'Average',
         columns: liveRateRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' }, { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
@@ -1484,6 +1523,12 @@ export default function PortalV2Page() {
       };
       const revRows = finT?.trueRevenueByDesc?.length ? finT.trueRevenueByDesc : mockRev;
       const revTypeRows = finT?.trueRevenueByType?.length ? finT.trueRevenueByType : mockRevByType;
+      // "vs last month" totals-row deltas (8 Jul 2026) — same livePrevSites snapshot/pattern as the
+      // Dashboard tables above. No mock fallback here (unlike revRows/revTypeRows): if there's no real
+      // previous-month data, the totals row just shows no chip rather than a fabricated comparison.
+      const finTPrev = livePrevSites ? computeTotals(livePrevSites) : null;
+      const revRowsPrev = finTPrev?.trueRevenueByDesc?.length ? finTPrev.trueRevenueByDesc : null;
+      const revTypeRowsPrev = finTPrev?.trueRevenueByType?.length ? finTPrev.trueRevenueByType : null;
       out.tables = [
         // pageSize bumped 3 Jul 2026 (Michael: "many missing unit types on True Revenue") — rows
         // weren't actually missing, they were paginated (12/page on a ~50-row ChargeDesc table) and
@@ -1491,8 +1536,8 @@ export default function PortalV2Page() {
         // "DriveUp" / "Drive up" into separate rows (fixed in lib/reportMap.js's groupBy). Bumped
         // pageSize so the (now-deduped, ~10-14 row) Unit Types table fits on one page, and the
         // ChargeDesc table shows more before needing Next.
-        { title: 'True Revenue', live: true, pageSize: 25, wide: true, columns: revCols, rows: revRows, totals: revTotals(revRows), totalsLabel: 'Total' },
-        { title: 'True Revenue — Unit Types', live: true, pageSize: 20, wide: true, columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsLabel: 'Total' },
+        { title: 'True Revenue', live: true, pageSize: 25, wide: true, columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue — Unit Types', live: true, pageSize: 20, wide: true, columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
       ];
     }
 
@@ -2287,7 +2332,7 @@ export default function PortalV2Page() {
                 {tables.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     {tables.map((t, ti) => (
-                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} />
+                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} />
                     ))}
                   </div>
                 )}
