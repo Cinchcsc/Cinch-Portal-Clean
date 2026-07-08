@@ -541,15 +541,14 @@ function thresholdColor(value) {
 // computeTotals — never average per-site rates here). `totalsLabel` is the first-column label
 // ("Total" or "Average").
 function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel }) {
-  // Scrollbar instead of pagination (6 Jul 2026, Michael: "instead of having pages on the widgets
-  // that have lots of information, make it a scroll bar for that widget" — every row is in the DOM
-  // at once, capped to a fixed viewport height (~pageSize rows) with its own internal scrollbar, so
-  // the outer page just has ONE page-level scrollbar plus one inner scrollbar per tall widget,
-  // rather than Prev/Next click-through pagination). Header row is sticky so it stays visible while
-  // scrolling within the widget. Only kicks in when there are more rows than fit — short tables are
-  // unaffected (maxHeight simply never gets reached).
-  const ROW_H = 41; // approx rendered row height (padding 11px*2 + line height) — used to cap scroll viewport to ~pageSize rows
-  const needsScroll = rows.length > pageSize;
+  // REMOVED 8 Jul 2026 (Michael: "remove the scroll bar and scrolling thing on the big widgets... it
+  // makes navigating annoying") — this used to cap tall tables to a fixed ~pageSize-row viewport with
+  // their own internal scrollbar (6 Jul 2026 change, replacing Prev/Next pagination). In practice that
+  // meant scrolling within a small nested box to see the rest of a widget's rows, which is what made
+  // navigating a 29-store table annoying. Every row now renders inline at full height; the outer page
+  // scrolls as one normal page, no nested scroll areas.
+  const ROW_H = 41; // approx rendered row height (padding 11px*2 + line height) — unused now that nothing caps to it, kept in case a max-height cap is wanted again later
+  const needsScroll = false;
   return (
     <div style={{ background: '#fff', border: '1px solid #EAECF0', borderRadius: '16px', boxShadow: '0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: '1px solid #F2F4F7' }}>
