@@ -48,17 +48,31 @@ let diff = null;
     if (v && typeof v === 'object') find(v);
   }
 })(finRaw);
+// UPDATED 8 Jul 2026: sampleKeys (Object.keys(v[0].attributes || v[0])) came back as just diffgram
+// plumbing ('diffgr:id','msdata:rowOrder') for EVERY table including Charge — not useful, since
+// Charge's real fields only appear once extractRows() normalizes them (the "Sample row" print above).
+// Print full rows instead of guessing which key holds real data, so there's no ambiguity about what's
+// actually inside the smaller POSCharges/PaymentsGrouped/ChargeCards tables sitting next to Charge —
+// first run found exactly one of these (POSCharges) sitting right where you'd expect the *real*
+// merchandise source to live, separate from Charge-filtered-by-category (what the code uses today).
 const tables = [];
 (function walk(node, path) {
   if (!node || typeof node !== 'object') return;
   for (const [k, v] of Object.entries(node)) {
-    if (Array.isArray(v) && v.length && typeof v[0] === 'object') tables.push({ name: k, count: v.length, sampleKeys: Object.keys(v[0].attributes || v[0]) });
+    if (Array.isArray(v) && v.length && typeof v[0] === 'object') tables.push({ name: k, count: v.length, rows: v });
     else if (v && typeof v === 'object') walk(v, `${path}.${k}`);
   }
 })(diff || finRaw, 'root');
 console.log(`\nFound ${tables.length} row-array table(s) in the raw FinancialSummary response:`);
-for (const t of tables) console.log(`  ${t.name} (${t.count} rows) — keys: ${t.sampleKeys.join(', ')}`);
-if (tables.length > 1) console.log(`  extractRows() picked the largest (${finRows.length} rows) — if that's NOT the right one for this report, that's the bug.`);
+for (const t of tables) {
+  console.log(`  ${t.name} (${t.count} rows)`);
+  if (t.count <= 10) for (const r of t.rows) console.log(`    ${JSON.stringify(r)}`);
+  else console.log(`    sample: ${JSON.stringify(t.rows[0])}`);
+}
+if (tables.length > 1) {
+  const largest = tables.slice().sort((a, b) => b.count - a.count)[0];
+  console.log(`\n  extractRows() picked the largest ('${largest.name}', ${finRows.length} rows) — if that's NOT the right one for this report, that's the bug.`);
+}
 
 console.log('');
 const { rows: mioRows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
