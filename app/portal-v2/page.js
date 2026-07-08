@@ -526,17 +526,6 @@ function formatCell(type, value) {
     case 'money2': return '£' + Number(value).toFixed(2);
     case 'pct': return Number(value).toFixed(1) + '%';
     case 'ft': return intFmt(value) + ' ft²';
-    // Added 8 Jul 2026 (Michael: "the ticks that show the net changes with arrows and they're red or
-    // green" — for the Rates per ft² table specifically, as percent change vs last month rather than
-    // an absolute £ diff). Pairs with color:'delta' on the column def, which colors by the raw
-    // (unformatted) value's sign — this only formats the text/arrow.
-    case 'pctDelta': {
-      const n = Number(value);
-      if (!isFinite(n)) return '';
-      const arrow = n > 0 ? '↑ ' : n < 0 ? '↓ ' : '';
-      const sign = n > 0 ? '+' : '';
-      return arrow + sign + n.toFixed(1) + '%';
-    }
     default: return String(value);
   }
 }
@@ -971,36 +960,16 @@ export default function PortalV2Page() {
       // realTotal <- realRate. NOTE: the backend has no "region" field per site (region only
       // exists in the mock RAW_STORES data), so that column is dropped for live rows rather than
       // showing a fabricated value — a real region mapping would need to be added upstream first.
-      // Per-site "vs last month" % change (8 Jul 2026, Michael, confirmed via screenshot that THIS
-      // table — not the Dashboard KPI cards — is "the 29 pull one" he meant): uses livePrevSites, the
-      // same previous-month fetch that powers the KPI cards' delta ticks, matched by site code. A
-      // local prevT here rather than reusing kpiT/kpiPrevT below, since those aren't declared until
-      // later in this same function.
-      const prevByCode = livePrevSites ? Object.fromEntries(livePrevSites.map((s) => [s.code, s])) : {};
-      const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
-      const pctChange = (cur, prev) => (prev == null || !prev) ? null : R2((cur - prev) / prev * 100);
-      const liveRateRows = liveSites ? liveSites.map((s) => {
-        const p = prevByCode[s.code];
-        return {
-          name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
-          selfRateD: p ? pctChange(s.ssRate || 0, p.ssRate) : null,
-          totalRateD: p ? pctChange(s.rate || 0, p.rate) : null,
-          realRateD: p ? pctChange(s.ssReal || 0, p.ssReal) : null,
-          realTotalD: p ? pctChange(s.realRate || 0, p.realRate) : null,
-        };
-      }) : null;
+      const liveRateRows = liveSites ? liveSites.map((s) => ({
+        name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
+      })) : null;
       const mockRateRows = fs.map((s) => ({ name: s.name, region: s.region, selfRate: s.rate, totalRate: +(s.rate * 0.957).toFixed(2), realRate: +(s.rate * 0.925).toFixed(2), realTotal: +(s.rate * 0.89).toFixed(2), area: s.area }));
       if (!liveRateRows) console.warn('[portal-v2] Rates per ft² table rendering with mock RAW_STORES data (no live sites available).');
       // Average row (legacy parity: the legacy Rate/Real Rate tables end with a portfolio average
       // row). Live path reuses computeTotals' weighted rates (Σ rent ÷ Σ area × 12 — never a mean
       // of per-site rates); mock path weights each mock rate by that store's occupied area.
       const rateTotals = (liveRateRows && t)
-        ? { selfRate: t.ssRate ?? 0, totalRate: t.rate ?? 0, realRate: t.ssReal ?? 0, realTotal: t.realRate ?? 0, area: t.occA ?? 0,
-            selfRateD: prevT ? pctChange(t.ssRate ?? 0, prevT.ssRate) : null,
-            totalRateD: prevT ? pctChange(t.rate ?? 0, prevT.rate) : null,
-            realRateD: prevT ? pctChange(t.ssReal ?? 0, prevT.ssReal) : null,
-            realTotalD: prevT ? pctChange(t.realRate ?? 0, prevT.realRate) : null,
-          }
+        ? { selfRate: t.ssRate ?? 0, totalRate: t.rate ?? 0, realRate: t.ssReal ?? 0, realTotal: t.realRate ?? 0, area: t.occA ?? 0 }
         : (() => {
             const aSum = mockRateRows.reduce((a, r) => a + r.area, 0);
             const w = (k) => aSum ? R2(mockRateRows.reduce((a, r) => a + r[k] * r.area, 0) / aSum) : 0;
@@ -1010,14 +979,8 @@ export default function PortalV2Page() {
         title: 'Rates per ft² (All Stores)', live: true, pageSize: 12, wide: true, totals: rateTotals, totalsLabel: 'Average',
         columns: liveRateRows ? [
           { key: 'name', label: 'Location', type: 'text' },
-          { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' },
-          { key: 'selfRateD', label: 'Δ SS Rate', type: 'pctDelta', align: 'right', color: 'delta' },
-          { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
-          { key: 'totalRateD', label: 'Δ Total Rate', type: 'pctDelta', align: 'right', color: 'delta' },
-          { key: 'realRate', label: 'Self Storage Real Rate', type: 'money2', align: 'right' },
-          { key: 'realRateD', label: 'Δ SS Real Rate', type: 'pctDelta', align: 'right', color: 'delta' },
-          { key: 'realTotal', label: 'Total Real Rate', type: 'money2', align: 'right' },
-          { key: 'realTotalD', label: 'Δ Total Real Rate', type: 'pctDelta', align: 'right', color: 'delta' },
+          { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' }, { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
+          { key: 'realRate', label: 'Self Storage Real Rate', type: 'money2', align: 'right' }, { key: 'realTotal', label: 'Total Real Rate', type: 'money2', align: 'right' },
           { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' },
         ] : [
           { key: 'name', label: 'Location', type: 'text' }, { key: 'region', label: 'Region', type: 'text' },
