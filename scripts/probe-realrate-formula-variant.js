@@ -79,6 +79,11 @@ for (const code of Object.keys(TARGETS)) {
     if (tSSReal) { errA_ss.push(Math.abs((aSS - tSSReal) / tSSReal * 100)); errB_ss.push(Math.abs((bSS - tSSReal) / tSSReal * 100)); }
 
     console.log(`${code}  SS: A=£${aSS} (${diffPct(aSS, tSSReal)})  B=£${bSS} (${diffPct(bSS, tSSReal)})  tgt £${tSSReal}   |   Total: A=£${aTotal} (${diffPct(aTotal, tTotalReal)})  B=£${bTotal} (${diffPct(bTotal, tTotalReal)})  tgt £${tTotalReal}`);
+    // Raw components too (8 Jul 2026) — a big miss on EITHER formula could be the area denominator
+    // being wrong for that specific site, not the adjustments question at all. Printing these means
+    // one run tells us which component (area vs revenue) is the actual problem for the worst sites,
+    // instead of needing a follow-up round-trip.
+    console.log(`      raw: totalArea=${totalArea.toFixed(0)}ft² ssTotalArea=${ssTotalArea.toFixed(0)}ft²  tpTotal=£${tpTotal.toFixed(2)} adjTotal=£${adjTotal.toFixed(2)}  tpSS=£${tpSS.toFixed(2)} adjSS=£${adjSS.toFixed(2)}  (${rrRows.length} RentRoll rows, ${trRawRows.length} True Revenue rows)`);
   } catch (e) {
     console.log(`${code}  FAILED — ${e.message}`);
   }
