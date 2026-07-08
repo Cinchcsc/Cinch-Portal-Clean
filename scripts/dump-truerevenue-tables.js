@@ -12,16 +12,34 @@
 // their own subtotals together, roughly doubling every figure. This script dumps the RAW (untouched
 // by extractRows) response's table structure, same technique as dump-managementsummary-tables.js, to
 // confirm or rule this out before writing a fix.
-// Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-truerevenue-tables.js [siteCode]
+// Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-truerevenue-tables.js [siteCode] [YYYY-MM]
 // Example: node --env-file=.env scripts/dump-truerevenue-tables.js L012
+// Example: node --env-file=.env scripts/dump-truerevenue-tables.js L008 2026-07
+//
+// UPDATED 8 Jul 2026 (Michael: several sites' Real Rate landing 40-87% BELOW legacy after the
+// True-Revenue-based formula fix — Enfield/L008, Exeter/L027, Swindon/L022, Wisbech/L023 worst so
+// far). That's the opposite direction from the ~2.14x INFLATION this script was originally written
+// to chase (multiple SOAP tables silently summed together) — so also now prints the raw TruePeriod
+// sum, to check the simpler explanation first: SiteLink returning fewer/zero rows for these specific
+// sites this month, rather than a table-multiplicity bug. Month now defaults to the CURRENT month
+// (was hardcoded to June 2026) so this can actually check the month where the gap shows up.
 import { callCustomReport, extractRows } from '../lib/sitelink.js';
 
 const siteCode = process.argv[2] || 'L012';
-const start = new Date(2026, 5, 1), end = new Date(2026, 5, 30); // June 2026, a closed month
+const monthArg = process.argv[3]; // optional YYYY-MM, defaults to current month
+let y, m;
+if (monthArg) { [y, m] = monthArg.split('-').map(Number); } else { const n = new Date(); y = n.getFullYear(); m = n.getMonth() + 1; }
+const start = new Date(y, m - 1, 1), end = new Date(y, m, 0);
 const { rows, raw: result } = await callCustomReport(781861, siteCode, start, end);
 
-console.log(`extractRows() currently returns ${rows.length} rows for ${siteCode}, June 2026.`);
+console.log(`extractRows() currently returns ${rows.length} rows for ${siteCode}, ${y}-${String(m).padStart(2, '0')}.`);
 console.log(`Sample row:`, rows[0] || '(none)');
+const truePeriodSum = rows.reduce((a, r) => a + (Number(r.TruePeriod) || 0), 0);
+const adjSum = rows.reduce((a, r) => a + (Number(r.ThisPeriodAdjustments) || 0), 0);
+console.log(`\nRaw TruePeriod sum across all ${rows.length} rows: ${truePeriodSum.toFixed(2)}`);
+console.log(`Raw ThisPeriodAdjustments sum: ${adjSum.toFixed(2)}`);
+console.log(`TruePeriod - Adjustments (this is the Real Rate numerator before dividing by area): ${(truePeriodSum - adjSum).toFixed(2)}`);
+if (rows.length === 0) console.log('\n0 rows back from SiteLink for this site/month — that alone would explain a 0 or near-0 Real Rate, no parsing bug needed. Worth checking directly in the legacy SiteLink UI whether this site genuinely has no True Revenue data for this month.');
 console.log('');
 
 // Find the diffgram, then list EVERY table found inside it (name + row count + first row's keys),

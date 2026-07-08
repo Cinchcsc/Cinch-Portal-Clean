@@ -526,6 +526,17 @@ function formatCell(type, value) {
     case 'money2': return '£' + Number(value).toFixed(2);
     case 'pct': return Number(value).toFixed(1) + '%';
     case 'ft': return intFmt(value) + ' ft²';
+    // Added 8 Jul 2026 (Michael: "the ticks that show the net changes with arrows and they're red or
+    // green" — for the Rates per ft² table specifically, as percent change vs last month rather than
+    // an absolute £ diff). Pairs with color:'delta' on the column def, which colors by the raw
+    // (unformatted) value's sign — this only formats the text/arrow.
+    case 'pctDelta': {
+      const n = Number(value);
+      if (!isFinite(n)) return '';
+      const arrow = n > 0 ? '↑ ' : n < 0 ? '↓ ' : '';
+      const sign = n > 0 ? '+' : '';
+      return arrow + sign + n.toFixed(1) + '%';
+    }
     default: return String(value);
   }
 }
@@ -678,19 +689,21 @@ export default function PortalV2Page() {
   // liveSitesRaw to it, so every widget on every page switches to that month/range. Deliberately
   // does NOT touch liveMonthly/liveMonths/liveHistory — those stay as the full unscoped history so
   // Month-on-Month and the selector's own dropdown options are unaffected by what's currently picked.
-  const fetchLiveRange = (fromKey, toKey) => {
+  const fetchLiveRange = (fromKey, toKey, onSettled) => {
     fetch(`/api/portfolio?from=${fromKey}&to=${toKey}`)
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured || !data.totals) {
           console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
+          onSettled && onSettled();
           return;
         }
         setLiveTotals(data.totals);
         setLiveSitesRaw(Array.isArray(data.sites) ? data.sites : null);
         setViewLive(fromKey === toKey && toKey === (liveMonths && liveMonths[liveMonths.length - 1]));
+        onSettled && onSettled();
       })
-      .catch((err) => console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err));
+      .catch((err) => { console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err); onSettled && onSettled(); });
 
     // "vs last month" delta ticks (8 Jul 2026, Michael: "put the ticks that show the net changes with
     // arrows... on the 29 pull one") — only meaningful for a single selected month, compared against
@@ -713,7 +726,7 @@ export default function PortalV2Page() {
     }
   };
 
-  const fetchLiveTotals = () => {
+  const fetchLiveTotals = (onInitialSettled) => {
     fetch('/api/portfolio')
       .then((res) => res.json())
       .then((data) => {
@@ -724,6 +737,7 @@ export default function PortalV2Page() {
           setLiveMonthly(null);
           setLiveMonths(null);
           setLiveHistory(null);
+          onInitialSettled && onInitialSettled();
           return;
         }
         // FIXED 8 Jul 2026 (Michael: "remove the first pull that does 27 sites, it's annoying"): this
@@ -753,12 +767,14 @@ export default function PortalV2Page() {
             const latestKey = months[months.length - 1];
             const latestIdx = indexOfMonthKey(latestKey);
             setMonthFrom(latestIdx); setMonthTo(latestIdx);
-            fetchLiveRange(latestKey, latestKey);
+            fetchLiveRange(latestKey, latestKey, onInitialSettled);
           } else {
             // A specific month/range is already selected (or was on a previous load) — re-fetch it
             // instead of silently falling back to whatever the unscoped default just returned.
-            fetchLiveRange(monthKeyOf(monthFrom), monthKeyOf(monthTo));
+            fetchLiveRange(monthKeyOf(monthFrom), monthKeyOf(monthTo), onInitialSettled);
           }
+        } else {
+          onInitialSettled && onInitialSettled();
         }
       })
       .catch((err) => {
@@ -768,6 +784,7 @@ export default function PortalV2Page() {
         setLiveMonthly(null);
         setLiveMonths(null);
         setLiveHistory(null);
+        onInitialSettled && onInitialSettled();
       });
   };
 
@@ -782,10 +799,20 @@ export default function PortalV2Page() {
   };
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 700);
+    // FIXED 8 Jul 2026 (Michael: "still that annoying fake pull from the 27 sites" — after the earlier
+    // fix removed the STALE-real-27-site flash, a NEW 27-site flash appeared in its place). Root cause:
+    // RAW_STORES (the mock fallback data above) hardcodes exactly 27 stores. liveSitesRaw now stays
+    // null until the real fetch chain resolves, but this skeleton used to hide on a FIXED 700ms timer —
+    // shorter than the actual chain (unscoped /api/portfolio for month metadata, THEN a second ranged
+    // fetch for the real numbers, sequential, over a real network). Once the skeleton cleared before
+    // that chain finished, every "kpiT ? live : mock" fallback rendered the 27-store mock data —
+    // visually identical to the old bug even though the mechanism is completely different. Fix: hide
+    // the skeleton when the real fetch chain actually finishes; this timer is now only a safety net so
+    // the skeleton can't get stuck forever if a fetch hangs.
+    const safety = setTimeout(() => setLoading(false), 4000);
     if (!initialFetchStarted.current) {
       initialFetchStarted.current = true;
-      fetchLiveTotals();
+      fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
     }
     const onDocClick = (e) => {
       if (storePopOpen || periodPopOpen) {
@@ -797,7 +824,7 @@ export default function PortalV2Page() {
     };
     document.addEventListener('click', onDocClick, true);
     return () => {
-      clearTimeout(t);
+      clearTimeout(safety);
       document.removeEventListener('click', onDocClick, true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -944,16 +971,36 @@ export default function PortalV2Page() {
       // realTotal <- realRate. NOTE: the backend has no "region" field per site (region only
       // exists in the mock RAW_STORES data), so that column is dropped for live rows rather than
       // showing a fabricated value — a real region mapping would need to be added upstream first.
-      const liveRateRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
-      })) : null;
+      // Per-site "vs last month" % change (8 Jul 2026, Michael, confirmed via screenshot that THIS
+      // table — not the Dashboard KPI cards — is "the 29 pull one" he meant): uses livePrevSites, the
+      // same previous-month fetch that powers the KPI cards' delta ticks, matched by site code. A
+      // local prevT here rather than reusing kpiT/kpiPrevT below, since those aren't declared until
+      // later in this same function.
+      const prevByCode = livePrevSites ? Object.fromEntries(livePrevSites.map((s) => [s.code, s])) : {};
+      const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
+      const pctChange = (cur, prev) => (prev == null || !prev) ? null : R2((cur - prev) / prev * 100);
+      const liveRateRows = liveSites ? liveSites.map((s) => {
+        const p = prevByCode[s.code];
+        return {
+          name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
+          selfRateD: p ? pctChange(s.ssRate || 0, p.ssRate) : null,
+          totalRateD: p ? pctChange(s.rate || 0, p.rate) : null,
+          realRateD: p ? pctChange(s.ssReal || 0, p.ssReal) : null,
+          realTotalD: p ? pctChange(s.realRate || 0, p.realRate) : null,
+        };
+      }) : null;
       const mockRateRows = fs.map((s) => ({ name: s.name, region: s.region, selfRate: s.rate, totalRate: +(s.rate * 0.957).toFixed(2), realRate: +(s.rate * 0.925).toFixed(2), realTotal: +(s.rate * 0.89).toFixed(2), area: s.area }));
       if (!liveRateRows) console.warn('[portal-v2] Rates per ft² table rendering with mock RAW_STORES data (no live sites available).');
       // Average row (legacy parity: the legacy Rate/Real Rate tables end with a portfolio average
       // row). Live path reuses computeTotals' weighted rates (Σ rent ÷ Σ area × 12 — never a mean
       // of per-site rates); mock path weights each mock rate by that store's occupied area.
       const rateTotals = (liveRateRows && t)
-        ? { selfRate: t.ssRate ?? 0, totalRate: t.rate ?? 0, realRate: t.ssReal ?? 0, realTotal: t.realRate ?? 0, area: t.occA ?? 0 }
+        ? { selfRate: t.ssRate ?? 0, totalRate: t.rate ?? 0, realRate: t.ssReal ?? 0, realTotal: t.realRate ?? 0, area: t.occA ?? 0,
+            selfRateD: prevT ? pctChange(t.ssRate ?? 0, prevT.ssRate) : null,
+            totalRateD: prevT ? pctChange(t.rate ?? 0, prevT.rate) : null,
+            realRateD: prevT ? pctChange(t.ssReal ?? 0, prevT.ssReal) : null,
+            realTotalD: prevT ? pctChange(t.realRate ?? 0, prevT.realRate) : null,
+          }
         : (() => {
             const aSum = mockRateRows.reduce((a, r) => a + r.area, 0);
             const w = (k) => aSum ? R2(mockRateRows.reduce((a, r) => a + r[k] * r.area, 0) / aSum) : 0;
@@ -963,8 +1010,14 @@ export default function PortalV2Page() {
         title: 'Rates per ft² (All Stores)', live: true, pageSize: 12, wide: true, totals: rateTotals, totalsLabel: 'Average',
         columns: liveRateRows ? [
           { key: 'name', label: 'Location', type: 'text' },
-          { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' }, { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
-          { key: 'realRate', label: 'Self Storage Real Rate', type: 'money2', align: 'right' }, { key: 'realTotal', label: 'Total Real Rate', type: 'money2', align: 'right' },
+          { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' },
+          { key: 'selfRateD', label: 'Δ SS Rate', type: 'pctDelta', align: 'right', color: 'delta' },
+          { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
+          { key: 'totalRateD', label: 'Δ Total Rate', type: 'pctDelta', align: 'right', color: 'delta' },
+          { key: 'realRate', label: 'Self Storage Real Rate', type: 'money2', align: 'right' },
+          { key: 'realRateD', label: 'Δ SS Real Rate', type: 'pctDelta', align: 'right', color: 'delta' },
+          { key: 'realTotal', label: 'Total Real Rate', type: 'money2', align: 'right' },
+          { key: 'realTotalD', label: 'Δ Total Real Rate', type: 'pctDelta', align: 'right', color: 'delta' },
           { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' },
         ] : [
           { key: 'name', label: 'Location', type: 'text' }, { key: 'region', label: 'Region', type: 'text' },

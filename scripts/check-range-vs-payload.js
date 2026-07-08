@@ -50,9 +50,27 @@ console.log(`Enquiries via buildPayloadRange: phone=${eB.phone} walkin=${eB.walk
 
 console.log(`\ntotals.rate      — buildPayload: ${viaPull.totals.rate}    buildPayloadRange: ${viaRange.totals.rate}`);
 console.log(`totals.realRate  — buildPayload: ${viaPull.totals.realRate}    buildPayloadRange: ${viaRange.totals.realRate}`);
+console.log(`totals.ssReal    — buildPayload: ${viaPull.totals.ssReal}    buildPayloadRange: ${viaRange.totals.ssReal}`);
 
 const byCodeA = Object.fromEntries(viaPull.sites.map((s) => [s.code, s]));
 const byCodeB = Object.fromEntries(viaRange.sites.map((s) => [s.code, s]));
+
+// 8 Jul 2026 (Michael: "reloaded the portal, real rate is still 0s") — per-site realRate/ssReal
+// comparison, added after the portfolio-level check above wasn't enough to tell whether the "0s" is
+// a real buildPayloadRange()/mergeSiteAcrossRange() bug or a stale browser/dev-server bundle.
+console.log('\nPer-site realRate/ssReal, buildPayload vs buildPayloadRange (shared sites only):');
+let realRateMismatches = 0, zerosInRange = 0;
+for (const code of [...codesA].filter((c) => codesB.has(c))) {
+  const a = byCodeA[code], b = byCodeB[code];
+  const aReal = a.realRate || 0, bReal = b.realRate || 0, aSS = (a.ss && a.ss.real) || 0, bSS = (b.ss && b.ss.real) || 0;
+  if (bReal === 0 || bSS === 0) zerosInRange++;
+  if (aReal !== bReal || aSS !== bSS) {
+    console.log(`  ${code} (${a.name}): buildPayload realRate=${aReal} ssReal=${aSS}   buildPayloadRange realRate=${bReal} ssReal=${bSS}`);
+    realRateMismatches++;
+  }
+}
+if (!realRateMismatches) console.log('  (none — every shared site matches exactly between buildPayload and buildPayloadRange)');
+console.log(`\nSites where buildPayloadRange's realRate or ssReal is exactly 0: ${zerosInRange} of ${codesB.size}`);
 console.log('\nPer-site enquiries.total mismatches (shared sites only, buildPayload vs buildPayloadRange):');
 let mismatches = 0;
 for (const code of [...codesA].filter((c) => codesB.has(c))) {
