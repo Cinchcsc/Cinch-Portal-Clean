@@ -26,13 +26,27 @@ function legacyRentRollUnits(rec) {
 
   for (const t of rec.unitTypes || []) {
     const name = /office/i.test(t.unit_type || '') ? 'Offices' : (t.unit_type || 'Other');
-    if (out[name]) continue;
+    const area = t.occ_area || 0;
+    const rent = t.monthly_rent || moneyFromRate(t.rate_per_sqft_ann, area);
+    const effRent = t.monthly_rent || moneyFromRate(t.real_rate_per_sqft_ann, area);
+    // FIXED 7 Jul 2026 (exhaustive bug audit): a second raw unit-type row that normalizes to the
+    // same display name (e.g. two rows both matching /office/i, or a genuine duplicate) used to
+    // be silently dropped entirely (`if (out[name]) continue`) instead of merged — unlike every
+    // other duplicate-row handler in this codebase (mergeByDesc, sumRevenueGroups,
+    // mergeRowsAcrossMonths), which all sum collisions. Now sums instead of discarding.
+    if (out[name]) {
+      out[name].area += area;
+      out[name].rent += rent;
+      out[name].original_rent += rent;
+      out[name].effective_rent += effRent;
+      continue;
+    }
     out[name] = {
       unit_type: name,
-      area: t.occ_area || 0,
-      rent: t.monthly_rent || moneyFromRate(t.rate_per_sqft_ann, t.occ_area || 0),
-      original_rent: t.monthly_rent || moneyFromRate(t.rate_per_sqft_ann, t.occ_area || 0),
-      effective_rent: t.monthly_rent || moneyFromRate(t.real_rate_per_sqft_ann, t.occ_area || 0),
+      area,
+      rent,
+      original_rent: rent,
+      effective_rent: effRent,
     };
   }
 

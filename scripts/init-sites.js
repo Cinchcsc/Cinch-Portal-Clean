@@ -2,12 +2,21 @@
 // Run once:  npm run init:sites
 import { admin } from '../lib/supabaseAdmin.js';
 
+// Kept in sync with lib/buildPayload.js's own NAMES constant — that copy is authoritative for
+// DISPLAY (it overrides whatever's in the sites table, see buildPayload.js's `nameOf` build), but
+// this one still matters for the sites table's own raw `name` column and any code that reads it
+// directly. FIXED 8 Jul 2026: was missing L021 (Bedford) and L026 (Paulton) entirely — those two
+// sites seeded with name=code until buildPayload.js's override masked it. Also ADDED L028 (Edmonton)
+// and L029 (Abingdon) — two new sites Michael added to SITELINK_LOCATIONS 8 Jul 2026. Abingdon was
+// previously a site the legacy portal tracked that we didn't (task #68); Edmonton doesn't appear in
+// legacy's own per-site table at all, so — like Bedford/Paulton — it looks like a site we track that
+// legacy doesn't (yet).
 const NAMES = { L001: 'Bicester', L002: 'Leighton Buzzard', L003: 'Letchworth', L004: 'Chippenham',
   L005: 'Brighton', L006: 'Huntingdon', L007: 'Newmarket', L008: 'Enfield', L009: 'Newbury',
   L010: 'Mitcham', L011: 'Sittingbourne', L012: 'Gillingham', L013: 'Brentwood', L014: 'Earlsfield',
   L015: 'Watford', L016: 'Seaford', L017: 'Southend', L018: 'Woking', L019: 'Sidcup',
-  L020: 'Dunstable', L022: 'Swindon', L023: 'Wisbech', L024: 'Newcastle', L025: 'Shoreham-By-Sea',
-  L027: 'Exeter' };
+  L020: 'Dunstable', L021: 'Bedford', L022: 'Swindon', L023: 'Wisbech', L024: 'Newcastle',
+  L025: 'Shoreham-By-Sea', L026: 'Paulton', L027: 'Exeter', L028: 'Edmonton', L029: 'Abingdon' };
 
 const codes = (process.env.SITELINK_LOCATIONS || '').split(',').map(s => s.trim()).filter(Boolean);
 if (!codes.length) { console.log('SITELINK_LOCATIONS is empty — nothing to seed.'); process.exit(1); }

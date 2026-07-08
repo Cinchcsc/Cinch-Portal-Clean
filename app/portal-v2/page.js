@@ -67,10 +67,14 @@ function computeTotals(sites) {
     n: sites.length, occ, tot, occA, claA, totA, rent, gpot: sum('gpot'), grossOcc: sum('grossOcc'),
     occPC: tot ? +(occ / tot * 100).toFixed(1) : 0, areaPC: totA ? +(occA / totA * 100).toFixed(1) : 0,
     claPC: claA ? +(occA / claA * 100).toFixed(1) : (totA ? +(occA / totA * 100).toFixed(1) : 0),
-    rate: sum('areaSum') ? R2(sum('rentSum') / sum('areaSum') * 12) : 0,
-    realRate: sum('areaSum') ? R2(sum('stdRentSum') / sum('areaSum') * 12) : 0,
-    ssRate: sum('ssAreaSum') ? R2(sum('ssRentSum') / sum('ssAreaSum') * 12) : 0,
-    ssReal: sum('ssAreaSum') ? R2(sum('ssStdRentSum') / sum('ssAreaSum') * 12) : 0,
+    // Rate: dcStandardRate-based, unchanged. Real Rate: REPLACED 8 Jul 2026 to mirror
+    // lib/buildPayload.js's aggregateTotals() exactly — True Revenue-based (Σ(TruePeriod−adj)),
+    // divided by TOTAL area (areaTotalAll, incl. vacant units), NOT areaSum (occupied-only, still
+    // correct for Rate). Keep this in sync with lib/buildPayload.js if that file changes.
+    rate: sum('areaSum') ? R2(sum('stdRentSum') / sum('areaSum') * 12) : 0,
+    realRate: sum('areaTotalAll') ? R2(sum('trueRevenueNumerator') / sum('areaTotalAll') * 12) : 0,
+    ssRate: sum('ssAreaSum') ? R2(sum('ssStdRentSum') / sum('ssAreaSum') * 12) : 0,
+    ssReal: sum('ssAreaTotalAll') ? R2(sum('ssTrueRevenueNumerator') / sum('ssAreaTotalAll') * 12) : 0,
     ssOcc: sites.reduce((a, s) => a + (s.ss ? s.ss.occ : 0), 0), ssTot: sites.reduce((a, s) => a + (s.ss ? s.ss.tot : 0), 0),
     officesOcc: sites.reduce((a, s) => a + (s.offices ? s.offices.occ : 0), 0), officesTot: sites.reduce((a, s) => a + (s.offices ? s.offices.tot : 0), 0),
     officesRate: sum('officesAreaSum') ? R2(sum('officesRentSum') / sum('officesAreaSum') * 12) : 0,
@@ -163,6 +167,22 @@ function chip(delta, dir) {
     deltaStyle: { display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', fontWeight: 600, color: col, background: bg, borderRadius: '6px', padding: '2px 7px', marginTop: '7px', fontVariantNumeric: 'tabular-nums' },
     deltaArrow: dir === null ? '' : up ? '↑' : '↓',
   };
+}
+
+// deltaTick(): builds the {delta, dir} pair chip() expects, from a current vs. previous raw number.
+// Added 8 Jul 2026 for the Dashboard KPI cards' "vs last month" arrows (Michael: "put the ticks that
+// show the net changes with arrows and they're red or green on the 29 pull one"). Mirrors the display
+// convention the placeholder mock data already used: percentage tiles show the point difference
+// suffixed "%", money tiles show "£"+diff. Returns {delta: null, dir: null} — no chip at all, chip()
+// has no neutral/flat colour — whenever prev is unavailable or the change rounds to zero.
+function deltaTick(cur, prev, kind) {
+  if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return { delta: null, dir: null };
+  const diff = cur - prev;
+  const eps = kind === 'money' || kind === 'moneyWhole' ? 0.005 : kind === 'count' ? 0.5 : 0.05;
+  if (Math.abs(diff) < eps) return { delta: null, dir: null };
+  const abs = Math.abs(diff);
+  const delta = kind === 'money' ? `£${abs.toFixed(2)}` : kind === 'moneyWhole' ? money(abs) : kind === 'count' ? intFmt(Math.round(abs)) : `${abs.toFixed(1)}%`;
+  return { delta, dir: diff > 0 ? 'up' : 'down' };
 }
 
 // Custom widget builder field catalog — every numeric column available on a live site record
@@ -623,6 +643,12 @@ export default function PortalV2Page() {
   // store-filtered view of this array — every live widget reads the shadowed name, so the top
   // store-selector filter applies everywhere automatically instead of needing per-widget edits.
   const [liveSitesRaw, setLiveSitesRaw] = useState(null); // portfolio.sites[], or null if unavailable/unconfigured
+  // Previous single month's sites[] (8 Jul 2026), fetched via the same fast ranged endpoint solely to
+  // power the "vs last month" delta/arrow ticks on a few Dashboard KPI cards — see fetchLiveRange().
+  // null whenever there's no valid comparison (earliest stored month, a multi-month range selected, or
+  // the fetch failed) — the affected tiles just render with no arrow in that case, same as before this
+  // existed.
+  const [livePrevSitesRaw, setLivePrevSitesRaw] = useState(null);
   const [liveMonthly, setLiveMonthly] = useState(null); // portfolio.monthly (per-month, per-site LIGHT records)
   const [liveMonths, setLiveMonths] = useState(null);   // portfolio.months (sorted ascending "YYYY-MM" strings) — ALWAYS the full stored history, never scoped to the selector, so Month-on-Month and the selector's own dropdowns keep working regardless of what's picked
   const [liveHistory, setLiveHistory] = useState(null); // portfolio.history (one point per stored month, portfolio-wide) — powers Month-on-Month, unaffected by the PERIOD selector below
@@ -665,6 +691,26 @@ export default function PortalV2Page() {
         setViewLive(fromKey === toKey && toKey === (liveMonths && liveMonths[liveMonths.length - 1]));
       })
       .catch((err) => console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err));
+
+    // "vs last month" delta ticks (8 Jul 2026, Michael: "put the ticks that show the net changes with
+    // arrows... on the 29 pull one") — only meaningful for a single selected month, compared against
+    // the one calendar month right before it. A multi-month range has no single obvious "previous
+    // period" (previous equal-length range? previous single month?), so we deliberately don't guess —
+    // livePrevSitesRaw just goes null, which makes the delta ticks disappear rather than mislead.
+    if (fromKey === toKey) {
+      const prevKey = monthKeyOf(indexOfMonthKey(fromKey) - 1);
+      fetch(`/api/portfolio?from=${prevKey}&to=${prevKey}`)
+        .then((res) => res.json())
+        // Checking data.totals (not just data.configured) matters here: buildPayloadRange() returns
+        // configured:true with totals:null and sites:[] for an out-of-range month (e.g. fromKey is
+        // already the earliest stored month) — without this, an empty-but-truthy [] would flow through
+        // to computeTotals([]), which returns all-zero totals instead of null, and deltaTick() would
+        // then render a fake "100% up" arrow against that phantom zero instead of correctly hiding it.
+        .then((data) => setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) ? data.sites : null))
+        .catch(() => setLivePrevSitesRaw(null));
+    } else {
+      setLivePrevSitesRaw(null);
+    }
   };
 
   const fetchLiveTotals = () => {
@@ -680,8 +726,15 @@ export default function PortalV2Page() {
           setLiveHistory(null);
           return;
         }
-        setLiveTotals(data.totals);
-        setLiveSitesRaw(Array.isArray(data.sites) ? data.sites : null);
+        // FIXED 8 Jul 2026 (Michael: "remove the first pull that does 27 sites, it's annoying"): this
+        // unscoped call reads the PERSISTED portal_payload singleton, which lags behind live raw data
+        // (only refreshed by npm run pull / cron). It used to set liveTotals/liveSitesRaw here too, so
+        // every load briefly rendered its stale site count/totals before fetchLiveRange() below
+        // (always computed live from raw_report, and fast since the 8 Jul buildPayloadRange fix)
+        // overwrote it moments later. Now this call ONLY supplies the month-list/history metadata that
+        // only the unscoped payload has — liveTotals/liveSitesRaw are set exclusively by
+        // fetchLiveRange, so the UI goes straight from loading/mock to correct live data, no stale
+        // flash in between.
         setLiveMonthly(data.monthly && typeof data.monthly === 'object' ? data.monthly : null);
         const months = Array.isArray(data.months) ? data.months : null;
         setLiveMonths(months);
@@ -809,6 +862,14 @@ export default function PortalV2Page() {
       const anySel = Object.values(selected).some(Boolean);
       if (!anySel) return liveSitesRaw;
       return liveSitesRaw.filter((s) => selected[s.name]);
+    })();
+    // Same store-filter mirror as liveSites, applied to last month's snapshot — feeds the "vs last
+    // month" delta ticks below so they respect the store filter exactly like every other live number.
+    const livePrevSites = (() => {
+      if (!livePrevSitesRaw) return null;
+      const anySel = Object.values(selected).some(Boolean);
+      if (!anySel) return livePrevSitesRaw;
+      return livePrevSitesRaw.filter((s) => selected[s.name]);
     })();
     const agg = fs.reduce((a, s) => {
       a.occupied += s.occupied; a.total += s.total; a.area += s.area; a.rentRoll += s.rentRoll; a.claW += s.occupied * s.claPct;
@@ -1004,15 +1065,19 @@ export default function PortalV2Page() {
       // Indoor Self Storage and Offices unit types specifically.
       const kpiT = liveSites ? computeTotals(liveSites) : null;   // recomputed client-side so the store filter applies
       if (!kpiT) console.warn('[portal-v2] KPIs stat cards rendering with mock RAW_STORES data (no live totals available).');
+      // "vs last month" comparator for the delta ticks below (8 Jul 2026) — null when unavailable
+      // (earliest stored month, a multi-month range selected, or the prev-month fetch failed), in
+      // which case deltaTick() falls back to {delta: null, dir: null} and the tile shows no arrow.
+      const kpiPrevT = livePrevSites ? computeTotals(livePrevSites) : null;
       out.statCards = [
         kpiT
-          ? { title: 'Total Store Occupancy', live: true, tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', delta: null, dir: null }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', delta: null, dir: null }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
+          ? { title: 'Total Store Occupancy', live: true, tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
           : { title: 'Total Store Occupancy', tiles: [{ value: occPct.toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£28.46', label: 'Rate per ft²', delta: '£0.22', dir: 'up' }], note: intFmt(agg.occupied) + ' / ' + intFmt(agg.total) + ' units occupied' },
         kpiT
-          ? { title: 'Indoor Self Storage', live: true, tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', delta: null, dir: null }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', delta: null, dir: null }] }
+          ? { title: 'Indoor Self Storage', live: true, tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
           : { title: 'Indoor Self Storage', tiles: [{ value: (occPct + 1.1).toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£29.74', label: 'Rate per ft²', delta: '£0.20', dir: 'up' }] },
         kpiT
-          ? { title: 'Offices Occupancy', live: true, tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', delta: null, dir: null }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', delta: null, dir: null }] }
+          ? { title: 'Offices Occupancy', live: true, tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') }] }
           : { title: 'Offices Occupancy', tiles: [{ value: '78.0%', label: 'Occupancy', delta: '3%', dir: 'up' }, { value: '£61.90', label: 'Rate per ft²', delta: null, dir: null }] },
         // Reservations vs Move-outs: REBUILT 6 Jul 2026 (Michael's idea). The old ReservationList/
         // ScheduledMoveOuts-based version was confirmed structurally live-only on BOTH sides —
@@ -1032,13 +1097,45 @@ export default function PortalV2Page() {
         // the selected month/range — both sides now work for every stored month, live and historical,
         // like every other widget on this page. Renamed back from "...Scheduled Move-outs" since
         // Move-outs is no longer the scheduled/pending figure.
+        // RE-CONFIRMED then SWITCHED BACK 7 Jul 2026 (Michael): re-investigated after a "~230 net
+        // difference from legacy" report. Re-verified live in-browser that legacy's "Scheduled
+        // Reservations vs Scheduled Move-outs" (KPIs page) is still a pure live snapshot — ignores the
+        // date-range picker entirely (stayed on "Jul 2026" / 0-0-0 even with the picker set to Jan
+        // 2026), unlike Debtor Levels right next to it, which does respect the picker. Legacy's July
+        // figure was 0/0/0 at check time, likely their own backend hasn't refreshed since the month
+        // rolled over (two other "current month" tiles on the same legacy page — Move-ins & Move-outs,
+        // Autobill — showed the same all-zero pattern).
+        // Pulled our OWN live activeReservations/scheduledOuts totals to see what the pre-6-Jul-rebuild
+        // metric would read TODAY: 438 reservations / 267 scheduled move-outs / net +171 — vs. the
+        // historical widget's 571 / 154 / +417. The ~246 gap between those two lines up with the
+        // ~230 Michael originally flagged, confirming the "~230 difference" was this same live-vs-
+        // historical mismatch, not a calculation error on either side. Notably, 438 lands very close to
+        // the "~446 target" that task #25's old ~3x-overcount investigation was chasing — meaning the
+        // occupied-tenant-ID filter already in `activeReservations` (see its definition above, ids
+        // .filter(id => !occupiedIds.has(id))) already fixed that overcount; it just wasn't visible
+        // here because the widget had moved on to a different metric.
+        // Decision (Michael, 7 Jul): switch this widget BACK to the live snapshot
+        // (activeReservations/scheduledOuts) — matches legacy's own methodology and is confirmed no
+        // longer overcounted. Renamed to "Scheduled Reservations vs Scheduled Move-outs" so the title
+        // makes the live-only, not-historical nature explicit — like every other "always current"
+        // widget on this page (Move-ins & Move-outs, Autobill), this one will NOT change when the
+        // global date-range picker is set to a past month, by design (there's no historical concept of
+        // "how many reservations were open on a past date" — SiteLink doesn't track that).
         liveSites
-          ? { title: 'Reservations vs Move-outs', live: true, tiles: [
-              { value: intFmt(liveSites.reduce((a, s) => a + (s.reservationsMade || 0), 0)), label: 'Reservations', delta: null, dir: null },
-              { value: intFmt(liveSites.reduce((a, s) => a + (s.moveOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
-              { value: (() => { const n = liveSites.reduce((a, s) => a + (s.reservationsMade || 0) - (s.moveOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
+          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tiles: [
+              { value: intFmt(liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0)), label: 'Reservations', delta: null, dir: null },
+              { value: intFmt(liveSites.reduce((a, s) => a + (s.scheduledOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
+              { value: (() => { const n = liveSites.reduce((a, s) => a + (s.activeReservations || 0) - (s.scheduledOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
             ] }
-          : { title: 'Reservations vs Move-outs', tiles: [{ value: '438', label: 'Reservations', delta: null, dir: null }, { value: '254', label: 'Move-outs', delta: null, dir: null }, { value: '+184', label: 'Net change', delta: null, dir: null }] },
+          // FIXED 7 Jul 2026 (exhaustive bug audit): this fallback used to hardcode the literal live
+          // read from 7 Jul 2026 (438/267/+171), unscaled by the store-filter `f` — unlike every
+          // other mock fallback on this page. That made it uniquely easy to mistake for a genuine
+          // live read during a slow/failed fetch (the loading skeleton is on a fixed 700ms timer
+          // decoupled from the actual fetch, and a fetch error leaves liveSites null with no other
+          // visual cue besides the missing LIVE badge) — and it would have silently gone stale as
+          // time passed. Now scaled by `f` like every sibling card, matching the established mock
+          // pattern instead of masquerading as a frozen real snapshot.
+          : { title: 'Scheduled Reservations vs Scheduled Move-outs', tiles: [{ value: intFmt(438 * f), label: 'Reservations', delta: null, dir: null }, { value: intFmt(267 * f), label: 'Move-outs', delta: null, dir: null }, { value: '+' + intFmt(171 * f), label: 'Net change', delta: null, dir: null }] },
         // Reserved Scheduled Sqft — added 6 Jul 2026 (Michael). ESTIMATE: ReservationList has no
         // area column (confirmed via probe:reservation-area); this is reservation count per
         // UnitTypeID × that type's average unit area (confirmed via probe:unittypeid-map — a
@@ -1063,28 +1160,41 @@ export default function PortalV2Page() {
         // the source "ManagementSummary", but the fields actually live in PastDueBalances/
         // OccupancyStatistics in this pipeline). Total = raw £ overdue, summed across sites.
         kpiT
-          ? { title: 'Debtor Levels', live: true, tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', delta: null, dir: null }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', delta: null, dir: null }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', delta: null, dir: null }] }
+          ? { title: 'Debtor Levels', live: true, tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', ...deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct') }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', ...deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct') }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole') }] }
           : { title: 'Debtor Levels', tiles: [{ value: '1.8%', label: '% Tenants', delta: '0%', dir: null }, { value: '0.6%', label: '% Rent Roll', delta: '0%', dir: null }, { value: money(2790 * f), label: 'Total', delta: '£93', dir: 'up' }] },
         // Move-ins & Move-outs: was present on the legacy portal's KPIs page (missed when this page
         // was first built — it only existed on the Dashboard page here) — same live-data pattern as
         // the Dashboard's copy: sum each site's moveIns/moveOuts/netArea (ManagementSummary).
-        liveSites
-          ? { title: 'Move-ins & Move-outs', live: true, tiles: [
-              { value: intFmt(liveSites.reduce((a, s) => a + (s.moveIns || 0), 0)), label: 'Move-ins', delta: null, dir: null },
-              { value: intFmt(liveSites.reduce((a, s) => a + (s.moveOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
-              { value: intFmt(liveSites.reduce((a, s) => a + (s.netArea || 0), 0)) + ' ft²', label: 'Net ft²', delta: null, dir: null },
-            ] }
-          : { title: 'Move-ins & Move-outs', tiles: [
+        (() => {
+          if (!liveSites) return { title: 'Move-ins & Move-outs', tiles: [
               { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' }, { value: intFmt(2040 * f) + ' ft²', label: 'Net ft²', delta: '160', dir: 'up' },
-            ] },
+            ] };
+          const moveIns = liveSites.reduce((a, s) => a + (s.moveIns || 0), 0);
+          const moveOuts = liveSites.reduce((a, s) => a + (s.moveOuts || 0), 0);
+          const netArea = liveSites.reduce((a, s) => a + (s.netArea || 0), 0);
+          // "vs last month" comparators — same livePrevSites source as kpiPrevT above, just reduced
+          // directly since this card isn't computeTotals()-derived.
+          const prevMoveIns = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveIns || 0), 0) : null;
+          const prevMoveOuts = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOuts || 0), 0) : null;
+          const prevNetArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.netArea || 0), 0) : null;
+          return { title: 'Move-ins & Move-outs', live: true, tiles: [
+              { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
+              { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count') },
+              { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'count') },
+            ] };
+        })(),
         // Move-In Rental Rate — added 6 Jul 2026 from Michael's uploaded MoveInsAndMoveOuts export
         // ("rental rate (13) / area" — column 13, MovedInRentalRate, ÷ MovedInArea). Σ rate ÷ Σ area
         // × 12, same sum-then-divide/annualise convention as every other rate/ft² widget — the rate
         // achieved specifically on THIS month's new move-ins, as distinct from the whole-book Rate/
         // Real Rate widgets elsewhere.
-        liveSites
-          ? { title: 'Move-In Rental Rate', live: true, tiles: [{ value: '£' + (liveSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0) ? R2(liveSites.reduce((a, s) => a + (s.moveInRateSum || 0), 0) / liveSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0) * 12).toFixed(2) : '0.00'), label: 'Per ft² (this month’s move-ins)', delta: null, dir: null }] }
-          : { title: 'Move-In Rental Rate', tiles: [{ value: '£24.60', label: 'Per ft² (this month’s move-ins)', delta: '£0.80', dir: 'up' }] },
+        (() => {
+          if (!liveSites) return { title: 'Move-In Rental Rate', tiles: [{ value: '£24.60', label: 'Per ft² (this month’s move-ins)', delta: '£0.80', dir: 'up' }] };
+          const moveInRate = (sites) => { const area = sites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0); return area ? R2(sites.reduce((a, s) => a + (s.moveInRateSum || 0), 0) / area * 12) : 0; };
+          const rate = moveInRate(liveSites);
+          const prevRate = livePrevSites ? moveInRate(livePrevSites) : null;
+          return { title: 'Move-In Rental Rate', live: true, tiles: [{ value: '£' + rate.toFixed(2), label: 'Per ft² (this month’s move-ins)', ...deltaTick(rate, prevRate, 'money') }] };
+        })(),
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
         // Autobill Conversion: live-wired from /api/portfolio's totals. Renamed from "Autobill" (2
@@ -1092,7 +1202,7 @@ export default function PortalV2Page() {
         // both now compute "new autobilled customers / total new customers" per the legacy tooltip,
         // not the old whole-book autobill rate (kept as kpiT.autobillPC_allTenants if ever needed).
         kpiT
-          ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (kpiT.autobillPC ?? 0).toFixed(1) + '%', label: 'Autobill conversion', delta: null, dir: null }], hasViz: true, el: <Donut pct={kpiT.autobillPC ?? 0} color={C.blue} /> }
+          ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (kpiT.autobillPC ?? 0).toFixed(1) + '%', label: 'Autobill conversion', ...deltaTick(kpiT.autobillPC, kpiPrevT && kpiPrevT.autobillPC, 'pct') }], hasViz: true, el: <Donut pct={kpiT.autobillPC ?? 0} color={C.blue} /> }
           : { title: 'Autobill Conversion', tiles: [{ value: '86%', label: 'Autobill conversion', delta: '3%', dir: 'down' }], hasViz: true, el: <Donut pct={86} color={C.blue} /> },
         // Customer Churn: legacy formula is trailing-12-month move-outs / average occupancy over the
         // same 12 months (confirmed 2 Jul 2026). Live-wired (3 Jul 2026) against `liveHistory`
@@ -1406,7 +1516,11 @@ export default function PortalV2Page() {
       // tenants, sum-then-divide) — audited 2 Jul 2026 (npm run audit): the [1,2]="on autobill"
       // assumption checks out cleanly against the live value distribution.
       const autobillCard = ancT
-        ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(0) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
+        // FIXED 7 Jul 2026 (exhaustive bug audit): was .toFixed(0) here vs .toFixed(1) on the
+        // Dashboard/KPIs copy of this identical metric (line ~1119) — same source field
+        // (totals.autobillPC, already rounded to 1dp in computeTotals()), just displayed with one
+        // fewer decimal, so the same underlying number showed as e.g. "86%" here vs "86.4%" there.
+        ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
         : { title: 'Autobill Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '16%', dir: 'down' }], hasViz: true, el: <Donut pct={57} color={C.blue} /> };
       // Insurance Conversion: new insured customers (TenantID cross-reference, insNewCount above) ÷
       // new move-ins for the month — the standard "did the new customer take out insurance"
@@ -1420,7 +1534,13 @@ export default function PortalV2Page() {
         : { title: 'Insurance Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '7%', dir: 'up' }], hasViz: true, el: <Gauge pct={57} /> };
       const insuranceRollCard = ancT
         ? { title: 'Insurance Roll', live: true, tiles: [{ value: money(ancT.insurancePremium ?? 0), label: 'Premiums', delta: null, dir: null }, { value: (ancT.insurancePctRoll ?? 0).toFixed(1) + '%', label: '% Rent Roll', delta: null, dir: null }, { value: (ancT.insurancePctInsured ?? 0).toFixed(1) + '%', label: '% Insured', delta: null, dir: null }] }
-        : { title: 'Insurance Roll', live: true, tiles: [{ value: money(5145 * f), label: 'Premiums', delta: '£2', dir: 'down' }, { value: '10.1%', label: '% Rent Roll', delta: '0.2%', dir: 'down' }, { value: '75.3%', label: '% Insured', delta: '1.8%', dir: 'down' }] };
+        // FIXED 7 Jul 2026 (exhaustive bug audit): this mock/fallback branch had `live: true` —
+        // almost certainly copy-pasted from the live branch directly above — which made the app
+        // show the green "LIVE" badge on fabricated placeholder numbers whenever ancT was
+        // unavailable, with no visual tell at all that the data wasn't real (every other mock
+        // fallback on this page correctly omits `live: true`, which is the ONE cue distinguishing
+        // mock from live). Removed.
+        : { title: 'Insurance Roll', tiles: [{ value: money(5145 * f), label: 'Premiums', delta: '£2', dir: 'down' }, { value: '10.1%', label: '% Rent Roll', delta: '0.2%', dir: 'down' }, { value: '75.3%', label: '% Insured', delta: '1.8%', dir: 'down' }] };
       // Insurance Premiums (New Customers) — REBUILT 6 Jul 2026: InsuranceActivity's `sNewPolicy`
       // flag (the previous source for both tiles) is confirmed unreliable — it read £0.00 even with
       // nonzero move-ins and a nonzero existing InsuranceRoll book. Replaced with a TenantID
@@ -1513,7 +1633,11 @@ export default function PortalV2Page() {
         enquiryToReservation = { title: 'Enquiry → Reservation', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         console.warn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
-        enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tiles: [{ value: intFmt(94 * f), label: 'Phone', delta: '2', dir: 'up' }, { value: intFmt(61 * f), label: 'Walk-ins', delta: '2', dir: 'down' }, { value: intFmt(1210 * f), label: 'Web', delta: '10', dir: 'up' }, { value: intFmt(1365 * f), label: 'Total', delta: '10', dir: 'up' }] };
+        // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
+        // Roll above — this mock branch was showing the green LIVE badge on fabricated numbers.
+        // This block is an if/else rather than this file's usual ternary pattern, which is likely
+        // why the copy-paste slipped through here specifically. Removed.
+        enquiriesByChannel = { title: 'Enquiries by Channel', tiles: [{ value: intFmt(94 * f), label: 'Phone', delta: '2', dir: 'up' }, { value: intFmt(61 * f), label: 'Walk-ins', delta: '2', dir: 'down' }, { value: intFmt(1210 * f), label: 'Web', delta: '10', dir: 'up' }, { value: intFmt(1365 * f), label: 'Total', delta: '10', dir: 'up' }] };
         enquiryToReservation = { title: 'Enquiry → Reservation', tiles: [{ value: '38%', label: 'Conversion rate', delta: '2%', dir: 'up' }], hasViz: true, el: <Gauge pct={38} /> };
       }
       // Cost per Lead — REMOVED 3 Jul 2026 (Michael): needs a marketing-spend feed (AdWords or
@@ -1826,7 +1950,13 @@ export default function PortalV2Page() {
   const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthLbl = (i) => { const [y, m] = monthKeyOf(i).split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${y}`; };
   const rangeLabel = monthFrom === monthTo ? monthLbl(monthTo) : monthLbl(monthFrom) + ' → ' + monthLbl(monthTo);
-  const subtitle = storeSummary + ' · portfolio (' + fs.length + ') · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
+  // FIXED 8 Jul 2026: fs.length was always the mock STORES count (27), even in live mode — with 29
+  // real sites now configured, the subtitle would keep showing the stale "27" regardless. Can't
+  // reuse buildPage()'s own `liveSites` const here — this block is a SEPARATE, outer scope (that
+  // ReferenceError is exactly why the first version of this fix broke the page) — so the same
+  // liveSitesRaw+selected filter logic is inlined here instead.
+  const liveSiteCount = liveSitesRaw ? (anySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : null;
+  const subtitle = storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
@@ -1848,11 +1978,27 @@ export default function PortalV2Page() {
   }));
   const tables = pageData.tables;
 
-  const storeOptions = STORES.filter((st) => region === 'All' || st.region === region).map((st) => ({
-    name: st.name, region: st.region, checked: !!selected[st.name],
-    onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); reload(); },
-  }));
-  const regionChips = ['All', ...REGIONS].map((r) => ({
+  // FIXED 8 Jul 2026 (Michael: "the store filter names are all messed up"): storeOptions always
+  // listed the stale mock STORES names (27 entries carried over from the original decoded-artifact
+  // prototype) — several don't exist in the real portfolio at all (Reading, Guildford, Basildon,
+  // Chelmsford, Maidstone, Luton, Milton Keynes, Croydon, Ipswich), while 11 real sites were missing
+  // entirely (Chippenham, Enfield, Seaford, Dunstable, Swindon, Wisbech, Shoreham-By-Sea, Paulton,
+  // Exeter, plus the just-added Edmonton/Abingdon) — so real sites could never be selected at all,
+  // and mock-name checkboxes matched zero real sites when toggled. Now lists the REAL site names
+  // from liveSitesRaw when available (matches liveSites' own name-based selection filter above),
+  // falling back to the original mock STORES behavior only when live data isn't configured/available.
+  // Region grouping has no live equivalent (no region field anywhere in the real data model — see
+  // liveSites' own comment above), so live mode lists names flat with no region chip beyond "All".
+  const storeOptions = liveSitesRaw
+    ? liveSitesRaw.map((s) => ({
+        name: s.name, region: null, checked: !!selected[s.name],
+        onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); reload(); },
+      }))
+    : STORES.filter((st) => region === 'All' || st.region === region).map((st) => ({
+        name: st.name, region: st.region, checked: !!selected[st.name],
+        onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); reload(); },
+      }));
+  const regionChips = (liveSitesRaw ? ['All'] : ['All', ...REGIONS]).map((r) => ({
     label: r,
     onClick: () => { setRegion(r); setSelected({}); reload(); },
     active: region === r,

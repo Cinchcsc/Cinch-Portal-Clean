@@ -36,13 +36,23 @@ const months = await listStoredMonths();
 console.log(`Re-pulling '${reportKey}' for ${months.length} stored months x ${locations.length} sites = ${months.length * locations.length} calls.`);
 console.log('This runs sequentially and will take a while — progress is logged per month.\n');
 
+// FIXED 7 Jul 2026: cap the end date at TODAY when re-pulling the CURRENT in-progress month — same
+// rule lib/pull.js's endOf() applies for regular cron pulls, and the same fix already applied to
+// repull-report-month.js. Point-in-time/snapshot-style data (confirmed for PastDueBalances, and for
+// ManagementSummary's Delinquency/Unpaid tables used by the Debtor Levels fix) returns a DIFFERENT,
+// inflated/wrong result when asked for a range that extends into the future — this matters here
+// specifically because `management` is now one of the reports this script re-pulls historically, and
+// its OWN current month (July) must not be corrupted by using July 31 (a future date) as the end.
+const now0 = new Date();
 let totalOk = 0, totalFailed = 0;
 const startedAt = Date.now();
 for (let i = 0; i < months.length; i++) {
   const mk = months[i];
   const [y, m] = mk.split('-').map(Number);
   const monthStart = new Date(y, m - 1, 1);
-  const monthEnd = new Date(y, m, 0);
+  const isCurrentMonth = y === now0.getFullYear() && m === now0.getMonth() + 1;
+  const fullMonthEnd = new Date(y, m, 0);
+  const monthEnd = isCurrentMonth && fullMonthEnd > now0 ? now0 : fullMonthEnd;
   const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
   const { error: delErr } = await admin.from('raw_report').delete().eq('report', reportKey).eq('month', monthKey);
@@ -51,9 +61,10 @@ for (let i = 0; i < months.length; i++) {
   let ok = 0, failed = 0;
   for (const loc of locations) {
     try {
-      const { data } = await tryPull(reportKey, loc, monthStart, monthEnd);
+      // raw ADDED 7 Jul 2026 (raw-storage change) — see schema.sql / scripts/reparse-report.js.
+      const { data, raw } = await tryPull(reportKey, loc, monthStart, monthEnd);
       const { error } = await admin.from('raw_report').upsert(
-        { site_code: loc, month: monthKey, report: reportKey, data, pulled_at: new Date().toISOString() },
+        { site_code: loc, month: monthKey, report: reportKey, data, raw_response: raw ?? null, pulled_at: new Date().toISOString() },
         { onConflict: 'site_code,month,report' });
       if (error) throw new Error(error.message);
       ok++;

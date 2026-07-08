@@ -18,6 +18,17 @@ create table if not exists raw_report (
 );
 create index if not exists raw_report_lookup on raw_report (report, month);
 
+-- ADDED 7 Jul 2026: stores the untouched SiteLink SOAP response (before extractRows()'s "biggest
+-- table wins" pick and before reportMap.js's parse()), alongside the already-parsed `data` column.
+-- Rationale: almost every "wrong number" bug found this session (Debtor Levels, Rate per ft² by
+-- Customer Type, Move-ins/Move-outs, rounding, etc.) was a bug in OUR parsing logic, not in
+-- SiteLink's underlying data — yet the only way to apply a fix to already-pulled historical months
+-- was a full live re-pull (SiteLink API calls, ~1-3 hours for a 122-month x 27-site report), even
+-- though SiteLink's answer for a closed month never changes. With the raw response stored, a parser
+-- fix can instead be replayed locally via scripts/reparse-report.js — no SiteLink calls, seconds not
+-- hours. Nullable because existing rows won't have it until backfilled by one more real pull.
+alter table raw_report add column if not exists raw_response jsonb;
+
 create table if not exists portal_payload (
   id int primary key default 1,
   generated_at timestamptz default now(),
