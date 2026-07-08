@@ -1,17 +1,18 @@
 // Merchandise Income per New Customer (Ancillaries page) reads £11.01 live vs legacy's £1.00 for
-// July 2026 — an ~11x gap, much bigger than the ~£8 "wrong report" bug fixed 6 Jul (switching the
-// numerator from MerchandiseSummary to FinancialSummary's POS category). Both move_ins_outs and
-// financial are pulled with the IDENTICAL month-to-date date range (lib/pull.js's endOf() caps every
-// report at "now", not just some of them), so a simple numerator/denominator month-scope mismatch is
-// ruled out by inspection. Two remaining live hypotheses this dumps evidence for:
-//   1) FinancialSummary's raw SOAP response has more than one table (same shape as the
-//      ManagementSummary/True-Revenue multi-table reports already found this session) and
-//      extractRows() is picking up more than just this period's detail rows.
-//      lib/reportMap.js's financial.parse() pushes ONE row per raw line item into `categories`
-//      (not pre-aggregated by category) — if `rows` itself contains more than just this month's real
-//      line items, the POS sum inherits whatever that excess is.
-//   2) The 'POS' category code also catches something that isn't genuinely new merchandise (a
-//      recurring/non-move-in-linked charge), inflating the numerator relative to what legacy counts.
+// July 2026 — an ~11x gap (Michael's own framing: "mine is 10 higher"), bigger than the ~£8 "wrong
+// report" bug fixed 6 Jul (switching the numerator from MerchandiseSummary to FinancialSummary's POS
+// category). Both move_ins_outs and financial are pulled with the IDENTICAL month-to-date date range
+// (lib/pull.js's endOf() caps every report at "now"), so a simple numerator/denominator month-scope
+// mismatch is ruled out by inspection.
+// UPDATE 8 Jul 2026, first live run (L001): the multi-table / wrong-POS-source hypotheses below are
+// now RULED OUT — extractRows() correctly picks the 63-row Charge table (the real detail table), and
+// Charge-filtered-by-category='POS' (£100.00) matches the dedicated POSCharges subtotal table's own
+// total (£100.00) exactly. Numerator is NOT the problem, at least not for L001. New leading hypothesis,
+// found by reading buildPayload.js directly: the Ancillaries page's `moveIns` denominator is NOT
+// sourced from MoveInsAndMoveOuts (move_ins_outs.parse(), used below only for comparison) — it's
+// `mg.move_ins`, read from ManagementSummary's own labelled UnitActivity row instead. Two totally
+// different reports/counting methods that had never been compared side by side for the same
+// site/period. This now pulls both and prints them together.
 // Read-only, no writes, no PII (site codes + counts/sums only, no tenant/charge descriptions beyond
 // the category code already used in production).
 // Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-financial-vs-moveins.js [siteCode]
@@ -77,6 +78,23 @@ if (tables.length > 1) {
 console.log('');
 const { rows: mioRows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
 const mioParsed = REPORTS.move_ins_outs.parse(mioRows);
-console.log(`MoveInsAndMoveOuts: ${mioRows.length} raw rows, ${mioParsed.move_ins} move-ins this period.`);
-console.log(`\nMerchandise Income per New Customer for ${siteCode} alone: £${mioParsed.move_ins ? (posSum / mioParsed.move_ins).toFixed(2) : 'n/a (0 move-ins)'}`);
+console.log(`MoveInsAndMoveOuts: ${mioRows.length} raw rows, ${mioParsed.move_ins} move-ins this period (per-event count).`);
+
+// ADDED 8 Jul 2026: the POSCharges detour above was a dead end (its total matches Charge-filtered-by-
+// POS exactly for this site). But buildPayload.js's ACTUAL `moveIns` field — the Ancillaries page's
+// real denominator — is NOT move_ins_outs.move_ins above. It's `mg.move_ins`, read from
+// ManagementSummary's own labelled UnitActivity row (buildPayload.js: `moveIns: mg.move_ins || 0`).
+// These are two different reports/counting methods and nothing had compared them directly for the
+// same site/period before now — if they disagree, that's a much stronger candidate for the real bug,
+// since it changes the denominator production actually uses, not just a diagnostic side-quantity.
+const { rows: mgRows } = await callReport('ManagementSummary', siteCode, start, end);
+const mgParsed = REPORTS.management.parse(mgRows, start, end);
+console.log(`ManagementSummary: ${mgParsed.move_ins} move-ins this period (this is what buildPayload.js actually uses as 'moveIns').`);
+if (mgParsed.move_ins !== mioParsed.move_ins) {
+  console.log(`  *** MISMATCH: ManagementSummary says ${mgParsed.move_ins}, MoveInsAndMoveOuts says ${mioParsed.move_ins}, same site/period. ***`);
+}
+
+console.log(`\nMerchandise Income per New Customer for ${siteCode} alone:`);
+console.log(`  using ManagementSummary move-ins (what production actually computes): £${mgParsed.move_ins ? (posSum / mgParsed.move_ins).toFixed(2) : 'n/a (0 move-ins)'}`);
+console.log(`  using MoveInsAndMoveOuts move-ins (for comparison):                   £${mioParsed.move_ins ? (posSum / mioParsed.move_ins).toFixed(2) : 'n/a (0 move-ins)'}`);
 process.exit(0);
