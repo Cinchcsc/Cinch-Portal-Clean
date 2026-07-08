@@ -806,11 +806,20 @@ export default function PortalV2Page() {
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
   // and is invoked by every state-changing action (nav clicks, filters, refresh).
   // Hooked here to also re-fetch live totals so a manual refresh pulls fresh data.
+  // FIXED 8 Jul 2026 (Michael: "annoying pulos for a few seconds for 28 stores in the financials
+  // then goes to the appropriate 29 stores") — this is the SAME bug class already fixed on the mount
+  // effect earlier today (a FIXED timer racing a variable-latency network fetch), just never carried
+  // over to this function. reload() fires on every nav click (including switching to the Financials
+  // tab), which re-fetches live totals — but the hardcoded 550ms timer used to hide the loading
+  // skeleton regardless of whether that fetch had actually finished, so on any slower round trip the
+  // skeleton cleared early and exposed whatever liveSitesRaw held at that instant (stale/partial)
+  // until the real response landed a moment later and replaced it. Now waits for the fetch's own
+  // completion callback; the timer is only a safety net so the skeleton can't get stuck forever.
   const reload = () => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
-    fetchLiveTotals();
-    reloadTimer.current = setTimeout(() => setLoading(false), 550);
+    reloadTimer.current = setTimeout(() => setLoading(false), 4000);
+    fetchLiveTotals(() => { clearTimeout(reloadTimer.current); setLoading(false); });
   };
 
   useEffect(() => {
@@ -867,10 +876,12 @@ export default function PortalV2Page() {
   // setMonthFrom(x) then immediately reads monthFrom would still see the OLD value.
   const selectRange = (fromIdx, toIdx) => {
     setMonthFrom(fromIdx); setMonthTo(toIdx);
+    // FIXED 8 Jul 2026 — same fixed-timer-races-the-real-fetch bug as reload() above, same fix:
+    // wait for fetchLiveRange's own completion callback instead of guessing 550ms is always enough.
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
-    fetchLiveRange(monthKeyOf(fromIdx), monthKeyOf(toIdx));
-    reloadTimer.current = setTimeout(() => setLoading(false), 550);
+    reloadTimer.current = setTimeout(() => setLoading(false), 4000);
+    fetchLiveRange(monthKeyOf(fromIdx), monthKeyOf(toIdx), () => { clearTimeout(reloadTimer.current); setLoading(false); });
   };
 
   const applyPreset = (pl) => {
