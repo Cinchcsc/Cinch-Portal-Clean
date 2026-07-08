@@ -8,14 +8,19 @@
 // ManagementSummary and MoveInsAndMoveOuts agree exactly (5 move-ins both ways). Numerator confirmed
 // 2 independent ways, denominator confirmed 2 independent ways, all landing on the same £20.00/customer
 // for L001. That number is internally solid — the mystery is no longer "is our arithmetic wrong," it's
-// "why does a solid per-site number still roll up to an ~11x-too-high portfolio figure." Leading
-// hypothesis now: TIMING, not calculation. Today is the 8th of the month — "month-to-date" is only ~8
-// days of data, and a *ratio* of two small counts (a handful of move-ins, a handful of POS sales) is
-// naturally noisy/volatile early in the month in a way a raw count isn't. Legacy may be showing the
-// last COMPLETE month (June, ~30 days, much larger/stabler sample) for this specific ratio widget,
-// while ours (since the 7 Jul revert to always show real current-month partial data for flow metrics)
-// now shows the live partial month. Added optional monthArg so this can be re-run against a closed
-// month for direct comparison — same endOf() capping convention as reparse-report.js.
+// "why does a solid per-site number still roll up to an ~11x-too-high portfolio figure."
+// UPDATE 8 Jul 2026, third live run (L001, June 2026 — a full closed month): partial-month timing is
+// real but not sufficient — June's ratio (£239.69 / 24 move-ins = £9.99) is lower than July's partial
+// £20.00, so a stable month IS calmer, but £9.99/customer for one site is still nowhere near legacy's
+// £1.00 PORTFOLIO-WIDE figure. Something bigger than timing is going on.
+// New hypothesis: "Merchandise INCOME" may mean net margin (sales − cost), not gross sales. We're
+// summing gross POS charge; lib/reportMap.js's own `merchandise.parse()` (MerchandiseSummary report)
+// already computes `margin: charge - cost` for a *different* widget — if legacy's per-new-customer
+// figure is margin-based, a typical retail markup (cost near the sale price for boxes/locks/tape)
+// would shrink the numerator by roughly the multiple we're seeing. This pulls MerchandiseSummary too
+// and prints sales/cost/margin alongside the FinancialSummary POS sum, so both are visible together.
+// Optional monthArg (added this run) re-tests against any closed month — same endOf() capping
+// convention as reparse-report.js.
 // Read-only, no writes, no PII (site codes + counts/sums only, no tenant/charge descriptions beyond
 // the category code already used in production).
 // Run:  cd cinch-portal-clean && node --env-file=.env scripts/dump-financial-vs-moveins.js [siteCode] [YYYY-MM]
@@ -109,7 +114,17 @@ if (mgParsed.move_ins !== mioParsed.move_ins) {
   console.log(`  *** MISMATCH: ManagementSummary says ${mgParsed.move_ins}, MoveInsAndMoveOuts says ${mioParsed.move_ins}, same site/period. ***`);
 }
 
-console.log(`\nMerchandise Income per New Customer for ${siteCode} alone:`);
-console.log(`  using ManagementSummary move-ins (what production actually computes): £${mgParsed.move_ins ? (posSum / mgParsed.move_ins).toFixed(2) : 'n/a (0 move-ins)'}`);
-console.log(`  using MoveInsAndMoveOuts move-ins (for comparison):                   £${mioParsed.move_ins ? (posSum / mioParsed.move_ins).toFixed(2) : 'n/a (0 move-ins)'}`);
+// ADDED 8 Jul 2026: test the "Income = margin, not gross sales" hypothesis directly. MerchandiseSummary
+// is a different SiteLink report from FinancialSummary — cross-report agreement on `sales` (gross)
+// would confirm both are measuring the same underlying gross figure, making `margin` a clean,
+// deliberate alternative rather than a data-quality artifact.
+const { rows: meRows } = await callReport('MerchandiseSummary', siteCode, start, end);
+const meParsed = REPORTS.merchandise.parse(meRows);
+console.log(`\nMerchandiseSummary: units_sold=${meParsed.units_sold}  sales(gross)=£${meParsed.sales.toFixed(2)}  cost=£${meParsed.cost.toFixed(2)}  margin=£${meParsed.margin.toFixed(2)}`);
+console.log(`  (FinancialSummary POS gross sum was £${posSum.toFixed(2)} — ${Math.abs(meParsed.sales - posSum) < 1 ? 'matches' : 'DOES NOT MATCH'} MerchandiseSummary's own gross sales figure)`);
+
+const moveIns = mgParsed.move_ins;
+console.log(`\nMerchandise Income per New Customer for ${siteCode} alone (${moveIns} move-ins):`);
+console.log(`  gross POS charge ÷ move-ins (what production computes today): £${moveIns ? (posSum / moveIns).toFixed(2) : 'n/a (0 move-ins)'}`);
+console.log(`  margin (sales − cost) ÷ move-ins (candidate fix):             £${moveIns ? (meParsed.margin / moveIns).toFixed(2) : 'n/a (0 move-ins)'}`);
 process.exit(0);
