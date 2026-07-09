@@ -14,8 +14,18 @@
 //
 // This script pulls MerchandiseActivity live (same SOAP mechanism as every other report — first run
 // will reveal the real method name from the WSDL if "MerchandiseActivity" isn't exactly right) and
-// breaks the £ total (dcQty x dcNewPrice, "Sold" rows only) into Walk-In POS vs tenant-linked vs
-// blank. NEVER prints sTenantName itself (PII) — only which bucket it falls into.
+// breaks the £ total into Walk-In POS vs tenant-linked vs blank. NEVER prints sTenantName itself
+// (PII) — only which bucket it falls into.
+//
+// CORRECTED after the first live run: dcOldPrice/dcNewPrice on a "Sold" row are BLANK — those two
+// columns only carry a value on "Other"-reason PRICE-CHANGE events (confirmed live: L001's one real
+// "Sold" row priced at £0 with that approach, even though MerchandiseSummary shows £120 charged for
+// the same site/window). MerchandiseActivity is a pure QUANTITY log; it carries no £ amount for a
+// sale at all. Fix: pull MerchandiseSummary for the same site/window first, build a per-SKU
+// EFFECTIVE rate (dcChargeTotal / abs(dcSold) — inc. tax, matches what "sales" already means
+// elsewhere in this codebase) keyed by sDesc, then price each "Sold" Activity row via that rate x
+// dcQty. Note dcSold in MerchandiseSummary is a SIGNED inventory delta (negative = sold, confirmed
+// live: Extra Large Box dcSold=-20, dcChargeTotal=£120 -> £6/unit inc. tax) — abs() it.
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js [siteCode] [YYYY-MM]
 import { callReport } from '../lib/sitelink.js';
 import { REPORTS } from '../lib/reportMap.js';
@@ -38,6 +48,17 @@ const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 console.log(`=== MerchandiseActivity probe, ${siteCode}, ${fmt(start)} to ${fmt(end)} ===\n`);
 
 const num = (v) => Number(v) || 0;
+
+// Per-SKU effective rate (inc. tax, matches "sales" everywhere else in this codebase) from
+// MerchandiseSummary — MerchandiseActivity's "Sold" rows carry no £ amount of their own.
+const { rows: msRows } = await callReport(REPORTS.merchandise.method, siteCode, start, end);
+const officialSales = msRows.reduce((a, r) => a + num(r.dcChargeTotal), 0);
+const rateBySku = {};
+for (const r of msRows) {
+  const units = Math.abs(num(r.dcSold));
+  if (units > 0) rateBySku[r.sDesc] = num(r.dcChargeTotal) / units;
+}
+
 const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
 console.log(`${rows.length} row(s) returned.`);
 if (!rows.length) { console.log('No data for this window.'); process.exit(0); }
@@ -60,10 +81,12 @@ const bucket = (r) => {
   return 'named tenant (real customer/unit)';
 };
 const agg = {};
+let noRate = 0;
 for (const r of sold) {
   const b = bucket(r);
-  const price = num(r.dcNewPrice) || num(r.dcOldPrice);
-  const amount = price * num(r.dcQty);
+  const rate = rateBySku[r.sDesc];
+  if (rate == null) { noRate++; continue; }
+  const amount = rate * num(r.dcQty);
   const o = (agg[b] ??= { count: 0, amount: 0 });
   o.count++; o.amount += amount;
 }
@@ -72,14 +95,9 @@ for (const [b, o] of Object.entries(agg)) {
   console.log(`  ${b.padEnd(38)} ${String(o.count).padStart(3)} txn(s)   ~£${o.amount.toFixed(2)}`);
   grand += o.amount;
 }
-console.log(`\nRough total (price x qty, "Sold" rows only): ~£${grand.toFixed(2)}`);
+if (noRate) console.log(`  (${noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for this window)`);
+console.log(`\nReconstructed total (per-SKU rate x qty, "Sold" rows only): ~£${grand.toFixed(2)}`);
+console.log(`MerchandiseSummary.dcChargeTotal for the same site/window (what "sales" means today): £${officialSales.toFixed(2)}`);
 const nonWalkIn = Object.entries(agg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
-console.log(`Excluding Walk-In POS: ~£${nonWalkIn.toFixed(2)} (${grand ? ((nonWalkIn / grand) * 100).toFixed(1) : '0'}% of the rough total)`);
-
-// Sanity check against the report we already pull for this exact site/window.
-try {
-  const { rows: msRows } = await callReport(REPORTS.merchandise.method, siteCode, start, end);
-  const officialSales = msRows.reduce((a, r) => a + num(r.dcChargeTotal), 0);
-  console.log(`\nFor comparison, MerchandiseSummary.dcChargeTotal for the same site/window: £${officialSales.toFixed(2)}`);
-} catch (e) { console.log(`\n(Could not fetch MerchandiseSummary for comparison: ${e.message})`); }
+console.log(`Excluding Walk-In POS: ~£${nonWalkIn.toFixed(2)} (${grand ? ((nonWalkIn / grand) * 100).toFixed(1) : '0'}% of the reconstructed total)`);
 process.exit(0);
