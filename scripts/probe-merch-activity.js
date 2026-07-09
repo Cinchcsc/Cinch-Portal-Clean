@@ -1,36 +1,42 @@
 // Michael's boss sent MerchandiseActivity_20260701_20260709.xlsx (L001, per-transaction inventory
 // log) alongside MerchandiseSummary (the report we already pull). MerchandiseActivity has columns
-// MerchandiseSummary doesn't: sReason (Sold/Shipment/Other/...), sTenantName, sUnitName. In the
-// sample file, the ONE "Sold" row has sTenantName = "Walk-In POS" (SiteLink's placeholder for a
-// till sale with no specific tenant/unit) — the OTHER two rows are "Other" (a -23 adjustment,
-// comment "Online move ins") and "Shipment" (receiving stock, +72), neither a sale at all.
+// MerchandiseSummary doesn't: sReason (Sold/Shipment/Other/...), sTenantName. In the sample file, the
+// ONE "Sold" row has sTenantName = "Walk-In POS" (SiteLink's placeholder for a till sale with no
+// account attached) — the other two rows aren't sales at all (a stock adjustment, a shipment
+// receipt).
 //
-// This is a real lead on the ~11x Merchandise-Income-per-New-Customer gap: every numerator we've
-// tried so far (MerchandiseSummary.dcChargeTotal, FinancialSummary's POS category, True Revenue's
-// AccountCode 201) is a straight revenue total with NO tenant attribution — it counts walk-in retail
-// sales the same as anything else. NEVER prints sTenantName itself (PII) — only which bucket it
-// falls into.
+// This is a lead on the ~11x Merchandise-Income-per-New-Customer gap: every numerator we've tried
+// (MerchandiseSummary.dcChargeTotal, FinancialSummary's POS category, True Revenue's AccountCode
+// 201) is a straight revenue total with NO tenant attribution.
 //
-// CORRECTED after the first live run (L001, 1-9 Jul): dcOldPrice/dcNewPrice on a "Sold" row are
-// BLANK — those two columns only carry a value on "Other"-reason PRICE-CHANGE events. MerchandiseActivity
-// carries no £ amount for a sale at all. Fix: pull MerchandiseSummary for the same site/window first,
-// build a per-SKU EFFECTIVE rate (dcChargeTotal / abs(dcSold), inc. tax) keyed by sDesc, price each
-// "Sold" row via rate x dcQty. Confirmed live (L001 1-9 Jul, and portfolio-wide June): reconstruction
-// matches MerchandiseSummary.dcChargeTotal exactly.
+// PASS 1 (portfolio, June 2026): excluding Walk-In POS dropped merch-per-new-customer from £9.29 to
+// £2.75 -- real, but legacy shows ~£1.00, so ~2.75x still unexplained.
 //
-// FIRST PASS RESULT (portfolio, June 2026): excluding Walk-In POS dropped merch-per-new-customer
-// from £9.29 to £2.75 -- real, but legacy shows ~£1.00, so ~2.75x still unexplained.
+// PASS 2 (name-matching, ABANDONED): tried joining each "Sold" row's sTenantName against this
+// period's actual movers (MoveInsAndMoveOuts.TenantName) to test the boss's "sales report, then new
+// customers for that period" literally. Exact match: 0/244. Token-set match (word-order/comma
+// invariant): 0/244. Surname-only match: also inconclusive. Confirmed via a PII-safe comma-presence
+// check that punctuation format was NOT the issue (both sides are ~100% "Last, First"), so this
+// wasn't a normalization bug -- more likely MoveInsAndMoveOuts' TenantName is scoped ONLY to
+// tenants with a move event that month (a narrow list), while most merchandise buyers are ordinary
+// existing tenants who won't appear there AT ALL regardless of matching quality. Continuing to tune
+// the join was guessing, not analysis -- dropped it.
 //
-// SECOND PASS (this version) -- Michael's boss: "Find a merchandise sales report, then new customers
-// for that period." Taken literally: a sale should only count if the BUYER is one of THIS PERIOD'S
-// new movers, not just "any named tenant" (an existing tenant buying a padlock mid-tenancy shouldn't
-// count either). MoveInsAndMoveOuts' raw rows already carry TenantID for cross-referencing (used
-// elsewhere for Autobill Conversion) but MerchandiseActivity only gives a tenant NAME string, no ID
-// and no unit — so this joins by NAME (normalized/trimmed/lowercased). That's inherently approximate
-// (formatting differences, etc.) but it's the most direct test of what the boss described. Never
-// prints a name — only match/no-match. First run will print the exact MoveInsAndMoveOuts column it
-// found the name in (or the full column list if none of the guessed candidates exist), so we can
-// correct the guess if needed.
+// PASS 3 (this version) -- ANALYSIS instead of guessing: sidesteps name-matching entirely by testing
+// the underlying mechanism with numbers we already have, no new report needed. Hypothesis: if
+// merchandise sales are genuinely driven by new move-ins, then ACROSS SITES, a site's move-in count
+// this month should correlate with its Walk-In-POS £ (the theory being that a brand-new tenant's
+// first padlock/box purchase often happens AT SIGNUP, before their tenant record exists in the
+// system -- which would explain why it's tagged "Walk-In POS" and not a real tenant name -- exactly
+// the OPPOSITE of Pass 1's assumption). Computes Pearson correlation between per-site move-ins and
+// (a) Walk-In POS £, (b) named-tenant £, (c) total merch £, across all sites in one pull. If (a) >>
+// (b), Walk-In POS sales ARE largely new-mover-driven and Pass 1 excluded the wrong bucket. If (b) >>
+// (a), existing-tenant sales track movers better (closer to Pass 1's assumption, still needs
+// explaining why the name join found none). If both ~= (c), merch just scales with general site
+// activity/size and isn't cleanly attributable to "new customers" via either bucket -- meaning
+// legacy's ~£1.00 likely comes from a genuinely different report or denominator we haven't found
+// yet, at which point the next move is to ask what specific report legacy's number comes from,
+// rather than reverse-engineering it from ours.
 //
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
@@ -56,62 +62,15 @@ if (monthArg) {
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const num = (v) => Number(v) || 0;
 const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
-// FIXED after the first name-join run (portfolio, June): exact trim+lowercase got ZERO matches out
-// of 244 tenant-linked sales, across 29 sites and 1055 move-ins — suspiciously round, given how
-// commonly people buy a padlock/box right at move-in. Almost certainly a "Last, First" vs "First
-// Last" (or similar word-order/punctuation) mismatch between the two reports, a known SiteLink
-// inconsistency class elsewhere in this codebase. Fix: normalize to a SORTED, punctuation-stripped
-// token set so word order and commas can't cause a false non-match — "Smith, John" and "John Smith"
-// both become "john|smith". Still never surfaces the actual name anywhere.
-const norm = (s) => String(s || '').replace(/[.,]/g, ' ').trim().toLowerCase().split(/\s+/).filter(Boolean).sort().join('|');
-const hasComma = (s) => /,/.test(String(s || ''));
-// SECOND FIX after the token-set version ALSO got 0/244: both sides turned out to be comma-formatted
-// equally (100% of movers, all 244 tenant sales), so that wasn't it — token-set equality can still
-// miss if one side carries a middle name/initial the other omits. Fall back to SURNAME-only (text
-// before the first comma) as a looser, separate signal — still never printed, just membership.
-const surnameOf = (s) => { const str = String(s || ''); const i = str.indexOf(','); return (i >= 0 ? str.slice(0, i) : str.split(/\s+/).pop() || '').trim().toLowerCase(); };
 
-// Candidate column names for a tenant's display name on MoveInsAndMoveOuts. CONFIRMED live (9 Jul,
-// portfolio run): it's "TenantName" (no "s" prefix, unlike MerchandiseActivity's "sTenantName") —
-// listed first; the others stay as fallbacks in case a differently-shaped report ever reuses this.
-const NAME_FIELD_CANDIDATES = ['TenantName', 'sTenantName', 'sName', 'sCustomerName', 'sFullName'];
-let nameFieldUsed = null, nameFieldWarned = false;
-
-// New movers (this site/window) as a Set of normalized names — built once per site, PII stays local
-// to this function (never returned/printed, only membership booleans flow out).
-async function newMoverNames(siteCode) {
-  const { rows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
-  const moveIns = rows.filter((r) => yes(r.MoveIn));
-  if (!nameFieldUsed && rows.length && !nameFieldWarned) {
-    const field = NAME_FIELD_CANDIDATES.find((f) => f in rows[0]);
-    if (field) { nameFieldUsed = field; console.error(`  (using MoveInsAndMoveOuts."${field}" as the tenant-name field)`); }
-    else {
-      nameFieldWarned = true;
-      console.error(`  (!) none of ${NAME_FIELD_CANDIDATES.join('/')} found on MoveInsAndMoveOuts — columns are: ${Object.keys(rows[0]).join(', ')}`);
-      console.error(`  (!) new-mover matching will be skipped until this is corrected.`);
-    }
-  }
-  const names = new Set(), surnames = new Set();
-  let commaCount = 0;
-  if (nameFieldUsed) for (const r of moveIns) {
-    const raw = r[nameFieldUsed];
-    if (hasComma(raw)) commaCount++;
-    const n = norm(raw); if (n) names.add(n);
-    const sn = surnameOf(raw); if (sn) surnames.add(sn);
-  }
-  return { names, surnames, moveInCount: moveIns.length, commaCount };
-}
-
-const bucket = (r, movers, moverSurnames) => {
+const bucket = (r) => {
   const t = (r.sTenantName || '').trim();
-  if (!t) return 'blank (no tenant recorded)';
-  if (/^walk-?in pos$/i.test(t)) return 'Walk-In POS (till sale, no tenant)';
-  if (movers && movers.has(norm(t))) return 'new mover (full-name match)';
-  if (moverSurnames && moverSurnames.has(surnameOf(t))) return 'new mover (surname-only match)';
-  return 'existing tenant (no match, full or surname)';
+  if (!t) return 'blank';
+  if (/^walk-?in pos$/i.test(t)) return 'walkIn';
+  return 'named';
 };
 
-// One site's worth of work: returns { agg: {bucket -> {count, amount}}, officialSales, noRate, rowCount, moveIns }.
+// One site's worth of work — no PII ever leaves this function; only aggregate £ per bucket.
 async function runSite(siteCode) {
   const { rows: msRows } = await callReport(REPORTS.merchandise.method, siteCode, start, end);
   const officialSales = msRows.reduce((a, r) => a + num(r.dcChargeTotal), 0);
@@ -121,81 +80,82 @@ async function runSite(siteCode) {
     if (units > 0) rateBySku[r.sDesc] = num(r.dcChargeTotal) / units;
   }
 
-  const { names: movers, surnames: moverSurnames, moveInCount, commaCount: moverCommaCount } = await newMoverNames(siteCode);
+  const { rows: mgRows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
+  const moveIns = mgRows.filter((r) => yes(r.MoveIn)).length;
 
   const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
   const sold = rows.filter((r) => /^sold$/i.test(r.sReason || ''));
 
-  const agg = {};
-  let noRate = 0, tenantCommaCount = 0;
+  const amounts = { walkIn: 0, named: 0, blank: 0 };
+  const counts = { walkIn: 0, named: 0, blank: 0 };
+  let noRate = 0;
   for (const r of sold) {
-    const t = (r.sTenantName || '').trim();
-    if (t && !/^walk-?in pos$/i.test(t) && hasComma(t)) tenantCommaCount++;
-    const b = bucket(r, movers, moverSurnames);
+    const b = bucket(r);
     const rate = rateBySku[r.sDesc];
     if (rate == null) { noRate++; continue; }
-    const amount = rate * num(r.dcQty);
-    const o = (agg[b] ??= { count: 0, amount: 0 });
-    o.count++; o.amount += amount;
+    amounts[b] += rate * num(r.dcQty);
+    counts[b]++;
   }
-  return { agg, officialSales, noRate, rowCount: rows.length, moveIns: moveInCount, moverCommaCount, tenantCommaCount };
+  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns };
 }
 
-const printBreakdown = (label, agg, officialSales, noRate) => {
-  let grand = 0;
-  console.log(`\n${label}`);
-  for (const [b, o] of Object.entries(agg)) {
-    console.log(`  ${b.padEnd(46)} ${String(o.count).padStart(4)} txn(s)   ~£${o.amount.toFixed(2)}`);
-    grand += o.amount;
-  }
-  if (noRate) console.log(`  (${noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for that window)`);
-  console.log(`  Reconstructed total (per-SKU rate x qty): ~£${grand.toFixed(2)}  |  MerchandiseSummary.dcChargeTotal: £${officialSales.toFixed(2)}`);
-  return grand;
-};
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+  const mx = mean(xs), my = mean(ys);
+  let cov = 0, vx = 0, vy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; cov += dx * dy; vx += dx * dx; vy += dy * dy; }
+  const denom = Math.sqrt(vx * vy);
+  return denom ? cov / denom : null;
+}
 
 if (siteArg.toUpperCase() === 'ALL') {
   const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!locations.length) { console.error('SITELINK_LOCATIONS not set'); process.exit(1); }
-  console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===`);
+  console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===\n`);
+  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Total£'.padStart(10)}`);
 
-  const portfolioAgg = {};
-  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, sitesWithActivity = 0, moveIns = 0, moverCommas = 0, tenantCommas = 0;
+  const perSite = [];
+  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0;
+  const totalAmounts = { walkIn: 0, named: 0, blank: 0 };
+  const totalCounts = { walkIn: 0, named: 0, blank: 0 };
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
-      portfolioRows += r.rowCount;
+      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
+      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales });
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
-      moveIns += r.moveIns;
-      moverCommas += r.moverCommaCount || 0;
-      tenantCommas += r.tenantCommaCount || 0;
-      if (Object.keys(r.agg).length) sitesWithActivity++;
-      for (const [b, o] of Object.entries(r.agg)) {
-        const p = (portfolioAgg[b] ??= { count: 0, amount: 0 });
-        p.count += o.count; p.amount += o.amount;
-      }
-      console.error(`  ${loc}: ${r.rowCount} activity row(s), ${r.moveIns} move-ins, £${r.officialSales.toFixed(2)} MerchandiseSummary sales`);
-    } catch (e) { console.error(`  ${loc}: FAILED — ${e.message}`); }
+      portfolioRows += r.rowCount;
+      for (const k of ['walkIn', 'named', 'blank']) { totalAmounts[k] += r.amounts[k]; totalCounts[k] += r.counts[k]; }
+    } catch (e) { console.error(`${loc}: FAILED — ${e.message}`); }
   }
-  console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${sitesWithActivity} with at least one "Sold" row priced).`);
-  // PII-safe formatting hint: if these two percentages are wildly different (e.g. movers mostly
-  // comma-formatted, tenant sales mostly not, or vice versa), that's evidence of a "Last, First" vs
-  // "First Last" mismatch between the two reports WITHOUT ever showing an actual name.
-  console.log(`(Formatting check, no names shown: ${moveIns ? ((moverCommas / moveIns) * 100).toFixed(0) : 0}% of move-in names contain a comma; ${tenantCommas} tenant-linked Sold row(s) do too.)`);
-  const grand = printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
 
-  const nonWalkInTotal = Object.entries(portfolioAgg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
-  const fullMatchTotal = (portfolioAgg['new mover (full-name match)'] || { amount: 0 }).amount;
-  const surnameMatchTotal = fullMatchTotal + (portfolioAgg['new mover (surname-only match)'] || { amount: 0 }).amount;
-  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window (from MoveInsAndMoveOuts).`);
-  console.log(`  Merch per new customer, ALL sales (today's numerator):              £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
-  console.log(`  Merch per new customer, excl. Walk-In POS (any tenant):             £${moveIns ? (nonWalkInTotal / moveIns).toFixed(2) : 'n/a'}`);
-  console.log(`  Merch per new customer, full-name new-mover match only:             £${moveIns ? (fullMatchTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
-  console.log(`  Merch per new customer, surname-or-better new-mover match:          £${moveIns ? (surnameMatchTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
+  console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${portfolioNoRate} "Sold" row(s) skipped — SKU not priced that window).`);
+  console.log(`\nPortfolio £ by bucket: Walk-In POS £${totalAmounts.walkIn.toFixed(2)} (${totalCounts.walkIn} txn) | named tenant £${totalAmounts.named.toFixed(2)} (${totalCounts.named} txn) | blank £${totalAmounts.blank.toFixed(2)} (${totalCounts.blank} txn)`);
+  console.log(`MerchandiseSummary.dcChargeTotal for the same sites/window: £${portfolioOfficial.toFixed(2)} (reconciliation check)`);
+
+  const moveInsArr = perSite.map((s) => s.moveIns);
+  const walkInArr = perSite.map((s) => s.walkIn);
+  const namedArr = perSite.map((s) => s.named);
+  const totalArr = perSite.map((s) => s.total);
+  console.log(`\nCross-site correlation with move-ins (n=${perSite.length} sites; -1..+1, 0 = no relationship):`);
+  console.log(`  corr(moveIns, Walk-In POS £)   = ${pearson(moveInsArr, walkInArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(moveIns, named-tenant £)  = ${pearson(moveInsArr, namedArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(moveIns, total merch £)   = ${pearson(moveInsArr, totalArr)?.toFixed(2) ?? 'n/a'}`);
+
+  const moveIns = moveInsArr.reduce((a, v) => a + v, 0);
+  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window.`);
+  console.log(`  Merch per new customer, ALL sales:                £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, excl. Walk-In POS:        £${moveIns ? (totalAmounts.named / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, Walk-In POS only:         £${moveIns ? (totalAmounts.walkIn / moveIns).toFixed(2) : 'n/a'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
   console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window.`);
-  printBreakdown(`Bucketing "Sold" rows (counts/£ only, never printing the actual name):`, r.agg, r.officialSales, r.noRate);
+  console.log(`Walk-In POS: ${r.counts.walkIn} txn, £${r.amounts.walkIn.toFixed(2)} | named tenant: ${r.counts.named} txn, £${r.amounts.named.toFixed(2)} | blank: ${r.counts.blank} txn, £${r.amounts.blank.toFixed(2)}`);
+  if (r.noRate) console.log(`(${r.noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for that window)`);
+  console.log(`MerchandiseSummary.dcChargeTotal for reconciliation: £${r.officialSales.toFixed(2)}`);
 }
 process.exit(0);
