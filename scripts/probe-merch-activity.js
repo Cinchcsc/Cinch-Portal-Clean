@@ -86,6 +86,22 @@
 // too low [locks-based]) has been divided by the wrong number. Adds a Transfer-excluded move-ins
 // count alongside the raw one and recomputes every ratio + correlation against both, to see whether
 // removing transfers moves the locks-based numerators (the closest so far in magnitude) toward £1.10.
+//
+// PASS 6 RESULT (portfolio, July 1-9): zero transfers at EVERY one of the 29 sites this window
+// (MoveIns == NewMI everywhere) -- a clean non-event, not an inconclusive result. Denominator-side
+// transfer contamination is ruled out for this window. With this, 5 numerators x this denominator
+// test = every combination our own two reports can produce has now been tried; none matches legacy's
+// ~£1.10 in both magnitude AND correlation direction. Also worth noting: "Merchandise Income per New
+// Customer" never appeared as its own checkbox/report name in Michael's legacy report-picker
+// screenshot (probe-report-catalog.js's 76-label diff) -- like "Realtime Ranking"/"Site Activity", it
+// is almost certainly a COMPOSED dashboard tile, not a pullable report, consistent with the boss's
+// own "find a merch report, then new customers" description. That means our ingredients (Merchandise
+// Summary/Activity + MoveInsAndMoveOuts) are probably the right raw material -- the exact subset/
+// scope is what's eluding us, and guessing more subsets of the same two reports is diminishing
+// returns after 10 tried combinations. Next highest-leverage step is external, not more code: get ONE
+// more live legacy figure at a site where our 5 candidate ratios are maximally spread out (so a match
+// is decisive, not another zero-matches-zero coincidence) -- e.g. L029, 7 move-ins: ALL sales £42.43,
+// excl. Walk-In £16.43, Walk-In only £26.00, Locks £1.43/customer per this window's numbers.
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
 // (ALL reads site codes from SITELINK_LOCATIONS in .env; runs sequentially — SiteLink rejects
