@@ -56,7 +56,15 @@ if (monthArg) {
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const num = (v) => Number(v) || 0;
 const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
-const norm = (s) => String(s || '').trim().toLowerCase();
+// FIXED after the first name-join run (portfolio, June): exact trim+lowercase got ZERO matches out
+// of 244 tenant-linked sales, across 29 sites and 1055 move-ins — suspiciously round, given how
+// commonly people buy a padlock/box right at move-in. Almost certainly a "Last, First" vs "First
+// Last" (or similar word-order/punctuation) mismatch between the two reports, a known SiteLink
+// inconsistency class elsewhere in this codebase. Fix: normalize to a SORTED, punctuation-stripped
+// token set so word order and commas can't cause a false non-match — "Smith, John" and "John Smith"
+// both become "john|smith". Still never surfaces the actual name anywhere.
+const norm = (s) => String(s || '').replace(/[.,]/g, ' ').trim().toLowerCase().split(/\s+/).filter(Boolean).sort().join('|');
+const hasComma = (s) => /,/.test(String(s || ''));
 
 // Candidate column names for a tenant's display name on MoveInsAndMoveOuts. CONFIRMED live (9 Jul,
 // portfolio run): it's "TenantName" (no "s" prefix, unlike MerchandiseActivity's "sTenantName") —
@@ -79,8 +87,13 @@ async function newMoverNames(siteCode) {
     }
   }
   const names = new Set();
-  if (nameFieldUsed) for (const r of moveIns) { const n = norm(r[nameFieldUsed]); if (n) names.add(n); }
-  return { names, moveInCount: moveIns.length };
+  let commaCount = 0;
+  if (nameFieldUsed) for (const r of moveIns) {
+    const raw = r[nameFieldUsed];
+    if (hasComma(raw)) commaCount++;
+    const n = norm(raw); if (n) names.add(n);
+  }
+  return { names, moveInCount: moveIns.length, commaCount };
 }
 
 const bucket = (r, movers) => {
@@ -101,14 +114,16 @@ async function runSite(siteCode) {
     if (units > 0) rateBySku[r.sDesc] = num(r.dcChargeTotal) / units;
   }
 
-  const { names: movers, moveInCount } = await newMoverNames(siteCode);
+  const { names: movers, moveInCount, commaCount: moverCommaCount } = await newMoverNames(siteCode);
 
   const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
   const sold = rows.filter((r) => /^sold$/i.test(r.sReason || ''));
 
   const agg = {};
-  let noRate = 0;
+  let noRate = 0, tenantCommaCount = 0;
   for (const r of sold) {
+    const t = (r.sTenantName || '').trim();
+    if (t && !/^walk-?in pos$/i.test(t) && hasComma(t)) tenantCommaCount++;
     const b = bucket(r, movers);
     const rate = rateBySku[r.sDesc];
     if (rate == null) { noRate++; continue; }
@@ -116,7 +131,7 @@ async function runSite(siteCode) {
     const o = (agg[b] ??= { count: 0, amount: 0 });
     o.count++; o.amount += amount;
   }
-  return { agg, officialSales, noRate, rowCount: rows.length, moveIns: moveInCount };
+  return { agg, officialSales, noRate, rowCount: rows.length, moveIns: moveInCount, moverCommaCount, tenantCommaCount };
 }
 
 const printBreakdown = (label, agg, officialSales, noRate) => {
@@ -137,7 +152,7 @@ if (siteArg.toUpperCase() === 'ALL') {
   console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===`);
 
   const portfolioAgg = {};
-  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, sitesWithActivity = 0, moveIns = 0;
+  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, sitesWithActivity = 0, moveIns = 0, moverCommas = 0, tenantCommas = 0;
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
@@ -145,6 +160,8 @@ if (siteArg.toUpperCase() === 'ALL') {
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
       moveIns += r.moveIns;
+      moverCommas += r.moverCommaCount || 0;
+      tenantCommas += r.tenantCommaCount || 0;
       if (Object.keys(r.agg).length) sitesWithActivity++;
       for (const [b, o] of Object.entries(r.agg)) {
         const p = (portfolioAgg[b] ??= { count: 0, amount: 0 });
@@ -154,6 +171,10 @@ if (siteArg.toUpperCase() === 'ALL') {
     } catch (e) { console.error(`  ${loc}: FAILED — ${e.message}`); }
   }
   console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${sitesWithActivity} with at least one "Sold" row priced).`);
+  // PII-safe formatting hint: if these two percentages are wildly different (e.g. movers mostly
+  // comma-formatted, tenant sales mostly not, or vice versa), that's evidence of a "Last, First" vs
+  // "First Last" mismatch between the two reports WITHOUT ever showing an actual name.
+  console.log(`(Formatting check, no names shown: ${moveIns ? ((moverCommas / moveIns) * 100).toFixed(0) : 0}% of move-in names contain a comma; ${tenantCommas} tenant-linked Sold row(s) do too.)`);
   const grand = printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
 
   const nonWalkInTotal = Object.entries(portfolioAgg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
