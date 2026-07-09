@@ -58,9 +58,10 @@ const num = (v) => Number(v) || 0;
 const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
 const norm = (s) => String(s || '').trim().toLowerCase();
 
-// Candidate column names for a tenant's display name on MoveInsAndMoveOuts — we don't know the exact
-// one without a live look, so try the likely ones in order and report which (if any) was used.
-const NAME_FIELD_CANDIDATES = ['sTenantName', 'sName', 'sCustomerName', 'sFullName'];
+// Candidate column names for a tenant's display name on MoveInsAndMoveOuts. CONFIRMED live (9 Jul,
+// portfolio run): it's "TenantName" (no "s" prefix, unlike MerchandiseActivity's "sTenantName") —
+// listed first; the others stay as fallbacks in case a differently-shaped report ever reuses this.
+const NAME_FIELD_CANDIDATES = ['TenantName', 'sTenantName', 'sName', 'sCustomerName', 'sFullName'];
 let nameFieldUsed = null, nameFieldWarned = false;
 
 // New movers (this site/window) as a Set of normalized names — built once per site, PII stays local
