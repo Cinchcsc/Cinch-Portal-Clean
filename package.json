@@ -86,7 +86,8 @@
     "verify:realrate-truerev-fix": "node --env-file=.env scripts/verify-realrate-truerev-fix.js",
     "check:truerevenue-freshness": "node --env-file=.env scripts/check-truerevenue-freshness.js",
     "probe:realrate-formula-variant": "node --env-file=.env scripts/probe-realrate-formula-variant.js",
-    "probe:merch-activity": "node --env-file=.env scripts/probe-merch-activity.js"
+    "probe:merch-activity": "node --env-file=.env scripts/probe-merch-activity.js",
+    "probe:report-catalog": "node --env-file=.env scripts/probe-report-catalog.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
