@@ -39,28 +39,39 @@ let diff = null;
   }
 })(result);
 
+// PII safety net for raw dumps: redact any STRING value that looks like an email or a
+// "Last, First"-style name, without assuming which column it's under (we don't know the shape
+// yet, so we can't safelist by column name the way the other probes do).
+const emailRe = /[^\s"]+@[^\s"]+\.[a-z]{2,}/i;
+const nameCommaRe = /^[A-Za-z'-]+,\s*[A-Za-z'-]+$/;
+function redactRaw(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && (emailRe.test(v) || nameCommaRe.test(v))) out[k] = '[redacted]';
+    else if (v && typeof v === 'object') out[k] = redactRaw(v);
+    else out[k] = v;
+  }
+  return out;
+}
+
 const tables = [];
 (function walk(node, path) {
   if (!node || typeof node !== 'object') return;
   for (const [k, v] of Object.entries(node)) {
     if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
-      const keys = Object.keys(v[0].attributes || v[0]);
-      // PII-safety: redact any value under a column name that looks like it could carry PII;
-      // numeric/category columns print as-is.
-      const piiLike = keys.filter((c) => /name|email|phone|address|tenant|customer/i.test(c));
-      const sample = {};
-      for (const c of keys) {
-        const val = (v[0].attributes || v[0])[c];
-        sample[c] = piiLike.includes(c) ? '[redacted]' : val;
-      }
-      tables.push({ path: `${path}.${k}`, name: k, count: v.length, keys, sample });
+      tables.push({ path: `${path}.${k}`, name: k, count: v.length, rows: v });
     } else if (v && typeof v === 'object') walk(v, `${path}.${k}`);
   }
 })(diff || result, 'root');
 
 console.log(`Found ${tables.length} row-array table(s) in the raw IncomeAnalysis response:\n`);
 for (const t of tables) {
-  console.log(`"${t.name}" (${t.count} rows) — columns: ${t.keys.join(', ')}`);
-  console.log(`  sample row: ${JSON.stringify(t.sample)}\n`);
+  console.log(`"${t.name}" (${t.count} rows)`);
+  for (const r of t.rows.slice(0, 3)) {
+    console.log(`  own keys: ${Object.keys(r).join(', ')}`);
+    if (r.attributes) console.log(`  .attributes keys: ${Object.keys(r.attributes).join(', ')}`);
+    console.log(`  raw: ${JSON.stringify(redactRaw(r))}`);
+  }
+  console.log('');
 }
 process.exit(0);
