@@ -94,7 +94,8 @@
     "probe:repeat-tenant-moveins": "node --env-file=.env scripts/probe-repeat-tenant-moveins.js",
     "probe:window-length": "node --env-file=.env scripts/probe-window-length.js",
     "probe:financial-pos-merchandise": "node --env-file=.env scripts/probe-financial-pos-merchandise.js",
-    "probe:truerevenue-merch-invoiced": "node --env-file=.env scripts/probe-truerevenue-merch-invoiced.js"
+    "probe:truerevenue-merch-invoiced": "node --env-file=.env scripts/probe-truerevenue-merch-invoiced.js",
+    "probe:autobill-bicester": "node --env-file=.env scripts/probe-autobill-bicester.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
