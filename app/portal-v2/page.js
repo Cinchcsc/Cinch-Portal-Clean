@@ -1600,13 +1600,30 @@ export default function PortalV2Page() {
         // fewer decimal, so the same underlying number showed as e.g. "86%" here vs "86.4%" there.
         ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
         : { title: 'Autobill Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '16%', dir: 'down' }], hasViz: true, el: <Donut pct={57} color={C.blue} /> };
-      // Insurance Conversion: new insured customers (TenantID cross-reference, insNewCount above) ÷
-      // new move-ins for the month — the standard "did the new customer take out insurance"
-      // conversion rate. CORRECTED 6 Jul 2026: previously read 873% (!) using
-      // mg.insured_moveins/ia.new_policies as the numerator — confirmed wrong (ManagementSummary's
-      // "Insurance" activity row is not scoped to new move-ins specifically, it's some larger/
-      // different count). insNewCount is real cross-referenced data, can never exceed moveInsSum.
-      const insConvPct = liveSites && moveInsSum ? +(insNewCount / moveInsSum * 100).toFixed(0) : null;
+      // Insurance Conversion: new insured customers (insNewCount above) ÷ new move-ins for the month —
+      // the standard "did the new customer take out insurance" conversion rate. CORRECTED 6 Jul 2026:
+      // previously read 873% (!) using mg.insured_moveins/ia.new_policies as the numerator — confirmed
+      // wrong (ManagementSummary's "Insurance" activity row is not scoped to new move-ins specifically,
+      // it's some larger/different count).
+      // CORRECTION 9 Jul 2026 (exhaustive sweep + "sort out the bug"): the line removed above claimed
+      // "insNewCount is real cross-referenced data, can never exceed moveInsSum" — that's false, and
+      // saying so is what let this go unnoticed. insNewCount is NOT TenantID-cross-referenced against
+      // moveInsSum at all — see reportMap.js's insurance_roll comment: InsuranceRoll has no TenantID
+      // column (confirmed via probe:insurance-roll-columns) and its LedgerID doesn't overlap with
+      // MoveInsAndMoveOuts' TenantIDs either (confirmed via check:merch-insurance-live) — both
+      // cross-reference attempts were dead ends. insNewCount is instead just InsuranceRoll's own rows
+      // filtered by `iActive` and `dMovedIn` falling in this period's window — a totally independent
+      // proxy for "new customer this month" from a different report, with no shared key to moveInsSum
+      // (MoveInsAndMoveOuts' move-in count). Nothing mathematically guarantees insNewCount ≤ moveInsSum;
+      // confirmed live at 7/29 sites this period (e.g. Bicester 120%, Mitcham 125%) where the two
+      // reports simply disagree on which individual customers are "new" even though each total can be
+      // correct on its own terms. Not fixable by better arithmetic — would need SiteLink to expose a
+      // real per-tenant key on InsuranceRoll, which it doesn't. Clamping at 100% below: a conversion
+      // rate over 100% is never a meaningful answer, so treat any overshoot as "~everyone insured"
+      // rather than show a nonsensical number. insNewCount itself is left un-clamped — Insurance
+      // Premiums (New Customers) further down divides it into insNewPremium/insNewCoverage, which need
+      // to stay internally consistent with each other, not with moveInsSum.
+      const insConvPct = liveSites && moveInsSum ? Math.min(100, +(insNewCount / moveInsSum * 100).toFixed(0)) : null;
       const insuranceConvCard = insConvPct != null
         ? { title: 'Insurance Conversion', live: true, tiles: [{ value: insConvPct + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={insConvPct} /> }
         : { title: 'Insurance Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '7%', dir: 'up' }], hasViz: true, el: <Gauge pct={57} /> };
