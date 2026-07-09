@@ -542,6 +542,12 @@ function NavIcon({ id }) {
         <rect x={11} y={12} width={10} height={9} stroke="currentColor" strokeWidth={2} />
       </>
     ),
+    discountSummary: (
+      <>
+        <path d="M20.59 13.41 12 22 2 12l1.41-9.59L11 2l9.59 9.59a2 2 0 0 1 0 2.82Z" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" />
+        <circle cx={8.5} cy={7.5} r={1.5} stroke="currentColor" strokeWidth={2} />
+      </>
+    ),
   };
   return <svg width={18} height={18} viewBox="0 0 24 24" fill="none">{defs[id]}</svg>;
 }
@@ -1994,6 +2000,48 @@ export default function PortalV2Page() {
       ];
     }
 
+    else if (page === 'discountSummary') {
+      // Discount Summary — new page (9 Jul 2026, Michael: "add page 'Discount Summary' under
+      // performance"). Which discount plans are currently in use, by how many customers, and how
+      // much £ discount — from the standalone Discounts SOAP method (confirmed real against the live
+      // WSDL; "DiscountSummary"/"UnitStatus" from SiteLink's own report picker are NOT callable API
+      // methods). "Monthly flow" definition per Michael's decision (2nd AskUserQuestion, 9 Jul 2026):
+      // anyone with a discounted charge posted during the selected month, not a right-now snapshot —
+      // the only version that can be pulled automatically on a schedule and gives a real reproducible
+      // number for any past month. Unit/customer counts are deduplicated per unit (a unit on a ~28-day
+      // billing cycle can post 2 charge rows inside one calendar month — confirmed live, not a bug);
+      // £ totals sum every charge line as-is. See lib/reportMap.js's `discounts` comment for the full
+      // source investigation.
+      const dsT = liveSites ? computeTotals(liveSites) : null;
+      const dsRows = dsT?.discountPlans?.length ? dsT.discountPlans : null;
+      if (!dsRows) console.warn('[portal-v2] Discount Summary page rendering with mock data (no live discounts data yet — run npm run pull after adding the discounts report to the pipeline).');
+      const mockDS = [
+        { plan: 'Variances from Standard Rate: Non-Expiring', units: 71, discount: 3442.43 },
+        { plan: '50% OFF 12 Weeks', units: 21, discount: 1731.65 },
+        { plan: '50% OFF 8 Weeks', units: 8, discount: 582.04 },
+        { plan: '10% OFF 12 Months.', units: 4, discount: 39.13 },
+      ];
+      const planRows = dsRows || mockDS;
+      const totalUnits = planRows.reduce((a, r) => a + r.units, 0);
+      const totalDiscount = R2(planRows.reduce((a, r) => a + r.discount, 0));
+      out.statCards = [
+        { title: 'Units on a Discount Plan', live: !!dsRows, tiles: [{ value: intFmt(totalUnits), label: 'This month', delta: null, dir: null }] },
+        { title: 'Total £ Discount', live: !!dsRows, tiles: [{ value: money(totalDiscount), label: 'This month', delta: null, dir: null }] },
+      ];
+      out.chartCards = [
+        { title: 'Units by Discount Plan', el: <VBars items={planRows.map((r) => ({ label: r.plan.length > 22 ? r.plan.slice(0, 21) + '…' : r.plan, value: r.units, disp: intFmt(r.units), color: C.blue }))} opts={{ max: Math.max(...planRows.map((r) => r.units)) * 1.15 }} /> },
+      ];
+      out.tables = [
+        { title: 'Discount Plans', live: !!dsRows, pageSize: 20, wide: true,
+          columns: [
+            { key: 'plan', label: 'Plan', type: 'text' },
+            { key: 'units', label: 'Units (Customers)', type: 'int', align: 'right' },
+            { key: 'discount', label: '£ Discount', type: 'money', align: 'right' },
+          ],
+          rows: planRows, totals: { units: totalUnits, discount: totalDiscount }, totalsLabel: 'Total' },
+      ];
+    }
+
     return out;
   }
 
@@ -2029,7 +2077,7 @@ export default function PortalV2Page() {
         return [['KPI', 'Value', 'Change'], ...d.kpiRow.map((k) => [k.label, k.value, k.delta ? (k.dir === 'up' ? '+' : '-') + k.delta : ''])];
       },
     });
-    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail' };
+    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary' };
     Object.keys(pages).forEach((pk) => {
       const d = pk === page ? pageData : withPage(pk);
       d.tables.forEach((t, i) => items.push({
@@ -2113,7 +2161,7 @@ export default function PortalV2Page() {
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
-  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail' };
+  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary' };
 
   const kpiRow = pageData.kpiRow.map((k) => ({ ...k, hasDelta: !!k.delta, ...chip(k.delta, k.dir) }));
   const statCards = pageData.statCards.map((c) => ({
@@ -2162,7 +2210,7 @@ export default function PortalV2Page() {
 
   const navGroups = [
     { label: 'Overview', items: [{ id: 'dashboard', label: 'Dashboard' }] },
-    { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }] },
+    { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }, { id: 'discountSummary', label: 'Discount Summary' }] },
     { label: 'Growth', items: [{ id: 'marketing', label: 'Marketing' }] },
     { label: 'Trends', items: [{ id: 'mom', label: 'Month on Month' }] },
   ];
