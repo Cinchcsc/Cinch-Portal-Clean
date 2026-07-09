@@ -25,7 +25,7 @@ const KNOWN = {
   L001: { name: 'Bicester', legacy: 0 },
   L012: { name: 'Gillingham', legacy: 0 },
   L029: { name: 'Abingdon', legacy: 41.20 },
-  L006: { name: 'Huntingdon', legacy: '1.06 / 0.60 (unstable)' },
+  L006: { name: 'Huntingdon', legacy: 0.60 }, // corrected — the £1.06 reading was a typo, not a second real observation
   L010: { name: 'Mitcham', legacy: 1.46 },
 };
 
