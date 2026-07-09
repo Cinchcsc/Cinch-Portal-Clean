@@ -1,23 +1,22 @@
-// Merchandise Income per New Customer: portfolio-wide breakdown.
-// Five rounds of single-site (L001) checks have each independently confirmed the per-site arithmetic
-// is sound and STILL land nowhere near legacy's £1.00 portfolio figure:
-//   1) Multi-table double-counting in FinancialSummary — ruled out (extractRows() picks the right table).
-//   2) Wrong POS source table (POSCharges vs Charge-filtered-by-category) — ruled out, they agree exactly.
-//   3) moveIns denominator source (ManagementSummary vs MoveInsAndMoveOuts) — ruled out, they agree exactly.
-//   4) Partial vs complete month timing — real (July's £20.00 vs June's £9.99) but not enough on its own.
-//   5) Gross vs margin ("Income" = profit, not sales) — margin (£6.48) is still ~6.5x too high, AND
-//      buildPayload.js's own 6 Jul 2026 comment says legacy's OWN tooltip confirmed gross FinancialSummary
-//      charges (not MerchandiseSummary margin) is the right source. This hypothesis is dead twice over.
-// Also found in passing: FinancialSummary's POS charge sum (£239.69) and MerchandiseSummary's own gross
-// `sales` figure (£287.60) do NOT match each other for the same site/period — a ~20% cross-report gap
-// that's odd but doesn't explain an 11x portfolio gap and isn't the field production reads anyway.
-// With every single-site mechanical explanation exhausted, the remaining candidates are either (a) legacy's
-// "new customer" denominator means something other than this-period move-ins, or (b) a portfolio-level
-// aggregation effect invisible from any one site — e.g. a site with a data gap (new sites L028/L029, or
-// any of the other known historical backfill gaps this project has hit before) contributing merchandise
-// revenue but not move-ins, skewing the sum-then-divide ratio. This reads the SAME buildPayload() production
-// code (DB-only, zero live SiteLink calls) and prints every site's merchandise/moveIns/ratio side by side,
-// sorted worst-ratio-first, plus the portfolio sum-then-divide total for a sanity check against the live page.
+// Merchandise Income per New Customer: portfolio-wide breakdown, now testing ALTERNATIVE "new
+// customer" denominators.
+// Prior investigation (all confirmed, see git log / docs/roadmap.md for the full trail): the numerator
+// (gross POS charge from FinancialSummary) is correct per legacy's own tooltip; the current denominator
+// (ManagementSummary's move_ins) agrees exactly with MoveInsAndMoveOuts; the portfolio sum-then-divide
+// math reproduces the live £11.01 exactly, and no single site's data is anomalous — the £11.01 is a
+// smooth, genuine aggregate of 29 real sites. Every mechanical/data-quality explanation is exhausted.
+// NEW ANGLE (9 Jul 2026): this codebase already computes MULTIPLE other "new customer"-ish counts for
+// OTHER widgets, each with a different scope than plain move-ins:
+//   - autobillNewTotal = count of DISTINCT move-in tenant IDs (buildPayload.js) — should be very close
+//     to moveIns (same underlying event, counted a different way) but worth confirming they actually agree.
+//   - reservationsMade = InquiryTracking's reservation-stage count for the period (built 6 Jul 2026
+//     specifically as a reliable historical flow metric for "Reservations vs Move-outs") — this counts
+//     people who RESERVED this period, a materially different (and likely larger) population than
+//     people who completed a move-in this period.
+// If legacy's "new customer" denominator is actually reservations-based rather than move-in-based, that
+// would shrink the ratio without any of it being a bug — just a different (and equally legitimate)
+// definition. This reads buildPayload() directly (DB-only, zero live SiteLink calls) and prints the
+// portfolio ratio using each candidate denominator side by side.
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/dump-merch-portfolio.js [YYYY-MM]
 import { buildPayload } from '../lib/buildPayload.js';
 
@@ -31,25 +30,25 @@ const prevStart = new Date(curStart.getFullYear(), curStart.getMonth() - 1, 1);
 const payload = await buildPayload(curStart, prevStart);
 console.log(`=== Merchandise Income per New Customer, portfolio breakdown, ${payload.current_month} (${payload.sites.length} sites) ===\n`);
 
-let sumMerch = 0, sumMoveIns = 0;
+let sumMerch = 0, sumMoveIns = 0, sumAutobillTotal = 0, sumResMade = 0;
 const rows = payload.sites.map((s) => {
   const merch = (s.merchandise && s.merchandise.chargeFromFinancial) || 0;
   const moveIns = s.moveIns || 0;
-  sumMerch += merch; sumMoveIns += moveIns;
-  return { code: s.code, merch, moveIns, ratio: moveIns ? merch / moveIns : null };
+  const autobillTotal = s.autobillNewTotal || 0;
+  const resMade = s.reservationsMade || 0;
+  sumMerch += merch; sumMoveIns += moveIns; sumAutobillTotal += autobillTotal; sumResMade += resMade;
+  return { code: s.code, merch, moveIns, autobillTotal, resMade };
 });
 
-rows.sort((a, b) => (b.ratio ?? -1) - (a.ratio ?? -1));
+rows.sort((a, b) => a.code.localeCompare(b.code));
 for (const r of rows) {
-  const flag = r.moveIns === 0 && r.merch !== 0 ? '  *** 0 move-ins but nonzero merchandise — inflates the portfolio ratio ***' : '';
-  console.log(`  ${r.code.padEnd(6)} merch=£${r.merch.toFixed(2).padStart(9)}  moveIns=${String(r.moveIns).padStart(4)}  ratio=${r.ratio === null ? 'n/a (0 move-ins)' : '£' + r.ratio.toFixed(2)}${flag}`);
+  const mismatch = r.moveIns !== r.autobillTotal ? `  *** moveIns=${r.moveIns} vs autobillNewTotal=${r.autobillTotal} disagree ***` : '';
+  console.log(`  ${r.code.padEnd(6)} merch=£${r.merch.toFixed(2).padStart(9)}  moveIns=${String(r.moveIns).padStart(3)}  autobillNewTotal=${String(r.autobillTotal).padStart(3)}  reservationsMade=${String(r.resMade).padStart(3)}${mismatch}`);
 }
 
-console.log(`\nPortfolio sum-then-divide: Σmerch=£${sumMerch.toFixed(2)}  ΣmoveIns=${sumMoveIns}  ratio=£${sumMoveIns ? (sumMerch / sumMoveIns).toFixed(2) : 'n/a'}`);
-console.log(`(this should match what's live on the Ancillaries page right now, if portal_payload is current)`);
-
-const zeroMoveInsWithMerch = rows.filter((r) => r.moveIns === 0 && r.merch !== 0);
-if (zeroMoveInsWithMerch.length) {
-  console.log(`\n${zeroMoveInsWithMerch.length} site(s) have merchandise revenue but 0 move-ins this period — each one inflates the portfolio ratio with no offsetting denominator.`);
-}
+console.log(`\nPortfolio sum-then-divide, by candidate denominator:`);
+console.log(`  moveIns (today's denominator):  Σ=${String(sumMoveIns).padStart(5)}  ratio=£${sumMoveIns ? (sumMerch / sumMoveIns).toFixed(2) : 'n/a'}`);
+console.log(`  autobillNewTotal:                Σ=${String(sumAutobillTotal).padStart(5)}  ratio=£${sumAutobillTotal ? (sumMerch / sumAutobillTotal).toFixed(2) : 'n/a'}`);
+console.log(`  reservationsMade:                 Σ=${String(sumResMade).padStart(5)}  ratio=£${sumResMade ? (sumMerch / sumResMade).toFixed(2) : 'n/a'}`);
+console.log(`\n(Σmerch = £${sumMerch.toFixed(2)} in all three — only the denominator changes)`);
 process.exit(0);
