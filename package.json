@@ -92,7 +92,8 @@
     "dump:incomeanalysis-tables": "node --env-file=.env scripts/dump-incomeanalysis-tables.js",
     "dump:incomeanalysis-categories": "node --env-file=.env scripts/dump-incomeanalysis-categories.js",
     "probe:repeat-tenant-moveins": "node --env-file=.env scripts/probe-repeat-tenant-moveins.js",
-    "probe:window-length": "node --env-file=.env scripts/probe-window-length.js"
+    "probe:window-length": "node --env-file=.env scripts/probe-window-length.js",
+    "probe:financial-pos-merchandise": "node --env-file=.env scripts/probe-financial-pos-merchandise.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
