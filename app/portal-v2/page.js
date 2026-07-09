@@ -150,6 +150,30 @@ function computeTotals(sites) {
     })).sort((a, b) => a.area - b.area);
   })();
   t.rentalActivityByTypeSize = rentalActivityByTypeSize;
+  // Discount Summary + Move-in Variance vs Standard Rate (added 9 Jul 2026) — mirrors
+  // lib/buildPayload.js's aggregateTotals() exactly, so the store filter recomputes these
+  // client-side the same way it does for every other rollup here.
+  const discountPlans = (() => {
+    const g = {};
+    for (const s of sites) for (const row of (s.discountPlans || [])) {
+      const o = (g[row.plan] ??= { plan: row.plan, units: 0, discount: 0 });
+      o.units += row.units; o.discount += row.discount;
+    }
+    return Object.values(g).map((o) => ({ ...o, discount: R2(o.discount) })).sort((a, b) => b.units - a.units);
+  })();
+  t.discountPlans = discountPlans;
+  t.moveInVarianceCount = sum('moveInVarianceCount');
+  const moveInVarianceSumTotal = sum('moveInVarianceSum');
+  t.moveInVarianceAvg = t.moveInVarianceCount ? R2(moveInVarianceSumTotal / t.moveInVarianceCount) : 0;
+  const varFromStdRate = (() => {
+    const g = {};
+    for (const s of sites) for (const b of (s.varFromStdRate || [])) {
+      const o = (g[b.bucket] ??= { bucket: b.bucket, count: 0, sortId: b.sortId });
+      o.count += b.count || 0;
+    }
+    return Object.values(g).sort((a, b) => a.sortId - b.sortId);
+  })();
+  t.varFromStdRate = varFromStdRate;
   return t;
 }
 
@@ -1234,19 +1258,33 @@ export default function PortalV2Page() {
         // the Dashboard's copy: sum each site's moveIns/moveOuts/netArea (ManagementSummary).
         (() => {
           if (!liveSites) return { title: 'Move-ins & Move-outs', tiles: [
-              { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' }, { value: intFmt(2040 * f) + ' ft²', label: 'Net ft²', delta: '160', dir: 'up' },
+              { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' },
+              { value: intFmt(1980 * f) + ' ft²', label: 'Sqft In', delta: '140', dir: 'up' }, { value: intFmt(-60 * f) + ' ft²', label: 'Sqft Out', delta: '20', dir: 'down' },
+              { value: intFmt(2040 * f) + ' ft²', label: 'Net ft²', delta: '160', dir: 'up' },
             ] };
           const moveIns = liveSites.reduce((a, s) => a + (s.moveIns || 0), 0);
           const moveOuts = liveSites.reduce((a, s) => a + (s.moveOuts || 0), 0);
           const netArea = liveSites.reduce((a, s) => a + (s.netArea || 0), 0);
+          // Gross Sqft In/Out — ADDED 9 Jul 2026 (Michael: "we currently display just a net sqft
+          // number, can you get gross sqft in and out please. Take from move in & out report"). Both
+          // were already computed by reportMap.js's move_ins_outs parser (moved_in_area/moved_out_area)
+          // but only the NET (in minus out) ever made it past lib/buildPayload.js. moveOutArea shown as
+          // a negative number (ft² that LEFT occupied stock) so it reads consistently with Net ft² =
+          // Sqft In + Sqft Out.
+          const moveInArea = liveSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0);
+          const moveOutArea = liveSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0);
           // "vs last month" comparators — same livePrevSites source as kpiPrevT above, just reduced
           // directly since this card isn't computeTotals()-derived.
           const prevMoveIns = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveIns || 0), 0) : null;
           const prevMoveOuts = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOuts || 0), 0) : null;
           const prevNetArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.netArea || 0), 0) : null;
+          const prevMoveInArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0) : null;
+          const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
           return { title: 'Move-ins & Move-outs', live: true, tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count') },
+              { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'count') },
+              { value: intFmt(-moveOutArea) + ' ft²', label: 'Sqft Out', ...deltaTick(-moveOutArea, prevMoveOutArea != null ? -prevMoveOutArea : null, 'count') },
               { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'count') },
             ] };
         })(),
@@ -1262,6 +1300,14 @@ export default function PortalV2Page() {
           const prevRate = livePrevSites ? moveInRate(livePrevSites) : null;
           return { title: 'Move-In Rental Rate', live: true, tiles: [{ value: '£' + rate.toFixed(2), label: 'Per ft² (this month’s move-ins)', ...deltaTick(rate, prevRate, 'money') }] };
         })(),
+        // Move-in Variance vs Standard Rate — this-period half (ADDED 9 Jul 2026, Michael's "build
+        // both" decision, after the "verify you have everything" check confirmed exact source fields
+        // via live probes). Discounts report's dcVariance for tenants who moved in THIS month,
+        // deduplicated by unit (a unit on a ~28-day billing cycle can post 2 charge rows inside one
+        // calendar month — confirmed live, not a bug — so this avoids double-weighting one move-in).
+        kpiT
+          ? { title: 'Move-in Variance vs Standard Rate', live: true, tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, delta: null, dir: null }] }
+          : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '£18.40', label: 'Avg per new move-in (n=11)', delta: null, dir: null }] },
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
         // Autobill Conversion: live-wired from /api/portfolio's totals. Renamed from "Autobill" (2
@@ -1317,6 +1363,18 @@ export default function PortalV2Page() {
         { title: 'Units by Customer Type', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }] : [{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
         { title: 'Rate per ft² by Customer Type', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }] : [{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
         { title: 'Rate Increases by Store (Current Month)', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
+        // Move-in Variance vs Standard Rate — whole-book half (ADDED 9 Jul 2026, Michael's "build
+        // both" decision). Live-wired from kpiT.varFromStdRate (ManagementSummary's hidden
+        // VarFromStdRate table — every currently-occupied unit at the site, bucketed by how far its
+        // rent sits from standard rate). A live snapshot regardless of month, same "as of now, not
+        // true history" caveat as RentRoll/OccupancyStatistics elsewhere in this app.
+        (() => {
+          const buckets = kpiT?.varFromStdRate;
+          const mockBuckets = [{ bucket: '< 0%', count: 145 }, { bucket: '0 - 15%', count: 74 }, { bucket: '15 - 30%', count: 61 }, { bucket: '30 - 50%', count: 33 }, { bucket: '> 50%', count: 1 }];
+          const data = (buckets && buckets.length ? buckets : mockBuckets).map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue }));
+          if (!buckets || !buckets.length) console.warn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
+          return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
+        })(),
       ];
       const unitDefs = [['9 ft²', 'Locker', 4, 36], ['15 ft²', 'Locker', 16, 240], ['25 ft²', 'Small', 31, 775], ['35 ft²', 'Small', 78, 2730], ['50 ft²', 'Medium', 88, 4400], ['75 ft²', 'Medium', 40, 3000], ['100 ft²', 'Large', 13, 1300], ['125 ft²', 'Large', 10, 1250], ['150 ft²', 'Large', 9, 1350], ['180 ft²', 'Drive Up', 2, 360], ['200 ft²', 'Drive Up', 3, 600], ['250 ft²', 'Enterprise', 2, 500]];
       // Unit Mix Occupancy: live-wired from /api/portfolio's per-site `unitMix` array (lib/reportMap.js's
