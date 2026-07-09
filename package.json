@@ -64,6 +64,7 @@
     "dump:merch-truerevenue": "node --env-file=.env scripts/dump-merch-truerevenue.js",
     "check:stored-truerevenue": "node --env-file=.env scripts/check-stored-truerevenue.js",
     "check:payload-truerevenue": "node --env-file=.env scripts/check-payload-truerevenue.js",
+    "check:portfolio-truerevenue": "node --env-file=.env scripts/check-portfolio-truerevenue.js",
     "check:month-site-coverage": "node --env-file=.env scripts/check-month-site-coverage.js",
     "check:truerevenue-duplicates": "node --env-file=.env scripts/check-truerevenue-duplicates.js",
     "check:occupancy-totalunits": "node --env-file=.env scripts/check-occupancy-totalunits.js",
