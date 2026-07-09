@@ -67,6 +67,25 @@
 // Walk-In POS lock sales, which Pass 4's Locks Income didn't distinguish) -- the idea being a new
 // mover's lock is added to THEIR ledger at move-in, while a Walk-In-POS lock sale is more likely an
 // existing tenant replacing a lost key at the counter.
+//
+// PASS 5 RESULT (portfolio, July 1-9): named-tenant-lock £ == Locks Income £ EXACTLY at every site
+// (£147.00 both) -- zero Walk-In POS lock sales happened anywhere this window, so the intersection
+// added no new information (same r=-0.20, same £0.52/customer as Pass 4). Also had to walk back part
+// of the Pass 5 rationale: Locks£ is £0 at 21 of 29 sites (73%), so L001/L012 both showing £0 is the
+// base rate, not a meaningful match -- and the correlation is NEGATIVE, i.e. actual evidence against
+// the locks hypothesis, not for it. Separately ruled out IncomeAnalysis (a previously-untested SOAP
+// report) as a lead: pulled its full category breakdown (both Cash and Accrual bases) and it's a pure
+// rent-reconciliation waterfall (Gross Potential -> Vacancy Loss -> Rent Payments by method ->
+// Discounts/Concessions) -- zero rows relate to merchandise or customer counts.
+//
+// PASS 6 (this version) -- untested assumption on the DENOMINATOR side: every pass so far has divided
+// by ALL MoveIn=true rows in MoveInsAndMoveOuts. A TRANSFER (existing tenant moving to a different
+// unit at the SAME site) also sets MoveIn=true on the destination row -- it is not a new customer,
+// and we've never excluded it. If transfers are inflating the "new customer" denominator, every ratio
+// so far (all systematically off from legacy's ~£1.10, either much too high [sales-based] or ~2.1x
+// too low [locks-based]) has been divided by the wrong number. Adds a Transfer-excluded move-ins
+// count alongside the raw one and recomputes every ratio + correlation against both, to see whether
+// removing transfers moves the locks-based numerators (the closest so far in magnitude) toward £1.10.
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
 // (ALL reads site codes from SITELINK_LOCATIONS in .env; runs sequentially — SiteLink rejects
@@ -119,7 +138,11 @@ async function runSite(siteCode) {
   }
 
   const { rows: mgRows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
-  const moveIns = mgRows.filter((r) => yes(r.MoveIn)).length;
+  const moveInRows = mgRows.filter((r) => yes(r.MoveIn));
+  const moveIns = moveInRows.length;
+  // Pass 6: a transfer (existing tenant, different unit, SAME site) also sets MoveIn=true on the
+  // destination row -- it is not a new customer. This is the count with those excluded.
+  const moveInsNewOnly = moveInRows.filter((r) => !yes(r.Transfer)).length;
 
   const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
   const sold = rows.filter((r) => /^sold$/i.test(r.sReason || ''));
@@ -137,7 +160,7 @@ async function runSite(siteCode) {
     // Pass 5: named tenant AND a lock SKU specifically — the intersection, not just either alone.
     if (b === 'named' && /padlock/i.test(r.sDesc || '')) namedLocks += amount;
   }
-  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns, locksIncome, namedLocks };
+  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns, moveInsNewOnly, locksIncome, namedLocks };
 }
 
 function pearson(xs, ys) {
@@ -155,7 +178,7 @@ if (siteArg.toUpperCase() === 'ALL') {
   const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!locations.length) { console.error('SITELINK_LOCATIONS not set'); process.exit(1); }
   console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===\n`);
-  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Locks£'.padStart(10)}${'NamedLk£'.padStart(11)}${'Total£'.padStart(10)}`);
+  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'NewMI'.padStart(7)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Locks£'.padStart(10)}${'NamedLk£'.padStart(11)}${'Total£'.padStart(10)}`);
 
   const perSite = [];
   let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, portfolioLocks = 0, portfolioNamedLocks = 0;
@@ -164,8 +187,8 @@ if (siteArg.toUpperCase() === 'ALL') {
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
-      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.locksIncome.toFixed(0)).padStart(10)}${('£' + r.namedLocks.toFixed(0)).padStart(11)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
-      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales, locks: r.locksIncome, namedLocks: r.namedLocks });
+      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${String(r.moveInsNewOnly).padStart(7)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.locksIncome.toFixed(0)).padStart(10)}${('£' + r.namedLocks.toFixed(0)).padStart(11)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
+      perSite.push({ code: loc, moveIns: r.moveIns, moveInsNewOnly: r.moveInsNewOnly, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales, locks: r.locksIncome, namedLocks: r.namedLocks });
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
       portfolioRows += r.rowCount;
@@ -182,29 +205,45 @@ if (siteArg.toUpperCase() === 'ALL') {
   console.log(`MerchandiseSummary.dcChargeTotal for the same sites/window: £${portfolioOfficial.toFixed(2)} (reconciliation check)`);
 
   const moveInsArr = perSite.map((s) => s.moveIns);
+  const moveInsNewOnlyArr = perSite.map((s) => s.moveInsNewOnly);
   const walkInArr = perSite.map((s) => s.walkIn);
   const namedArr = perSite.map((s) => s.named);
   const totalArr = perSite.map((s) => s.total);
   const locksArr = perSite.map((s) => s.locks);
   const namedLocksArr = perSite.map((s) => s.namedLocks);
-  console.log(`\nCross-site correlation with move-ins (n=${perSite.length} sites; -1..+1, 0 = no relationship):`);
+  console.log(`\nCross-site correlation with ALL move-ins incl. transfers (n=${perSite.length} sites; -1..+1, 0 = no relationship):`);
   console.log(`  corr(moveIns, Walk-In POS £)   = ${pearson(moveInsArr, walkInArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, named-tenant £)  = ${pearson(moveInsArr, namedArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, named-tenant locks £) = ${pearson(moveInsArr, namedLocksArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, total merch £)   = ${pearson(moveInsArr, totalArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, Locks Income £)  = ${pearson(moveInsArr, locksArr)?.toFixed(2) ?? 'n/a'}`);
 
+  console.log(`\nPass 6 — same correlations with transfers EXCLUDED from move-ins:`);
+  console.log(`  corr(new-mover MI, Walk-In POS £)   = ${pearson(moveInsNewOnlyArr, walkInArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(new-mover MI, named-tenant £)  = ${pearson(moveInsNewOnlyArr, namedArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(new-mover MI, named-tenant locks £) = ${pearson(moveInsNewOnlyArr, namedLocksArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(new-mover MI, total merch £)   = ${pearson(moveInsNewOnlyArr, totalArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(new-mover MI, Locks Income £)  = ${pearson(moveInsNewOnlyArr, locksArr)?.toFixed(2) ?? 'n/a'}`);
+
   const moveIns = moveInsArr.reduce((a, v) => a + v, 0);
-  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window.`);
+  const moveInsNewOnly = moveInsNewOnlyArr.reduce((a, v) => a + v, 0);
+  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window (${moveIns - moveInsNewOnly} of them transfers, ${moveInsNewOnly} genuinely new).`);
   console.log(`  Merch per new customer, ALL sales:                £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, excl. Walk-In POS:        £${moveIns ? (totalAmounts.named / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, Walk-In POS only:         £${moveIns ? (totalAmounts.walkIn / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, Locks Income only:        £${moveIns ? (portfolioLocks / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, named-tenant Locks only:  £${moveIns ? (portfolioNamedLocks / moveIns).toFixed(2) : 'n/a'}`);
+
+  console.log(`\nPass 6 — same 5 ratios, denominator = new-mover move-ins only (transfers excluded):`);
+  console.log(`  Merch per new customer, ALL sales:                £${moveInsNewOnly ? (portfolioOfficial / moveInsNewOnly).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, excl. Walk-In POS:        £${moveInsNewOnly ? (totalAmounts.named / moveInsNewOnly).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, Walk-In POS only:         £${moveInsNewOnly ? (totalAmounts.walkIn / moveInsNewOnly).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, Locks Income only:        £${moveInsNewOnly ? (portfolioLocks / moveInsNewOnly).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, named-tenant Locks only:  £${moveInsNewOnly ? (portfolioNamedLocks / moveInsNewOnly).toFixed(2) : 'n/a'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
-  console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window.`);
+  console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window (${r.moveIns - r.moveInsNewOnly} transfer(s), ${r.moveInsNewOnly} genuinely new).`);
   console.log(`Walk-In POS: ${r.counts.walkIn} txn, £${r.amounts.walkIn.toFixed(2)} | named tenant: ${r.counts.named} txn, £${r.amounts.named.toFixed(2)} | blank: ${r.counts.blank} txn, £${r.amounts.blank.toFixed(2)}`);
   console.log(`Locks Income (MerchandiseSummary sCategory): £${r.locksIncome.toFixed(2)}`);
   console.log(`Named-tenant lock sales only (Pass 5 intersection): £${r.namedLocks.toFixed(2)}`);
