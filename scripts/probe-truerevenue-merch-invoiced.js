@@ -10,6 +10,16 @@
 // report, worth testing on its own rather than assumed equivalent to either.
 // Also prints TruePeriod for the same merchandise rows as a free bonus comparison, since we're
 // already pulling the data.
+//
+// RESULT: Invoiced£ == FinancialSummary's POS£ EXACTLY at every site, and TruePeriod£ == Invoiced£
+// too (no deferral/proration on one-off merchandise sales, so TruePeriod has nothing to differ on).
+// True Revenue and FinancialSummary are the SAME underlying figure via two different reports, not
+// independent data. Same failure as chargeFromFinancial: nonzero at L001 (£100)/L012 (£165) where
+// legacy is exactly £0. This closes off the entire "some report already has the right total" family
+// — MerchandiseSummary, FinancialSummary POS, and True Revenue Invoiced/TruePeriod all agree with
+// EACH OTHER and all disagree with legacy the same way, because none of them can tell a real
+// tenant's purchase apart from an anonymous walk-in sale. MerchandiseActivity's per-transaction
+// sTenantName remains the only source in the API that carries that distinction.
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/probe-truerevenue-merch-invoiced.js
 import { callReport, callCustomReport } from '../lib/sitelink.js';
 import { REPORTS } from '../lib/reportMap.js';
