@@ -38,6 +38,18 @@
 // yet, at which point the next move is to ask what specific report legacy's number comes from,
 // rather than reverse-engineering it from ours.
 //
+// PASS 3 RESULT (portfolio, June 2026): all three correlations came back weak -- Walk-In POS r=0.11,
+// named-tenant r=0.26, total merch r=0.18. None of our numerator candidates track move-in volume
+// across sites. Conclusion: general retail merchandise (bubblewrap/tape/boxes bought whenever) is
+// swamping any real move-in signal, regardless of which tenant-attribution bucket it's sliced by.
+//
+// PASS 4 (this version) -- one more GROUNDED hypothesis before giving up on our own data: most
+// self-storage operators require a padlock purchase AT signup. MerchandiseSummary already tags this
+// with its own sCategory ("Locks Income" -- confirmed from the boss's export: Combination/Container
+// Padlock, Padlock are the SKUs in it). If legacy's "merchandise income" specifically means that
+// mandatory move-in item, not general retail, Locks Income £ should correlate with move-ins far more
+// tightly than Pass 3's buckets did. No tenant-matching needed for this one -- straight from
+// MerchandiseSummary, which we already pull and trust.
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
 // (ALL reads site codes from SITELINK_LOCATIONS in .env; runs sequentially — SiteLink rejects
@@ -74,6 +86,15 @@ const bucket = (r) => {
 async function runSite(siteCode) {
   const { rows: msRows } = await callReport(REPORTS.merchandise.method, siteCode, start, end);
   const officialSales = msRows.reduce((a, r) => a + num(r.dcChargeTotal), 0);
+  // NEW hypothesis (grounded, not a format guess): the cross-site correlation just showed NEITHER
+  // Walk-In-POS nor named-tenant merch £ tracks move-ins (r=0.11/0.26, both weak). That means general
+  // retail merchandise (bubblewrap, tape, boxes bought whenever) is swamping any real move-in signal
+  // at the site level. Most self-storage operators require a padlock purchase AT signup — MerchandiseSummary
+  // already tags these with their own sCategory ("Locks Income", confirmed from the boss's export:
+  // Combination/Container Padlock, Padlock). If legacy's "merchandise income" specifically means THAT
+  // mandatory move-in item (not general retail), locksIncome should correlate with move-ins much more
+  // tightly than the Walk-In/named split did.
+  const locksIncome = msRows.filter((r) => /locks?\s*income/i.test(r.sCategory || '')).reduce((a, r) => a + num(r.dcChargeTotal), 0);
   const rateBySku = {};
   for (const r of msRows) {
     const units = Math.abs(num(r.dcSold));
@@ -96,7 +117,7 @@ async function runSite(siteCode) {
     amounts[b] += rate * num(r.dcQty);
     counts[b]++;
   }
-  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns };
+  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns, locksIncome };
 }
 
 function pearson(xs, ys) {
@@ -114,47 +135,53 @@ if (siteArg.toUpperCase() === 'ALL') {
   const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!locations.length) { console.error('SITELINK_LOCATIONS not set'); process.exit(1); }
   console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===\n`);
-  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Total£'.padStart(10)}`);
+  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Locks£'.padStart(10)}${'Total£'.padStart(10)}`);
 
   const perSite = [];
-  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0;
+  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, portfolioLocks = 0;
   const totalAmounts = { walkIn: 0, named: 0, blank: 0 };
   const totalCounts = { walkIn: 0, named: 0, blank: 0 };
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
-      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
-      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales });
+      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.locksIncome.toFixed(0)).padStart(10)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
+      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales, locks: r.locksIncome });
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
       portfolioRows += r.rowCount;
+      portfolioLocks += r.locksIncome;
       for (const k of ['walkIn', 'named', 'blank']) { totalAmounts[k] += r.amounts[k]; totalCounts[k] += r.counts[k]; }
     } catch (e) { console.error(`${loc}: FAILED — ${e.message}`); }
   }
 
   console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${portfolioNoRate} "Sold" row(s) skipped — SKU not priced that window).`);
   console.log(`\nPortfolio £ by bucket: Walk-In POS £${totalAmounts.walkIn.toFixed(2)} (${totalCounts.walkIn} txn) | named tenant £${totalAmounts.named.toFixed(2)} (${totalCounts.named} txn) | blank £${totalAmounts.blank.toFixed(2)} (${totalCounts.blank} txn)`);
+  console.log(`Locks Income (MerchandiseSummary sCategory, all buyers): £${portfolioLocks.toFixed(2)}`);
   console.log(`MerchandiseSummary.dcChargeTotal for the same sites/window: £${portfolioOfficial.toFixed(2)} (reconciliation check)`);
 
   const moveInsArr = perSite.map((s) => s.moveIns);
   const walkInArr = perSite.map((s) => s.walkIn);
   const namedArr = perSite.map((s) => s.named);
   const totalArr = perSite.map((s) => s.total);
+  const locksArr = perSite.map((s) => s.locks);
   console.log(`\nCross-site correlation with move-ins (n=${perSite.length} sites; -1..+1, 0 = no relationship):`);
   console.log(`  corr(moveIns, Walk-In POS £)   = ${pearson(moveInsArr, walkInArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, named-tenant £)  = ${pearson(moveInsArr, namedArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, total merch £)   = ${pearson(moveInsArr, totalArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(moveIns, Locks Income £)  = ${pearson(moveInsArr, locksArr)?.toFixed(2) ?? 'n/a'}`);
 
   const moveIns = moveInsArr.reduce((a, v) => a + v, 0);
   console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window.`);
   console.log(`  Merch per new customer, ALL sales:                £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, excl. Walk-In POS:        £${moveIns ? (totalAmounts.named / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, Walk-In POS only:         £${moveIns ? (totalAmounts.walkIn / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, Locks Income only:        £${moveIns ? (portfolioLocks / moveIns).toFixed(2) : 'n/a'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
   console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window.`);
   console.log(`Walk-In POS: ${r.counts.walkIn} txn, £${r.amounts.walkIn.toFixed(2)} | named tenant: ${r.counts.named} txn, £${r.amounts.named.toFixed(2)} | blank: ${r.counts.blank} txn, £${r.amounts.blank.toFixed(2)}`);
+  console.log(`Locks Income (MerchandiseSummary sCategory): £${r.locksIncome.toFixed(2)}`);
   if (r.noRate) console.log(`(${r.noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for that window)`);
   console.log(`MerchandiseSummary.dcChargeTotal for reconciliation: £${r.officialSales.toFixed(2)}`);
 }
