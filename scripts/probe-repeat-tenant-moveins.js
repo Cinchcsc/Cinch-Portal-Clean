@@ -19,6 +19,20 @@
 // can join on it. For each move-in TenantID this period, check how many units that TenantID
 // currently occupies in RentRoll: 1 unit = looks genuinely new, 2+ units = existing customer adding
 // a unit. TenantID is used only as an opaque join key here -- never printed, no names ever touched.
+// RESULT (L029, July 1-9): 0 of 7 move-ins were repeats -- every one was a genuinely single-unit,
+// looks-new tenant. Clean falsification, not inconclusive: the true new-customer count at L029
+// really is 7, so named-tenant-£/move-ins (£115/7 = £16.43) can't be pushed toward legacy's £41.20
+// by narrowing the denominator this way. Combined with Pass 6 (0 transfers, same site/window), BOTH
+// grounded denominator-narrowing theories are now excluded -- the 60% shortfall isn't a move-ins
+// counting problem. Nothing on our numerator side is unaccounted for either (0 "Sold" rows skipped
+// for missing rates, confirmed via probe-merch-activity.js's portfolioNoRate=0 for this window) --
+// our own £115 figure is a complete, accurate capture of what "named-tenant, non-Walk-In merch" sold
+// at L029 this window. With both computational leads exhausted, the highest-leverage next input is
+// no longer more of our own analysis -- it's whatever time-window label legacy's own UI shows for
+// this specific tile (does it say "MTD", "Today", "Last 7 Days"? -- a scope mismatch between our
+// 9-day MTD pull and legacy's true window would explain both the day-to-day volatility Michael
+// already reported AND the magnitude gap in one stroke, and it's not something more data-matching on
+// our end can resolve).
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-repeat-tenant-moveins.js L029
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-repeat-tenant-moveins.js ALL
 import { callReport } from '../lib/sitelink.js';
