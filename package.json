@@ -89,7 +89,8 @@
     "probe:merch-activity": "node --env-file=.env scripts/probe-merch-activity.js",
     "probe:report-catalog": "node --env-file=.env scripts/probe-report-catalog.js",
     "probe:income-analysis": "node --env-file=.env scripts/probe-income-analysis.js",
-    "dump:incomeanalysis-tables": "node --env-file=.env scripts/dump-incomeanalysis-tables.js"
+    "dump:incomeanalysis-tables": "node --env-file=.env scripts/dump-incomeanalysis-tables.js",
+    "dump:incomeanalysis-categories": "node --env-file=.env scripts/dump-incomeanalysis-categories.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
