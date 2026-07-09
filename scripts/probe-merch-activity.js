@@ -43,13 +43,30 @@
 // across sites. Conclusion: general retail merchandise (bubblewrap/tape/boxes bought whenever) is
 // swamping any real move-in signal, regardless of which tenant-attribution bucket it's sliced by.
 //
-// PASS 4 (this version) -- one more GROUNDED hypothesis before giving up on our own data: most
-// self-storage operators require a padlock purchase AT signup. MerchandiseSummary already tags this
-// with its own sCategory ("Locks Income" -- confirmed from the boss's export: Combination/Container
-// Padlock, Padlock are the SKUs in it). If legacy's "merchandise income" specifically means that
-// mandatory move-in item, not general retail, Locks Income £ should correlate with move-ins far more
-// tightly than Pass 3's buckets did. No tenant-matching needed for this one -- straight from
+// PASS 4 -- one more GROUNDED hypothesis before giving up on our own data: most self-storage
+// operators require a padlock purchase AT signup. MerchandiseSummary already tags this with its own
+// sCategory ("Locks Income" -- confirmed from the boss's export: Combination/Container Padlock,
+// Padlock are the SKUs in it). If legacy's "merchandise income" specifically means that mandatory
+// move-in item, not general retail, Locks Income £ should correlate with move-ins far more tightly
+// than Pass 3's buckets did. No tenant-matching needed for this one -- straight from
 // MerchandiseSummary, which we already pull and trust.
+//
+// PASS 4 RESULT (portfolio, July 1-9): Locks Income corr = -0.20, the WEAKEST of all four (Walk-In
+// -0.02, named 0.12, total 0.02). Locks alone doesn't explain it either.
+//
+// PASS 5 (this version) -- Michael pulled LIVE legacy figures for the SAME July 1-9 window: L001
+// (Bicester) and L012 (Gillingham) BOTH show £0, and "All Stores" moved from £1.00 to £1.10 in one
+// day (so it's a live MTD calc, not a stable number -- explains the volatility, not a red herring).
+// Checked our own numbers for those exact two sites, same window: L001 named-tenant £0 AND Locks £0;
+// L012 named-tenant £0 AND Locks £0 -- BOTH our "excl. Walk-In POS" and "Locks only" numerators hit
+// EXACTLY £0 at BOTH sites, matching legacy exactly. Neither hypothesis alone explains the portfolio
+// total (£3.00 / £0.52 vs legacy's £1.10) but this is the first exact match anywhere, at two
+// independent real sites, and it's non-trivial (Walk-In-POS-only and ALL-sales are NOT zero at either
+// site, so it's not just "small numbers round to zero"). Refines to the INTERSECTION: a lock SKU
+// (sDesc matches /padlock/i in MerchandiseActivity) bought by a NAMED tenant specifically (excludes
+// Walk-In POS lock sales, which Pass 4's Locks Income didn't distinguish) -- the idea being a new
+// mover's lock is added to THEIR ledger at move-in, while a Walk-In-POS lock sale is more likely an
+// existing tenant replacing a lost key at the counter.
 // Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
 // (ALL reads site codes from SITELINK_LOCATIONS in .env; runs sequentially — SiteLink rejects
@@ -109,15 +126,18 @@ async function runSite(siteCode) {
 
   const amounts = { walkIn: 0, named: 0, blank: 0 };
   const counts = { walkIn: 0, named: 0, blank: 0 };
-  let noRate = 0;
+  let noRate = 0, namedLocks = 0;
   for (const r of sold) {
     const b = bucket(r);
     const rate = rateBySku[r.sDesc];
     if (rate == null) { noRate++; continue; }
-    amounts[b] += rate * num(r.dcQty);
+    const amount = rate * num(r.dcQty);
+    amounts[b] += amount;
     counts[b]++;
+    // Pass 5: named tenant AND a lock SKU specifically — the intersection, not just either alone.
+    if (b === 'named' && /padlock/i.test(r.sDesc || '')) namedLocks += amount;
   }
-  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns, locksIncome };
+  return { amounts, counts, officialSales, noRate, rowCount: rows.length, moveIns, locksIncome, namedLocks };
 }
 
 function pearson(xs, ys) {
@@ -135,21 +155,22 @@ if (siteArg.toUpperCase() === 'ALL') {
   const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!locations.length) { console.error('SITELINK_LOCATIONS not set'); process.exit(1); }
   console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===\n`);
-  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Locks£'.padStart(10)}${'Total£'.padStart(10)}`);
+  console.log(`${'Site'.padEnd(6)}${'MoveIns'.padStart(9)}${'WalkIn£'.padStart(11)}${'Named£'.padStart(10)}${'Locks£'.padStart(10)}${'NamedLk£'.padStart(11)}${'Total£'.padStart(10)}`);
 
   const perSite = [];
-  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, portfolioLocks = 0;
+  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, portfolioLocks = 0, portfolioNamedLocks = 0;
   const totalAmounts = { walkIn: 0, named: 0, blank: 0 };
   const totalCounts = { walkIn: 0, named: 0, blank: 0 };
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
-      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.locksIncome.toFixed(0)).padStart(10)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
-      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales, locks: r.locksIncome });
+      console.log(`${loc.padEnd(6)}${String(r.moveIns).padStart(9)}${('£' + r.amounts.walkIn.toFixed(0)).padStart(11)}${('£' + r.amounts.named.toFixed(0)).padStart(10)}${('£' + r.locksIncome.toFixed(0)).padStart(10)}${('£' + r.namedLocks.toFixed(0)).padStart(11)}${('£' + r.officialSales.toFixed(0)).padStart(10)}`);
+      perSite.push({ code: loc, moveIns: r.moveIns, walkIn: r.amounts.walkIn, named: r.amounts.named, total: r.officialSales, locks: r.locksIncome, namedLocks: r.namedLocks });
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
       portfolioRows += r.rowCount;
       portfolioLocks += r.locksIncome;
+      portfolioNamedLocks += r.namedLocks;
       for (const k of ['walkIn', 'named', 'blank']) { totalAmounts[k] += r.amounts[k]; totalCounts[k] += r.counts[k]; }
     } catch (e) { console.error(`${loc}: FAILED — ${e.message}`); }
   }
@@ -157,6 +178,7 @@ if (siteArg.toUpperCase() === 'ALL') {
   console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${portfolioNoRate} "Sold" row(s) skipped — SKU not priced that window).`);
   console.log(`\nPortfolio £ by bucket: Walk-In POS £${totalAmounts.walkIn.toFixed(2)} (${totalCounts.walkIn} txn) | named tenant £${totalAmounts.named.toFixed(2)} (${totalCounts.named} txn) | blank £${totalAmounts.blank.toFixed(2)} (${totalCounts.blank} txn)`);
   console.log(`Locks Income (MerchandiseSummary sCategory, all buyers): £${portfolioLocks.toFixed(2)}`);
+  console.log(`Named-tenant lock sales only (MerchandiseActivity, Pass 5 intersection): £${portfolioNamedLocks.toFixed(2)}`);
   console.log(`MerchandiseSummary.dcChargeTotal for the same sites/window: £${portfolioOfficial.toFixed(2)} (reconciliation check)`);
 
   const moveInsArr = perSite.map((s) => s.moveIns);
@@ -164,9 +186,11 @@ if (siteArg.toUpperCase() === 'ALL') {
   const namedArr = perSite.map((s) => s.named);
   const totalArr = perSite.map((s) => s.total);
   const locksArr = perSite.map((s) => s.locks);
+  const namedLocksArr = perSite.map((s) => s.namedLocks);
   console.log(`\nCross-site correlation with move-ins (n=${perSite.length} sites; -1..+1, 0 = no relationship):`);
   console.log(`  corr(moveIns, Walk-In POS £)   = ${pearson(moveInsArr, walkInArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, named-tenant £)  = ${pearson(moveInsArr, namedArr)?.toFixed(2) ?? 'n/a'}`);
+  console.log(`  corr(moveIns, named-tenant locks £) = ${pearson(moveInsArr, namedLocksArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, total merch £)   = ${pearson(moveInsArr, totalArr)?.toFixed(2) ?? 'n/a'}`);
   console.log(`  corr(moveIns, Locks Income £)  = ${pearson(moveInsArr, locksArr)?.toFixed(2) ?? 'n/a'}`);
 
@@ -176,12 +200,14 @@ if (siteArg.toUpperCase() === 'ALL') {
   console.log(`  Merch per new customer, excl. Walk-In POS:        £${moveIns ? (totalAmounts.named / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, Walk-In POS only:         £${moveIns ? (totalAmounts.walkIn / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, Locks Income only:        £${moveIns ? (portfolioLocks / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, named-tenant Locks only:  £${moveIns ? (portfolioNamedLocks / moveIns).toFixed(2) : 'n/a'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
   console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window.`);
   console.log(`Walk-In POS: ${r.counts.walkIn} txn, £${r.amounts.walkIn.toFixed(2)} | named tenant: ${r.counts.named} txn, £${r.amounts.named.toFixed(2)} | blank: ${r.counts.blank} txn, £${r.amounts.blank.toFixed(2)}`);
   console.log(`Locks Income (MerchandiseSummary sCategory): £${r.locksIncome.toFixed(2)}`);
+  console.log(`Named-tenant lock sales only (Pass 5 intersection): £${r.namedLocks.toFixed(2)}`);
   if (r.noRate) console.log(`(${r.noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for that window)`);
   console.log(`MerchandiseSummary.dcChargeTotal for reconciliation: £${r.officialSales.toFixed(2)}`);
 }
