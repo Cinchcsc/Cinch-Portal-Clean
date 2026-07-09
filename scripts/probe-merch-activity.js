@@ -123,6 +123,22 @@ if (siteArg.toUpperCase() === 'ALL') {
   }
   console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${sitesWithActivity} with at least one "Sold" row priced).`);
   printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
+
+  // Close the loop: does excluding Walk-In POS actually move the "per new customer" ratio toward
+  // legacy's ~£1.00? Pull the SAME move-ins denominator buildPayload.js uses (ManagementSummary's
+  // move_ins field) for the same sites/window and print both ratios side by side.
+  let moveIns = 0;
+  for (const loc of locations) {
+    try {
+      const { rows: mgRows } = await callReport(REPORTS.management.method, loc, start, end);
+      const parsed = REPORTS.management.parse(mgRows, start, end);
+      moveIns += parsed.move_ins || 0;
+    } catch (e) { console.error(`  ${loc}: move-ins fetch FAILED — ${e.message}`); }
+  }
+  const nonWalkInTotal = Object.entries(portfolioAgg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
+  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window.`);
+  console.log(`  Merch per new customer, ALL sales (today's numerator):        £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, tenant-linked sales only:             £${moveIns ? (nonWalkInTotal / moveIns).toFixed(2) : 'n/a'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
