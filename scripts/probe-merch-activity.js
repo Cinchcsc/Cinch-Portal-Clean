@@ -65,6 +65,11 @@ const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ??
 // both become "john|smith". Still never surfaces the actual name anywhere.
 const norm = (s) => String(s || '').replace(/[.,]/g, ' ').trim().toLowerCase().split(/\s+/).filter(Boolean).sort().join('|');
 const hasComma = (s) => /,/.test(String(s || ''));
+// SECOND FIX after the token-set version ALSO got 0/244: both sides turned out to be comma-formatted
+// equally (100% of movers, all 244 tenant sales), so that wasn't it — token-set equality can still
+// miss if one side carries a middle name/initial the other omits. Fall back to SURNAME-only (text
+// before the first comma) as a looser, separate signal — still never printed, just membership.
+const surnameOf = (s) => { const str = String(s || ''); const i = str.indexOf(','); return (i >= 0 ? str.slice(0, i) : str.split(/\s+/).pop() || '').trim().toLowerCase(); };
 
 // Candidate column names for a tenant's display name on MoveInsAndMoveOuts. CONFIRMED live (9 Jul,
 // portfolio run): it's "TenantName" (no "s" prefix, unlike MerchandiseActivity's "sTenantName") —
@@ -86,22 +91,24 @@ async function newMoverNames(siteCode) {
       console.error(`  (!) new-mover matching will be skipped until this is corrected.`);
     }
   }
-  const names = new Set();
+  const names = new Set(), surnames = new Set();
   let commaCount = 0;
   if (nameFieldUsed) for (const r of moveIns) {
     const raw = r[nameFieldUsed];
     if (hasComma(raw)) commaCount++;
     const n = norm(raw); if (n) names.add(n);
+    const sn = surnameOf(raw); if (sn) surnames.add(sn);
   }
-  return { names, moveInCount: moveIns.length, commaCount };
+  return { names, surnames, moveInCount: moveIns.length, commaCount };
 }
 
-const bucket = (r, movers) => {
+const bucket = (r, movers, moverSurnames) => {
   const t = (r.sTenantName || '').trim();
   if (!t) return 'blank (no tenant recorded)';
   if (/^walk-?in pos$/i.test(t)) return 'Walk-In POS (till sale, no tenant)';
-  if (movers && movers.has(norm(t))) return "new mover (this period)";
-  return 'existing tenant (not a new mover this period)';
+  if (movers && movers.has(norm(t))) return 'new mover (full-name match)';
+  if (moverSurnames && moverSurnames.has(surnameOf(t))) return 'new mover (surname-only match)';
+  return 'existing tenant (no match, full or surname)';
 };
 
 // One site's worth of work: returns { agg: {bucket -> {count, amount}}, officialSales, noRate, rowCount, moveIns }.
@@ -114,7 +121,7 @@ async function runSite(siteCode) {
     if (units > 0) rateBySku[r.sDesc] = num(r.dcChargeTotal) / units;
   }
 
-  const { names: movers, moveInCount, commaCount: moverCommaCount } = await newMoverNames(siteCode);
+  const { names: movers, surnames: moverSurnames, moveInCount, commaCount: moverCommaCount } = await newMoverNames(siteCode);
 
   const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
   const sold = rows.filter((r) => /^sold$/i.test(r.sReason || ''));
@@ -124,7 +131,7 @@ async function runSite(siteCode) {
   for (const r of sold) {
     const t = (r.sTenantName || '').trim();
     if (t && !/^walk-?in pos$/i.test(t) && hasComma(t)) tenantCommaCount++;
-    const b = bucket(r, movers);
+    const b = bucket(r, movers, moverSurnames);
     const rate = rateBySku[r.sDesc];
     if (rate == null) { noRate++; continue; }
     const amount = rate * num(r.dcQty);
@@ -178,11 +185,13 @@ if (siteArg.toUpperCase() === 'ALL') {
   const grand = printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
 
   const nonWalkInTotal = Object.entries(portfolioAgg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
-  const newMoverTotal = (portfolioAgg['new mover (this period)'] || { amount: 0 }).amount;
+  const fullMatchTotal = (portfolioAgg['new mover (full-name match)'] || { amount: 0 }).amount;
+  const surnameMatchTotal = fullMatchTotal + (portfolioAgg['new mover (surname-only match)'] || { amount: 0 }).amount;
   console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window (from MoveInsAndMoveOuts).`);
   console.log(`  Merch per new customer, ALL sales (today's numerator):              £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
   console.log(`  Merch per new customer, excl. Walk-In POS (any tenant):             £${moveIns ? (nonWalkInTotal / moveIns).toFixed(2) : 'n/a'}`);
-  console.log(`  Merch per new customer, new-mover-matched sales only:               £${moveIns ? (newMoverTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
+  console.log(`  Merch per new customer, full-name new-mover match only:             £${moveIns ? (fullMatchTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
+  console.log(`  Merch per new customer, surname-or-better new-mover match:          £${moveIns ? (surnameMatchTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
