@@ -11,6 +11,20 @@
 // zero extra SiteLink calls per window. If some N makes all 3 known sites land near their real
 // legacy figures simultaneously, that's very likely the true window length (and which formula,
 // excl.-Walk-In or ALL-sales, actually matches at that N).
+//
+// RESULT (L001/L012/L029, pulled Jul 9): "excl. Walk-In" is £0.00 at L001 AND L012 across EVERY
+// tested window length, 1 through 9 days -- a clean, window-INDEPENDENT confirmation that
+// named-tenant, non-Walk-In merch is the right numerator family, not a coincidence tied to one
+// specific window choice. "ALL sales" is NOT window-independent -- it breaks the L001=0 match at
+// N>=6 days (a real £120 Walk-In sale around Jul04 makes it nonzero there), so it's a structurally
+// worse fit despite the close magnitude we originally saw at the 9-day window. For L029, shorter
+// windows fit much better: £34.94 at N=2 (Jul08-09) vs legacy's £41.20 -- a 15% gap, down from 60%
+// at the full 9-day MTD. No tested window hit an exact match, and L029's day-to-day swings are large
+// relative to its small transaction count, so slicing finer than this risks reading noise as signal.
+// Best current read: named-tenant merch (excl. Walk-In) over a SHORT (~1-2 day) trailing window is
+// the closest formula+window combination found across the whole investigation. Next step: get 1-2
+// more live legacy comparisons, ideally read at close to the same moment this script is run (to cut
+// timing-drift noise), before wiring this into an actual portal widget.
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/probe-window-length.js
 import { callReport } from '../lib/sitelink.js';
 import { REPORTS } from '../lib/reportMap.js';
