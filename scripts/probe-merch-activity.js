@@ -8,29 +8,31 @@
 // This is a real lead on the ~11x Merchandise-Income-per-New-Customer gap: every numerator we've
 // tried so far (MerchandiseSummary.dcChargeTotal, FinancialSummary's POS category, True Revenue's
 // AccountCode 201) is a straight revenue total with NO tenant attribution — it counts walk-in retail
-// sales (padlocks/boxes to anyone, not tied to a move-in) the same as anything else. If legacy's
-// "per new customer" figure only counts merchandise attributable to an actual tenant (excluding
-// "Walk-In POS"), that would shrink the numerator a lot, in the right direction to close the gap.
-//
-// This script pulls MerchandiseActivity live (same SOAP mechanism as every other report — first run
-// will reveal the real method name from the WSDL if "MerchandiseActivity" isn't exactly right) and
-// breaks the £ total into Walk-In POS vs tenant-linked vs blank. NEVER prints sTenantName itself
-// (PII) — only which bucket it falls into.
+// sales the same as anything else. NEVER prints sTenantName itself (PII) — only which bucket it
+// falls into.
 //
 // CORRECTED after the first live run (L001, 1-9 Jul): dcOldPrice/dcNewPrice on a "Sold" row are
-// BLANK — those two columns only carry a value on "Other"-reason PRICE-CHANGE events (confirmed
-// live: priced at £0 that way, even though MerchandiseSummary shows £120 charged for the same
-// site/window). MerchandiseActivity is a pure QUANTITY log; it carries no £ amount for a sale at
-// all. Fix: pull MerchandiseSummary for the same site/window first, build a per-SKU EFFECTIVE rate
-// (dcChargeTotal / abs(dcSold) — inc. tax, matches what "sales" already means elsewhere in this
-// codebase) keyed by sDesc, then price each "Sold" Activity row via that rate x dcQty. Note dcSold
-// in MerchandiseSummary is a SIGNED inventory delta (negative = sold, confirmed live: Extra Large
-// Box dcSold=-20, dcChargeTotal=£120 -> £6/unit inc. tax) — abs() it. Re-run against L001/1-9 Jul
-// confirmed the reconstruction matches exactly (£120.00 = £120.00), and for that one transaction
-// 100% of it was Walk-In POS — but that's 1 site/9 days/1 txn, too thin to conclude anything at
-// portfolio scale. Hence the ALL mode below.
+// BLANK — those two columns only carry a value on "Other"-reason PRICE-CHANGE events. MerchandiseActivity
+// carries no £ amount for a sale at all. Fix: pull MerchandiseSummary for the same site/window first,
+// build a per-SKU EFFECTIVE rate (dcChargeTotal / abs(dcSold), inc. tax) keyed by sDesc, price each
+// "Sold" row via rate x dcQty. Confirmed live (L001 1-9 Jul, and portfolio-wide June): reconstruction
+// matches MerchandiseSummary.dcChargeTotal exactly.
 //
-// Run one site:    cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
+// FIRST PASS RESULT (portfolio, June 2026): excluding Walk-In POS dropped merch-per-new-customer
+// from £9.29 to £2.75 -- real, but legacy shows ~£1.00, so ~2.75x still unexplained.
+//
+// SECOND PASS (this version) -- Michael's boss: "Find a merchandise sales report, then new customers
+// for that period." Taken literally: a sale should only count if the BUYER is one of THIS PERIOD'S
+// new movers, not just "any named tenant" (an existing tenant buying a padlock mid-tenancy shouldn't
+// count either). MoveInsAndMoveOuts' raw rows already carry TenantID for cross-referencing (used
+// elsewhere for Autobill Conversion) but MerchandiseActivity only gives a tenant NAME string, no ID
+// and no unit — so this joins by NAME (normalized/trimmed/lowercased). That's inherently approximate
+// (formatting differences, etc.) but it's the most direct test of what the boss described. Never
+// prints a name — only match/no-match. First run will print the exact MoveInsAndMoveOuts column it
+// found the name in (or the full column list if none of the guessed candidates exist), so we can
+// correct the guess if needed.
+//
+// Run one site:      cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js L001 2026-06
 // Run the portfolio: cd cinch-portal-clean && node --env-file=.env scripts/probe-merch-activity.js ALL 2026-06
 // (ALL reads site codes from SITELINK_LOCATIONS in .env; runs sequentially — SiteLink rejects
 // parallel logons, same constraint as scripts/backfill.js.)
@@ -53,15 +55,42 @@ if (monthArg) {
 }
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const num = (v) => Number(v) || 0;
+const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
+const norm = (s) => String(s || '').trim().toLowerCase();
 
-const bucket = (r) => {
+// Candidate column names for a tenant's display name on MoveInsAndMoveOuts — we don't know the exact
+// one without a live look, so try the likely ones in order and report which (if any) was used.
+const NAME_FIELD_CANDIDATES = ['sTenantName', 'sName', 'sCustomerName', 'sFullName'];
+let nameFieldUsed = null, nameFieldWarned = false;
+
+// New movers (this site/window) as a Set of normalized names — built once per site, PII stays local
+// to this function (never returned/printed, only membership booleans flow out).
+async function newMoverNames(siteCode) {
+  const { rows } = await callReport('MoveInsAndMoveOuts', siteCode, start, end);
+  const moveIns = rows.filter((r) => yes(r.MoveIn));
+  if (!nameFieldUsed && rows.length && !nameFieldWarned) {
+    const field = NAME_FIELD_CANDIDATES.find((f) => f in rows[0]);
+    if (field) { nameFieldUsed = field; console.error(`  (using MoveInsAndMoveOuts."${field}" as the tenant-name field)`); }
+    else {
+      nameFieldWarned = true;
+      console.error(`  (!) none of ${NAME_FIELD_CANDIDATES.join('/')} found on MoveInsAndMoveOuts — columns are: ${Object.keys(rows[0]).join(', ')}`);
+      console.error(`  (!) new-mover matching will be skipped until this is corrected.`);
+    }
+  }
+  const names = new Set();
+  if (nameFieldUsed) for (const r of moveIns) { const n = norm(r[nameFieldUsed]); if (n) names.add(n); }
+  return { names, moveInCount: moveIns.length };
+}
+
+const bucket = (r, movers) => {
   const t = (r.sTenantName || '').trim();
   if (!t) return 'blank (no tenant recorded)';
   if (/^walk-?in pos$/i.test(t)) return 'Walk-In POS (till sale, no tenant)';
-  return 'named tenant (real customer/unit)';
+  if (movers && movers.has(norm(t))) return "new mover (this period)";
+  return 'existing tenant (not a new mover this period)';
 };
 
-// One site's worth of work: returns { agg: {bucket -> {count, amount}}, officialSales, noRate, rowCount }.
+// One site's worth of work: returns { agg: {bucket -> {count, amount}}, officialSales, noRate, rowCount, moveIns }.
 async function runSite(siteCode) {
   const { rows: msRows } = await callReport(REPORTS.merchandise.method, siteCode, start, end);
   const officialSales = msRows.reduce((a, r) => a + num(r.dcChargeTotal), 0);
@@ -71,33 +100,34 @@ async function runSite(siteCode) {
     if (units > 0) rateBySku[r.sDesc] = num(r.dcChargeTotal) / units;
   }
 
+  const { names: movers, moveInCount } = await newMoverNames(siteCode);
+
   const { rows } = await callReport('MerchandiseActivity', siteCode, start, end);
   const sold = rows.filter((r) => /^sold$/i.test(r.sReason || ''));
 
   const agg = {};
   let noRate = 0;
   for (const r of sold) {
-    const b = bucket(r);
+    const b = bucket(r, movers);
     const rate = rateBySku[r.sDesc];
     if (rate == null) { noRate++; continue; }
     const amount = rate * num(r.dcQty);
     const o = (agg[b] ??= { count: 0, amount: 0 });
     o.count++; o.amount += amount;
   }
-  return { agg, officialSales, noRate, rowCount: rows.length };
+  return { agg, officialSales, noRate, rowCount: rows.length, moveIns: moveInCount };
 }
 
 const printBreakdown = (label, agg, officialSales, noRate) => {
   let grand = 0;
   console.log(`\n${label}`);
   for (const [b, o] of Object.entries(agg)) {
-    console.log(`  ${b.padEnd(38)} ${String(o.count).padStart(4)} txn(s)   ~£${o.amount.toFixed(2)}`);
+    console.log(`  ${b.padEnd(46)} ${String(o.count).padStart(4)} txn(s)   ~£${o.amount.toFixed(2)}`);
     grand += o.amount;
   }
   if (noRate) console.log(`  (${noRate} "Sold" row(s) skipped — SKU not found in MerchandiseSummary for that window)`);
   console.log(`  Reconstructed total (per-SKU rate x qty): ~£${grand.toFixed(2)}  |  MerchandiseSummary.dcChargeTotal: £${officialSales.toFixed(2)}`);
-  const nonWalkIn = Object.entries(agg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
-  console.log(`  Excluding Walk-In POS: ~£${nonWalkIn.toFixed(2)} (${grand ? ((nonWalkIn / grand) * 100).toFixed(1) : '0'}% of the reconstructed total)`);
+  return grand;
 };
 
 if (siteArg.toUpperCase() === 'ALL') {
@@ -106,43 +136,35 @@ if (siteArg.toUpperCase() === 'ALL') {
   console.log(`=== MerchandiseActivity probe, ALL ${locations.length} sites, ${fmt(start)} to ${fmt(end)} ===`);
 
   const portfolioAgg = {};
-  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, sitesWithActivity = 0;
+  let portfolioOfficial = 0, portfolioNoRate = 0, portfolioRows = 0, sitesWithActivity = 0, moveIns = 0;
   for (const loc of locations) {
     try {
       const r = await runSite(loc);
       portfolioRows += r.rowCount;
       portfolioOfficial += r.officialSales;
       portfolioNoRate += r.noRate;
+      moveIns += r.moveIns;
       if (Object.keys(r.agg).length) sitesWithActivity++;
       for (const [b, o] of Object.entries(r.agg)) {
         const p = (portfolioAgg[b] ??= { count: 0, amount: 0 });
         p.count += o.count; p.amount += o.amount;
       }
-      console.error(`  ${loc}: ${r.rowCount} activity row(s), £${r.officialSales.toFixed(2)} MerchandiseSummary sales`);
+      console.error(`  ${loc}: ${r.rowCount} activity row(s), ${r.moveIns} move-ins, £${r.officialSales.toFixed(2)} MerchandiseSummary sales`);
     } catch (e) { console.error(`  ${loc}: FAILED — ${e.message}`); }
   }
   console.log(`\n${portfolioRows} total activity row(s) across ${locations.length} sites (${sitesWithActivity} with at least one "Sold" row priced).`);
-  printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
+  const grand = printBreakdown('Portfolio-wide breakdown:', portfolioAgg, portfolioOfficial, portfolioNoRate);
 
-  // Close the loop: does excluding Walk-In POS actually move the "per new customer" ratio toward
-  // legacy's ~£1.00? Pull the SAME move-ins denominator buildPayload.js uses (ManagementSummary's
-  // move_ins field) for the same sites/window and print both ratios side by side.
-  let moveIns = 0;
-  for (const loc of locations) {
-    try {
-      const { rows: mgRows } = await callReport(REPORTS.management.method, loc, start, end);
-      const parsed = REPORTS.management.parse(mgRows, start, end);
-      moveIns += parsed.move_ins || 0;
-    } catch (e) { console.error(`  ${loc}: move-ins fetch FAILED — ${e.message}`); }
-  }
   const nonWalkInTotal = Object.entries(portfolioAgg).filter(([b]) => !/^Walk-In POS/.test(b)).reduce((a, [, o]) => a + o.amount, 0);
-  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window.`);
-  console.log(`  Merch per new customer, ALL sales (today's numerator):        £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
-  console.log(`  Merch per new customer, tenant-linked sales only:             £${moveIns ? (nonWalkInTotal / moveIns).toFixed(2) : 'n/a'}`);
+  const newMoverTotal = (portfolioAgg['new mover (this period)'] || { amount: 0 }).amount;
+  console.log(`\n${moveIns} total move-ins across ${locations.length} sites for this window (from MoveInsAndMoveOuts).`);
+  console.log(`  Merch per new customer, ALL sales (today's numerator):              £${moveIns ? (portfolioOfficial / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, excl. Walk-In POS (any tenant):             £${moveIns ? (nonWalkInTotal / moveIns).toFixed(2) : 'n/a'}`);
+  console.log(`  Merch per new customer, new-mover-matched sales only:               £${moveIns ? (newMoverTotal / moveIns).toFixed(2) : 'n/a'}${nameFieldUsed ? '' : '  (skipped — no usable name field found, see warning above)'}`);
 } else {
   console.log(`=== MerchandiseActivity probe, ${siteArg}, ${fmt(start)} to ${fmt(end)} ===`);
   const r = await runSite(siteArg);
-  console.log(`${r.rowCount} activity row(s) returned.`);
-  printBreakdown(`Bucketing "Sold" rows by tenant attribution (counts/£ only, never printing the actual name):`, r.agg, r.officialSales, r.noRate);
+  console.log(`${r.rowCount} activity row(s) returned. ${r.moveIns} move-ins this window.`);
+  printBreakdown(`Bucketing "Sold" rows (counts/£ only, never printing the actual name):`, r.agg, r.officialSales, r.noRate);
 }
 process.exit(0);
