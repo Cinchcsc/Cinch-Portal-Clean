@@ -44,10 +44,37 @@ create table if not exists refresh_log (
   detail text
 );
 
+-- ADDED 9 Jul 2026: Autobill Conversion cross-references a month's move-ins against RentRoll's
+-- autobill set, but RentRoll is a live "today only" snapshot (SiteLink has no true historical "as of"
+-- RentRoll report — confirmed repeatedly). A single read is one point on a curve, not a stable monthly
+-- figure. Confirmed legacy's own equivalent widget has the identical volatility (9 Jul 2026: switching
+-- legacy's OWN date filter from Jul-MTD to Jun 2026 moved its Bicester reading 100% -> 54%, matching
+-- neither of Michael's two prior readings) -- there is no stable number on either side to chase.
+-- Michael's decision: average the ratio across every day the month is live, rather than freeze
+-- whatever RentRoll said on the single day the month happened to close. One row per site per calendar
+-- day, written only while that site's month is still the CURRENT (not yet locked) month — see
+-- lib/pull.js. lib/buildPayload.js averages these once a month has any rows, and falls back to the
+-- old single-point value for any month with none (everything before this table existed).
+create table if not exists autobill_daily (
+  id bigserial primary key,
+  site_code text references sites(code),
+  month date not null,
+  sample_date date not null,
+  autobill_new_count int not null,
+  autobill_new_total int not null,
+  pct numeric,
+  pulled_at timestamptz default now(),
+  unique (site_code, month, sample_date)
+);
+create index if not exists autobill_daily_lookup on autobill_daily (site_code, month);
+
 alter table portal_payload enable row level security;
 alter table sites enable row level security;
 alter table raw_report enable row level security;
 alter table refresh_log enable row level security;
+alter table autobill_daily enable row level security;
+-- autobill_daily: RLS on, no anon policy => service-role only, same as raw_report/refresh_log —
+-- the frontend never queries it directly, only lib/buildPayload.js's averaged output.
 
 drop policy if exists "anon reads payload" on portal_payload;
 create policy "anon reads payload" on portal_payload for select using (true);
