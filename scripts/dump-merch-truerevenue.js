@@ -1,19 +1,19 @@
 // Michael (9 Jul 2026): "It is from the True [Period] Revenue... everything that does not include rent
-// or store protect / move in." Confirmed 9 Jul: True Revenue IS the correct report -- but the first
-// pass (excluding just those 3 categories by ChargeDesc string match) overshot badly (£112-338/customer
-// vs legacy's £1.00), because True Revenue's ChargeDesc list also mixes in plenty of non-merchandise
-// items -- Delivery Fee, Administrative Adjustment, Insufficient Notice Fee, Late Fee, Security Deposit,
-// three separate Electric Charge lines, Service Fee -- that a 3-category exclusion list doesn't catch.
-// Manually maintaining an ever-longer ChargeDesc exclusion list is exactly the kind of fragile, guessable
-// thing that's bitten this investigation before (see git log). Better bet: FinancialSummary's own
-// Charge/POSCharges tables carry a clean, SiteLink-provided `sChgCategory`/`sAcctCode` classification
-// (confirmed 'POS' category, account code 201, in earlier runs this week) -- if True Revenue's raw rows
-// ALSO carry an account-code-like field (not currently extracted by true_revenue.parse(), which only
-// pulls ChargeDesc/UnitType + the 8 revenue columns), that would let us classify merchandise the same
-// reliable way, instead of guessing labels. This now dumps the FULL raw column set for a sample row
-// first, then still prints the ChargeDesc breakdown with three exclusion variants for comparison: broad
-// (rent/protect/move-in), narrow (exact "Rent" only), and "fees-and-deposits-too" (also excludes the
-// specific non-merchandise lines identified in the first run).
+// or store protect / move in." Confirmed True Revenue IS the correct report -- but excluding just those
+// 3 categories by ChargeDesc string match overshot badly (£112-338/customer vs legacy's £1.00), because
+// the ChargeDesc list also mixes in Delivery Fee, Administrative Adjustment, Insufficient Notice Fee,
+// Late Fee, Security Deposit, three Electric Charge lines, and Service Fee -- none of them merchandise.
+//
+// BREAKTHROUGH (this run): True Revenue's raw rows carry an `AccountCode` field that true_revenue.parse()
+// never extracts. Its distinct values for L001/June 2026 were 200 (938 rows), 201 (29 rows), 202 (648
+// rows), 4060 (25 rows), 812 (1 row), 4910 (1 row). '200' and '201'/'202' match EXACTLY the account codes
+// FinancialSummary's own Charge/POSCharges tables already use for Rent (200) and Merchandise/Boxes/Locks
+// (201) — confirmed in this week's earlier dumps. So AccountCode is SiteLink's own GL classification,
+// the same clean tagging FinancialSummary uses, just also present (and previously unused) in True
+// Revenue. This groups True Revenue by AccountCode instead of guessing ChargeDesc labels, isolates 201
+// as the candidate merchandise total, and cross-checks it against FinancialSummary's own POS-category
+// total for the same site/period (should be close if both reports are tagging the same underlying data
+// the same way).
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/dump-merch-truerevenue.js [siteCode] [YYYY-MM]
 import { callCustomReport, callReport } from '../lib/sitelink.js';
 import { REPORTS } from '../lib/reportMap.js';
@@ -33,53 +33,42 @@ if (monthArg) {
   end = now;
 }
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-console.log(`=== True Revenue raw columns + ChargeDesc breakdown, ${siteCode}, ${fmt(start)} to ${fmt(end)} ===\n`);
+console.log(`=== True Revenue by AccountCode, ${siteCode}, ${fmt(start)} to ${fmt(end)} ===\n`);
 
 const { rows } = await callCustomReport(781861, siteCode, start, end);
+const num = (v) => Number(v) || 0;
 
-// NEW: full raw column dump for a few sample rows — looking specifically for anything account-code- or
-// category-like (e.g. sAcctCode, sDefAcctCode, sChgCategory, GLCode...) that true_revenue.parse()
-// currently ignores. If SiteLink tags merchandise rows here the same way it does in FinancialSummary,
-// this is the clean fix; if not, we're stuck refining the ChargeDesc exclusion list by hand.
-console.log(`ALL raw columns on row 0 (${rows.length} total rows):`, rows[0] ? Object.keys(rows[0]) : '(none)');
-console.log('Row 0 full contents:', rows[0] || '(none)');
-const candidateCols = rows[0] ? Object.keys(rows[0]).filter((k) => /acct|category|code|gl|class|type/i.test(k)) : [];
-console.log(`\nColumns that LOOK category/account-code-like: ${candidateCols.length ? candidateCols.join(', ') : '(none found)'}`);
-if (candidateCols.length) {
-  console.log('Distinct values for each, with counts:');
-  for (const col of candidateCols) {
-    const counts = {};
-    for (const r of rows) { const v = String(r[col]); counts[v] = (counts[v] || 0) + 1; }
-    console.log(`  ${col}: ${JSON.stringify(counts)}`);
-  }
+// Group by AccountCode, summing TruePeriod (same field the existing True Revenue widget/Real Rate use)
+// and Amount (the raw line-item charge, for cross-reference) plus a couple of sample ChargeDescs per
+// code so it's obvious what each account code actually represents.
+const byCode = {};
+for (const r of rows) {
+  const code = String(r.AccountCode ?? '(blank)');
+  const o = (byCode[code] ??= { truePeriod: 0, amount: 0, count: 0, descs: new Set() });
+  o.truePeriod += num(r.TruePeriod); o.amount += num(r.Amount); o.count++;
+  if (o.descs.size < 6) o.descs.add(r.ChargeDesc);
+}
+console.log(`${'AccountCode'.padEnd(12)} rows   TruePeriod      Amount        sample ChargeDescs`);
+for (const [code, o] of Object.entries(byCode).sort((a, b) => b[1].truePeriod - a[1].truePeriod)) {
+  console.log(`${code.padEnd(12)} ${String(o.count).padStart(4)}   £${o.truePeriod.toFixed(2).padStart(10)}   £${o.amount.toFixed(2).padStart(10)}   ${[...o.descs].join(', ')}`);
 }
 
-const parsed = REPORTS.true_revenue.parse(rows);
-const NON_MERCH_EXTRA = /delivery fee|adjustment|notice fee|late fee|deposit|electric|service fee/i;
+const merchTruePeriod = (byCode['201'] || { truePeriod: 0 }).truePeriod;
+const merchAmount = (byCode['201'] || { amount: 0 }).amount;
+console.log(`\nAccountCode '201' (candidate merchandise, True Revenue): TruePeriod £${merchTruePeriod.toFixed(2)}, Amount £${merchAmount.toFixed(2)}`);
 
-let totalAll = 0, broadSum = 0, narrowSum = 0, feesTooSum = 0;
-console.log(`\n${'ChargeDesc'.padEnd(28)} truePeriod    broad  narrow  +fees/deposits`);
-for (const r of parsed.by_desc.sort((a, b) => b.truePeriod - a.truePeriod)) {
-  totalAll += r.truePeriod;
-  const isBroadExcluded = /rent|protect|move.?in/i.test(r.desc);
-  const isNarrowExcluded = /^rent$/i.test(r.desc.trim());
-  const isFeesTooExcluded = isBroadExcluded || NON_MERCH_EXTRA.test(r.desc);
-  if (!isBroadExcluded) broadSum += r.truePeriod;
-  if (!isNarrowExcluded) narrowSum += r.truePeriod;
-  if (!isFeesTooExcluded) feesTooSum += r.truePeriod;
-  console.log(`${r.desc.padEnd(28)} £${r.truePeriod.toFixed(2).padStart(10)}   ${isBroadExcluded ? 'EXCL' : ' -  '}   ${isNarrowExcluded ? 'EXCL' : ' -  '}    ${isFeesTooExcluded ? 'EXCL' : ' -  '}`);
-}
-console.log(`\nTotal True Period, all ${parsed.by_desc.length} ChargeDesc rows: £${totalAll.toFixed(2)}`);
-console.log(`Broad (rent/protect/move-in only):         £${broadSum.toFixed(2)}`);
-console.log(`Narrow (exact 'Rent' only):                 £${narrowSum.toFixed(2)}`);
-console.log(`+ fees/deposits/utility excluded too:       £${feesTooSum.toFixed(2)}`);
+// Cross-check against FinancialSummary's own POS-category total for the same site/period.
+const { rows: finRows } = await callReport('FinancialSummary', siteCode, start, end);
+const finParsed = REPORTS.financial.parse(finRows);
+const posSum = finParsed.categories.filter((c) => c.category === 'POS').reduce((a, c) => a + c.charge, 0);
+console.log(`FinancialSummary POS-category total (today's production numerator): £${posSum.toFixed(2)}`);
+console.log(`Difference: £${(merchTruePeriod - posSum).toFixed(2)} (${posSum ? ((merchTruePeriod / posSum - 1) * 100).toFixed(1) : 'n/a'}%)`);
 
 const { rows: mgRows } = await callReport('ManagementSummary', siteCode, start, end);
 const mgParsed = REPORTS.management.parse(mgRows, start, end);
 const moveIns = mgParsed.move_ins;
 console.log(`\nMove-ins this period (ManagementSummary, already validated): ${moveIns}`);
-console.log(`\nMerchandise Income per New Customer for ${siteCode}:`);
-console.log(`  broad ÷ move-ins:              £${moveIns ? (broadSum / moveIns).toFixed(2) : 'n/a'}`);
-console.log(`  narrow ÷ move-ins:             £${moveIns ? (narrowSum / moveIns).toFixed(2) : 'n/a'}`);
-console.log(`  + fees/deposits too ÷ move-ins: £${moveIns ? (feesTooSum / moveIns).toFixed(2) : 'n/a'}`);
+console.log(`\nMerchandise Income per New Customer for ${siteCode}, AccountCode-201-based:`);
+console.log(`  TruePeriod ÷ move-ins: £${moveIns ? (merchTruePeriod / moveIns).toFixed(2) : 'n/a'}`);
+console.log(`  Amount ÷ move-ins:     £${moveIns ? (merchAmount / moveIns).toFixed(2) : 'n/a'}`);
 process.exit(0);
