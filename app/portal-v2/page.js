@@ -11,6 +11,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
+const debugWarn = (...args) => {
+  if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+    console.warn(...args);
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Mock data seed (verbatim from the decoded source)
@@ -754,7 +759,7 @@ export default function PortalV2Page() {
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured || !data.totals) {
-          console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
+          debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
           onSettled && onSettled();
           return;
         }
@@ -763,7 +768,7 @@ export default function PortalV2Page() {
         setViewLive(fromKey === toKey && toKey === (liveMonths && liveMonths[liveMonths.length - 1]));
         onSettled && onSettled();
       })
-      .catch((err) => { console.warn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err); onSettled && onSettled(); });
+      .catch((err) => { debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err); onSettled && onSettled(); });
 
     // "vs last month" delta ticks (8 Jul 2026, Michael: "put the ticks that show the net changes with
     // arrows... on the 29 pull one") — only meaningful for a single selected month, compared against
@@ -791,7 +796,7 @@ export default function PortalV2Page() {
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured || !data.totals) {
-          console.warn('[portal-v2] /api/portfolio not configured — dashboard KPI row + rate table + trend charts are using mock data.');
+          debugWarn('[portal-v2] /api/portfolio not configured — dashboard KPI row + rate table + trend charts are using mock data.');
           setLiveTotals(null);
           setLiveSitesRaw(null);
           setLiveMonthly(null);
@@ -838,7 +843,7 @@ export default function PortalV2Page() {
         }
       })
       .catch((err) => {
-        console.warn('[portal-v2] /api/portfolio fetch failed — dashboard KPI row + rate table + trend charts are using mock data.', err);
+        debugWarn('[portal-v2] /api/portfolio fetch failed — dashboard KPI row + rate table + trend charts are using mock data.', err);
         setLiveTotals(null);
         setLiveSitesRaw(null);
         setLiveMonthly(null);
@@ -856,13 +861,13 @@ export default function PortalV2Page() {
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured || !data.daily) {
-          console.warn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
+          debugWarn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
           setLiveSnapshot(null);
           return;
         }
         setLiveSnapshot({ daily: data.daily, weekly: data.weekly, quarterly: data.quarterly, generatedAt: data.generated_at });
       })
-      .catch((err) => { console.warn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
+      .catch((err) => { debugWarn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
   };
 
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
@@ -1005,7 +1010,7 @@ export default function PortalV2Page() {
         t = computeTotals(liveSites);   // recomputed client-side so the store filter applies (see computeTotals)
       } else {
         // Fallback mock path (also used if /api/portfolio is unconfigured or errors).
-        console.warn('[portal-v2] KPI row rendering with mock RAW_STORES data (no live totals available).');
+        debugWarn('[portal-v2] KPI row rendering with mock RAW_STORES data (no live totals available).');
       }
 
       if (useLive) {
@@ -1031,7 +1036,7 @@ export default function PortalV2Page() {
       const liveOccRows = liveSites ? liveSites.map((s) => ({
         name: s.name, occupied: s.occ || 0, total: s.tot || 0, occPct: s.occPC || 0, claPct: s.areaPC || 0, rentRoll: s.rent || 0,
       })) : null;
-      if (!liveOccRows) console.warn('[portal-v2] Portfolio Occupancy table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveOccRows) debugWarn('[portal-v2] Portfolio Occupancy table rendering with mock RAW_STORES data (no live sites available).');
       // "vs last month" totals-row deltas (8 Jul 2026) — computeTotals() on the SAME livePrevSites
       // snapshot already fetched for the KPI card arrows (see fetchLiveRange's prevKey fetch), scoped
       // by the same store filter. null whenever no single-month comparison is available (matches
@@ -1073,7 +1078,7 @@ export default function PortalV2Page() {
         name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
       })) : null;
       const mockRateRows = fs.map((s) => ({ name: s.name, region: s.region, selfRate: s.rate, totalRate: +(s.rate * 0.957).toFixed(2), realRate: +(s.rate * 0.925).toFixed(2), realTotal: +(s.rate * 0.89).toFixed(2), area: s.area }));
-      if (!liveRateRows) console.warn('[portal-v2] Rates per ft² table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveRateRows) debugWarn('[portal-v2] Rates per ft² table rendering with mock RAW_STORES data (no live sites available).');
       // Average row (legacy parity: the legacy Rate/Real Rate tables end with a portfolio average
       // row). Live path reuses computeTotals' weighted rates (Σ rent ÷ Σ area × 12 — never a mean
       // of per-site rates); mock path weights each mock rate by that store's occupied area.
@@ -1114,7 +1119,7 @@ export default function PortalV2Page() {
               { value: intFmt(sum('netArea')) + ' ft²', label: 'Net ft²', delta: null, dir: null },
             ] };
           }
-          console.warn('[portal-v2] Move-ins & Move-outs stat card rendering with mock RAW_STORES data (no live sites available).');
+          debugWarn('[portal-v2] Move-ins & Move-outs stat card rendering with mock RAW_STORES data (no live sites available).');
           return { title: 'Move-ins & Move-outs', tiles: [
             { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' }, { value: intFmt(2040 * f) + ' ft²', label: 'Net ft²', delta: '160', dir: 'up' },
           ] };
@@ -1132,7 +1137,7 @@ export default function PortalV2Page() {
               { value: intFmt(sum('total')), label: 'Total', delta: null, dir: null },
             ] };
           }
-          console.warn('[portal-v2] Enquiries stat card rendering with mock RAW_STORES data (no live sites available).');
+          debugWarn('[portal-v2] Enquiries stat card rendering with mock RAW_STORES data (no live sites available).');
           return { title: 'Enquiries', tiles: [
             { value: intFmt(94 * f), label: 'Phone', delta: '2', dir: 'up' }, { value: intFmt(61 * f), label: 'Walk-ins', delta: '2', dir: 'down' }, { value: intFmt(1210 * f), label: 'Web', delta: '10', dir: 'up' }, { value: intFmt(1365 * f), label: 'Total', delta: '10', dir: 'up' },
           ] };
@@ -1150,7 +1155,7 @@ export default function PortalV2Page() {
       const liveAreaBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.occA || 0, disp: intFmt(s.occA || 0) + ' ft²', color: C.blue })) : null;
       const liveRateBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.ssRate || 0, disp: '£' + (s.ssRate || 0).toFixed(2), color: C.teal })) : null;
       const liveClaBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.areaPC || 0, disp: (s.areaPC || 0).toFixed(1) + '%', color: thresholdColorFor(s.areaPC || 0) })) : null;
-      if (!liveAreaBars) console.warn('[portal-v2] Dashboard comparison charts rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveAreaBars) debugWarn('[portal-v2] Dashboard comparison charts rendering with mock RAW_STORES data (no live sites available).');
 
       // Pinned "Average" bar on each comparison chart (legacy parity — the legacy portal's bar
       // charts all end with an Average bar). Area = mean per store; rate/% = the portfolio's
@@ -1192,7 +1197,7 @@ export default function PortalV2Page() {
       // totals.officesOccPC/officesRate (added to lib/buildPayload.js) do the same for the
       // Indoor Self Storage and Offices unit types specifically.
       const kpiT = liveSites ? computeTotals(liveSites) : null;   // recomputed client-side so the store filter applies
-      if (!kpiT) console.warn('[portal-v2] KPIs stat cards rendering with mock RAW_STORES data (no live totals available).');
+      if (!kpiT) debugWarn('[portal-v2] KPIs stat cards rendering with mock RAW_STORES data (no live totals available).');
       // "vs last month" comparator for the delta ticks below (8 Jul 2026) — null when unavailable
       // (earliest stored month, a multi-month range selected, or the prev-month fetch failed), in
       // which case deltaTick() falls back to {delta: null, dir: null} and the tile shows no arrow.
@@ -1322,9 +1327,9 @@ export default function PortalV2Page() {
           return { title: 'Move-ins & Move-outs', live: true, tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count') },
-              { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'count') },
-              { value: intFmt(-moveOutArea) + ' ft²', label: 'Sqft Out', ...deltaTick(-moveOutArea, prevMoveOutArea != null ? -prevMoveOutArea : null, 'count') },
-              { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'count') },
+              { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'ft') },
+              { value: intFmt(-moveOutArea) + ' ft²', label: 'Sqft Out', ...deltaTick(-moveOutArea, prevMoveOutArea != null ? -prevMoveOutArea : null, 'ft') },
+              { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'ft') },
             ] };
         })(),
         // Move-In Rental Rate — added 6 Jul 2026 from Michael's uploaded MoveInsAndMoveOuts export
@@ -1344,8 +1349,14 @@ export default function PortalV2Page() {
         // via live probes). Discounts report's dcVariance for tenants who moved in THIS month,
         // deduplicated by unit (a unit on a ~28-day billing cycle can post 2 charge rows inside one
         // calendar month — confirmed live, not a bug — so this avoids double-weighting one move-in).
+        // FIXED 10 Jul 2026 (KPIs page audit, task #61): delta was hardcoded null/null even on the
+        // live branch, even though kpiPrevT.moveInVarianceAvg is already computed by computeTotals()
+        // (same aggregate the rest of this page's stat cards read their own "vs last month" deltas
+        // from) -- unlike Reservations/Reserved Sqft (genuinely live-snapshot-only, no historical
+        // concept) or Customer Churn (genuinely blocked on 12+ months of history), there was no data
+        // reason this one was skipped. Now wired the same way as every sibling card on this page.
         kpiT
-          ? { title: 'Move-in Variance vs Standard Rate', live: true, tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, delta: null, dir: null }] }
+          ? { title: 'Move-in Variance vs Standard Rate', live: true, tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, ...deltaTick(kpiT.moveInVarianceAvg, kpiPrevT && kpiPrevT.moveInVarianceAvg, 'money') }] }
           : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '£18.40', label: 'Avg per new move-in (n=11)', delta: null, dir: null }] },
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
@@ -1371,7 +1382,7 @@ export default function PortalV2Page() {
             const churnPct = avgOcc ? R2(moveOutsSum / avgOcc * 100) : 0;
             return { title: 'Customer Churn', live: true, tiles: [{ value: churnPct.toFixed(1) + '%', label: 'Rolling 12-month', delta: null, dir: null }], hasViz: true, el: <Donut pct={churnPct} color={C.teal} /> };
           }
-          if (liveHistory) console.warn(`[portal-v2] Customer Churn still mock — only ${liveHistory.length} month(s) of history stored (need 12). Run npm run backfill 12 (or more).`);
+          if (liveHistory) debugWarn(`[portal-v2] Customer Churn still mock — only ${liveHistory.length} month(s) of history stored (need 12). Run npm run backfill 12 (or more).`);
           return { title: 'Customer Churn', tiles: [{ value: '78.88%', label: 'Rolling 12-month', delta: '1%', dir: 'down' }], hasViz: true, el: <Donut pct={78.88} color={C.teal} /> };
         })(),
       ];
@@ -1389,7 +1400,7 @@ export default function PortalV2Page() {
       // all, and fits the same "which store is the outlier" comparison philosophy as every other
       // dashboard/KPI chart.
       const liveRateIncBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: (s.rateChanges && s.rateChanges.increases) || 0, disp: intFmt((s.rateChanges && s.rateChanges.increases) || 0), color: C.blue })) : null;
-      if (!liveMlaBars || !custT || !liveRateIncBars) console.warn('[portal-v2] KPIs chart cards rendering with mock data (no live totals/customerType available).');
+      if (!liveMlaBars || !custT || !liveRateIncBars) debugWarn('[portal-v2] KPIs chart cards rendering with mock data (no live totals/customerType available).');
       // Pinned summary bars (legacy parity): % of MLA ends with a portfolio "Average" bar
       // (kpiT.areaPC = Σ occA ÷ Σ totA — MLA-based, sum-then-divide), Rate Increases with a
       // "Total" bar (legacy labels that chart's summary bar "Total", not "Average").
@@ -1411,7 +1422,7 @@ export default function PortalV2Page() {
           const buckets = kpiT?.varFromStdRate;
           const mockBuckets = [{ bucket: '< 0%', count: 145 }, { bucket: '0 - 15%', count: 74 }, { bucket: '15 - 30%', count: 61 }, { bucket: '30 - 50%', count: 33 }, { bucket: '> 50%', count: 1 }];
           const data = (buckets && buckets.length ? buckets : mockBuckets).map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue }));
-          if (!buckets || !buckets.length) console.warn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
+          if (!buckets || !buckets.length) debugWarn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
           return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
         })(),
       ];
@@ -1433,7 +1444,7 @@ export default function PortalV2Page() {
           area: b.area, occPct: b.total ? +(b.occupied / b.total * 100).toFixed(1) : 0,
         }));
       })() : null;
-      if (!liveUnitMixRows || !liveUnitMixRows.length) console.warn('[portal-v2] Unit Mix Occupancy table rendering with mock data (no live unitMix available).');
+      if (!liveUnitMixRows || !liveUnitMixRows.length) debugWarn('[portal-v2] Unit Mix Occupancy table rendering with mock data (no live unitMix available).');
       const unitMixRows = (liveUnitMixRows && liveUnitMixRows.length) ? liveUnitMixRows : unitDefs.map(([size, type, baseUnits, baseArea]) => {
         const total = Math.round(baseUnits * 12 * f);
         const occPct2 = 70 + ((baseUnits * 7 + baseArea) % 30);
@@ -1471,7 +1482,7 @@ export default function PortalV2Page() {
         const personal = ct.residential?.units || 0, business = ct.business?.units || 0, tot = personal + business;
         return { name: s.name, personal, business, personalPct: tot ? +(personal / tot * 100).toFixed(1) : 0, rate: s.rate || 0 };
       }) : null;
-      if (!liveCustTypeRows) console.warn('[portal-v2] Units by Customer Type table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveCustTypeRows) debugWarn('[portal-v2] Units by Customer Type table rendering with mock RAW_STORES data (no live sites available).');
       const custTypeRowsAll = liveCustTypeRows || fs.map((s) => {
         const business = Math.round(s.occupied * (0.14 + (s.total % 13) / 100));
         return { name: s.name, region: s.region, personal: s.occupied - business, business, personalPct: +(((s.occupied - business) / s.occupied) * 100).toFixed(1), rate: s.rate };
@@ -1510,7 +1521,7 @@ export default function PortalV2Page() {
       const liveSSRows = liveSites ? liveSites.map((s) => ({
         name: s.name, occupied: s.ss?.occ || 0, total: s.ss?.tot || 0, rate: s.ss?.rate || 0,
       })) : null;
-      if (!liveOfficesRows || !liveSSRows) console.warn('[portal-v2] Offices/Indoor Self Storage Occupancy tables rendering with mock data (no live sites available).');
+      if (!liveOfficesRows || !liveSSRows) debugWarn('[portal-v2] Offices/Indoor Self Storage Occupancy tables rendering with mock data (no live sites available).');
       const officeSSColumns = [
         { key: 'name', label: 'Location', type: 'text' },
         { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' }, { key: 'total', label: 'Total', type: 'int', align: 'right' },
@@ -1543,7 +1554,7 @@ export default function PortalV2Page() {
       const liveClaRows = liveSites ? liveSites.map((s) => ({
         name: s.name, area: s.occA || 0, cla: s.claA || 0, claPct: s.areaPC || 0,
       })) : null;
-      if (!liveClaRows) console.warn('[portal-v2] Occupied Area by % of CLA table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveClaRows) debugWarn('[portal-v2] Occupied Area by % of CLA table rendering with mock RAW_STORES data (no live sites available).');
       const claRowsAll = liveClaRows || fs.map((s) => ({ name: s.name, region: s.region, area: s.area, cla: Math.round(s.area / (s.claPct / 100)), claPct: s.claPct }));
       // Totals row: area sums; % of CLA re-derived from the sums (kpiT.claPC on the live path).
       const claTotals = (() => {
@@ -1584,7 +1595,7 @@ export default function PortalV2Page() {
         const avgCustValue = finT.occ ? R2((finT.rent / finT.occ) * (avgStay / 30.43)) : 0;
         custInsights = { title: 'Customer Insights', live: true, tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] };
       } else {
-        console.warn('[portal-v2] Financials Customer Insights rendering with mock data (no live totals available).');
+        debugWarn('[portal-v2] Financials Customer Insights rendering with mock data (no live totals available).');
         custInsights = { title: 'Customer Insights', tiles: [{ value: money(3921), label: 'Avg customer value', delta: '£38', dir: 'down' }, { value: '721 days', label: 'Avg length of stay', delta: '2 days', dir: 'down' }] };
       }
       // Past Due Balances: totals.debtorTotal / debtorRentRollPct — same Debtor Levels source
@@ -1626,7 +1637,7 @@ export default function PortalV2Page() {
         { key: 'taxAdj', label: 'Tax Adj', type: 'money', align: 'right' }, { key: 'netTax', label: 'Net Tax', type: 'money', align: 'right' }, { key: 'deferred', label: 'Deferred Rev', type: 'money', align: 'right' },
         { key: 'deferredPrev', label: 'Deferred Prev', type: 'money', align: 'right' }, { key: 'adj', label: 'Adjustments', type: 'money', align: 'right' }, { key: 'adjPrev', label: 'Adj Prev', type: 'money', align: 'right' }, { key: 'truePeriod', label: 'True Period', type: 'money', align: 'right' },
       ];
-      if (!finT || !finT.trueRevenueByDesc?.length) console.warn('[portal-v2] True Revenue tables rendering with mock data (no live true_revenue data yet — run npm run pull after adding true_revenue to the pipeline).');
+      if (!finT || !finT.trueRevenueByDesc?.length) debugWarn('[portal-v2] True Revenue tables rendering with mock data (no live true_revenue data yet — run npm run pull after adding true_revenue to the pipeline).');
       // Totals rows (legacy parity: both True Revenue tables end with a totals row — the legacy
       // labels it with the month, ours with "Total" — summing every money column).
       const revTotals = (rows) => {
@@ -1659,7 +1670,7 @@ export default function PortalV2Page() {
       // insured/rent/occ across sites first, then divides once — InsuranceRoll report, per-site
       // fields already existed as s.insurance.{premium,insured,penetration}).
       const ancT = liveSites ? computeTotals(liveSites) : null;   // recomputed client-side so the store filter applies
-      if (!ancT) console.warn('[portal-v2] Ancillaries Insurance Roll stat card rendering with mock data (no live totals available).');
+      if (!ancT) debugWarn('[portal-v2] Ancillaries Insurance Roll stat card rendering with mock data (no live totals available).');
       // Every top-row stat card below is computed from `liveSites` (the unscoped /api/portfolio call),
       // which lib/buildPayload.js's buildPayload() builds from the CURRENT in-progress month (recordFor
       // (..., idx[code][cur], true) — see buildPayload.js line ~588), not any previous-month override.
@@ -1770,7 +1781,7 @@ export default function PortalV2Page() {
       // Insurance Roll by Store: live-wired per-site comparison bars (same portfolio-comparison
       // pattern as the dashboard, per Michael 2 Jul 2026 — store-vs-store, not a trend line).
       const liveInsBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: (s.insurance && s.insurance.penetration) || 0, disp: ((s.insurance && s.insurance.penetration) || 0).toFixed(1) + '%', color: ((s.insurance && s.insurance.penetration) || 0) >= 70 ? C.green : ((s.insurance && s.insurance.penetration) || 0) >= 50 ? C.amber : C.red })) : null;
-      if (!liveInsBars) console.warn('[portal-v2] Insurance Roll chart rendering with mock data (no live sites available).');
+      if (!liveInsBars) debugWarn('[portal-v2] Insurance Roll chart rendering with mock data (no live sites available).');
       // Pinned "Average" bar (legacy parity): portfolio % insured = Σ insured units ÷ Σ occupied
       // units (ancT.insurancePctInsured, sum-then-divide) on the live path; mean of mock values otherwise.
       const insBarItems = liveInsBars || fs.map((s) => ({ label: s.name, value: +(68 + (s.occupied % 22)).toFixed(1), disp: (+(68 + (s.occupied % 22)).toFixed(1)) + '%', color: C.blue }));
@@ -1784,7 +1795,7 @@ export default function PortalV2Page() {
         const ins = s.insurance || {};
         return { name: s.name, premiums: ins.premium || 0, pctRoll: s.rent ? +((ins.premium || 0) / s.rent * 100).toFixed(1) : 0, insured: ins.insured || 0, pctInsured: ins.penetration || 0 };
       }) : null;
-      if (!liveInsRows) console.warn('[portal-v2] Insurance Roll table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveInsRows) debugWarn('[portal-v2] Insurance Roll table rendering with mock RAW_STORES data (no live sites available).');
       const insRowsAll = liveInsRows || fs.map((s) => {
         const pctInsured = +(68 + (s.occupied % 22)).toFixed(1);
         return { name: s.name, region: s.region, premiums: Math.round(s.rentRoll * 0.101), pctRoll: 10.1, insured: Math.round((s.occupied * pctInsured) / 100), pctInsured };
@@ -1847,7 +1858,7 @@ export default function PortalV2Page() {
         // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
         enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
-        console.warn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
+        debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
         // Roll above — this mock branch was showing the green LIVE badge on fabricated numbers.
         // This block is an if/else rather than this file's usual ternary pattern, which is likely
@@ -1867,7 +1878,7 @@ export default function PortalV2Page() {
       // Reservations vs Move-ins: live portfolio sums (activeReservations from ReservationList,
       // moveIns from ManagementSummary — both already last-complete-month/current-scoped).
       const resVsMoveIns = liveSites ? { res: liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0), mi: liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) } : null;
-      if (!resVsMoveIns) console.warn('[portal-v2] Reservations vs Move-ins chart rendering with mock data (no live sites available).');
+      if (!resVsMoveIns) debugWarn('[portal-v2] Reservations vs Move-ins chart rendering with mock data (no live sites available).');
       out.chartCards = [
         resVsMoveIns
           ? { title: 'Reservations vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
@@ -1883,7 +1894,7 @@ export default function PortalV2Page() {
         const total = e.total || 0;
         return { name: s.name, phone: e.phone || 0, web: e.web || 0, walkin: e.walkin || 0, total, conv: total ? +((e.reservationConversions || 0) / total * 100).toFixed(1) : 0 };
       }) : null;
-      if (!liveLeadRows) console.warn('[portal-v2] Leads by Store table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveLeadRows) debugWarn('[portal-v2] Leads by Store table rendering with mock RAW_STORES data (no live sites available).');
       const leadRowsAll = liveLeadRows || fs.map((s) => {
         const phone = Math.round(3 + (s.occupied % 6));
         const web = Math.round(38 + (s.total % 24));
@@ -1942,7 +1953,7 @@ export default function PortalV2Page() {
       const selFromKey = monthKeyOf(monthFrom), selToKey = monthKeyOf(monthTo);
       const scopedHistory = liveHistory ? liveHistory.filter((h) => h.month >= selFromKey && h.month <= selToKey) : null;
       const liveHist = (scopedHistory && scopedHistory.length >= 2) ? scopedHistory : null;
-      if (!liveHist) console.warn('[portal-v2] Month-on-Month charts rendering with mock data (need >=2 months of stored history within the selected period — widen the PERIOD selector, run npm run pull a few more times, or npm run backfill).');
+      if (!liveHist) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (need >=2 months of stored history within the selected period — widen the PERIOD selector, run npm run pull a few more times, or npm run backfill).');
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
@@ -1980,7 +1991,7 @@ export default function PortalV2Page() {
       // portfolio (totals.rentalActivityByTypeSize, sum-then-divide rollup — see lib/buildPayload.js).
       const umT = liveSites ? computeTotals(liveSites) : null;
       const umRows = umT?.rentalActivityByTypeSize?.length ? umT.rentalActivityByTypeSize : null;
-      if (!umRows) console.warn('[portal-v2] Unit Mix Detail page rendering with mock data (no live rental_activity data yet — run npm run pull after adding rental_activity to the pipeline).');
+      if (!umRows) debugWarn('[portal-v2] Unit Mix Detail page rendering with mock data (no live rental_activity data yet — run npm run pull after adding rental_activity to the pipeline).');
       // FIXED 10 Jul 2026 (audit): rows were missing totalArea/occupiedArea (only had per-unit `area`).
       // The rollup below (line ~1978) only accumulates o.totalArea/o.occupiedArea `if (r.totalArea !=
       // null)` / `if (r.occupiedArea != null)` — since these were always undefined here, every mock
@@ -2100,7 +2111,7 @@ export default function PortalV2Page() {
       // source investigation.
       const dsT = liveSites ? computeTotals(liveSites) : null;
       const dsRows = dsT?.discountPlans?.length ? dsT.discountPlans : null;
-      if (!dsRows) console.warn('[portal-v2] Discount Summary page rendering with mock data (no live discounts data yet — run npm run pull after adding the discounts report to the pipeline).');
+      if (!dsRows) debugWarn('[portal-v2] Discount Summary page rendering with mock data (no live discounts data yet — run npm run pull after adding the discounts report to the pipeline).');
       const mockDS = [
         { plan: 'Variances from Standard Rate: Non-Expiring', units: 71, discount: 3442.43 },
         { plan: '50% OFF 12 Weeks', units: 21, discount: 1731.65 },
@@ -2132,14 +2143,12 @@ export default function PortalV2Page() {
       // Weekly/Daily Snapshot — new page (9 Jul 2026, Michael: "add page 'Weekly/Daily snapshot under
       // overview", "check original brief on timings of API"). Michael's decision (3rd AskUserQuestion,
       // 9 Jul 2026): a live-style period query (yesterday / last 7 days / quarter-to-date), not a
-      // day-by-day accumulating trend chart — see docs/roadmap.md #5/#6 and lib/pullSnapshot.js's file
-      // header for the full feasibility writeup. Backed by its own snapshot_payload row, refreshed by
+      // day-by-day accumulating trend chart. Backed by its own snapshot_payload row, refreshed by
       // `npm run pull:snapshot` (or GET /api/pull-snapshot), independent of the main monthly pull.
       // Reservation Backlog ("forward move-ins", Michael's pick) is a known gap — shown as "—" below,
-      // pending scripts/probe-daily-granularity.js confirming a usable target-move-in-date field on
-      // InquiryTracking.
+      // pending confirmation of a usable target-move-in-date field on InquiryTracking.
       const snap = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
-      if (!snap) console.warn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
+      if (!snap) debugWarn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
       const periodLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
       const fmtRange = (r) => {
         if (!r) return '';
@@ -2263,7 +2272,7 @@ export default function PortalV2Page() {
     try {
       XLSX = await import('xlsx');
     } catch (err) {
-      console.warn('[portal-v2] xlsx package not available — export is a no-op. Run `npm install xlsx` to enable it.', err);
+      debugWarn('[portal-v2] xlsx package not available — export is a no-op. Run `npm install xlsx` to enable it.', err);
       alert('Excel export is unavailable in this build (xlsx package not installed).');
       return;
     }
