@@ -43,6 +43,10 @@ create table if not exists refresh_log (
   status text,
   detail text
 );
+-- ADDED 10 Jul 2026 (overlap guard, roadmap #93): distinguishes the main pull from the Weekly/Daily
+-- Snapshot pull. Both share ONE lock (see lib/pullLock.js) since they hit the same SiteLink account —
+-- existing rows all default to 'pull', which is correct, they're all from the main pull.
+alter table refresh_log add column if not exists kind text not null default 'pull';
 
 -- ADDED 9 Jul 2026: Autobill Conversion cross-references a month's move-ins against RentRoll's
 -- autobill set, but RentRoll is a live "today only" snapshot (SiteLink has no true historical "as of"
