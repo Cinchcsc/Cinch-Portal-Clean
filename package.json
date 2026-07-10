@@ -97,7 +97,9 @@
     "probe:window-length": "node --env-file=.env scripts/probe-window-length.js",
     "probe:financial-pos-merchandise": "node --env-file=.env scripts/probe-financial-pos-merchandise.js",
     "probe:truerevenue-merch-invoiced": "node --env-file=.env scripts/probe-truerevenue-merch-invoiced.js",
-    "probe:autobill-bicester": "node --env-file=.env scripts/probe-autobill-bicester.js"
+    "probe:autobill-bicester": "node --env-file=.env scripts/probe-autobill-bicester.js",
+    "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
+    "backfill:delinquent30": "node --env-file=.env scripts/backfill-delinquent30.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
