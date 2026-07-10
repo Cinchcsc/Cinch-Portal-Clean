@@ -1800,8 +1800,18 @@ export default function PortalV2Page() {
           pctInsured: ancT ? (ancT.insurancePctInsured ?? 0) : (insRowsAll.length ? +(insRowsAll.reduce((a, r) => a + (r.pctInsured || 0), 0) / insRowsAll.length).toFixed(1) : 0),
         };
       })();
+      // "vs last month" totals-row delta (task #121, added 10 Jul 2026) — same livePrevSites snapshot
+      // pattern used on Dashboard/Financials. s.insurance.{premium,insured} is set outside recordFor()'s
+      // `if(full)` gate (see lib/buildPayload.js), so it's present on the light livePrevSites records too.
+      const ancTPrev = livePrevSites ? computeTotals(livePrevSites) : null;
+      const insTotalsPrev = (ancT && ancTPrev) ? {
+        premiums: livePrevSites.reduce((a, s) => a + ((s.insurance && s.insurance.premium) || 0), 0),
+        insured: livePrevSites.reduce((a, s) => a + ((s.insurance && s.insurance.insured) || 0), 0),
+        pctRoll: ancTPrev.insurancePctRoll ?? 0,
+        pctInsured: ancTPrev.insurancePctInsured ?? 0,
+      } : null;
       out.tables.push({
-        title: 'Insurance Roll (All Stores)', live: !!liveInsRows, pageSize: 12, wide: true, totals: insTotals, totalsLabel: 'Total',
+        title: 'Insurance Roll (All Stores)', live: !!liveInsRows, pageSize: 12, wide: true, totals: insTotals, totalsPrev: insTotalsPrev, totalsLabel: 'Total',
         columns: liveInsRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'premiums', label: 'Premiums', type: 'money', align: 'right' }, { key: 'pctRoll', label: '% Rent Roll', type: 'pct', align: 'right' },
@@ -1892,8 +1902,16 @@ export default function PortalV2Page() {
         const conv = enqSum ? (enqSum('total') ? +(enqSum('reservationConversions') / enqSum('total') * 100).toFixed(1) : 0) : (total ? +(leadRowsAll.reduce((a, r) => a + (r.conv || 0) * (r.total || 0), 0) / total).toFixed(1) : 0);
         return { phone, web, walkin, total, conv };
       })();
+      // "vs last month" totals-row delta (task #121, added 10 Jul 2026) — same enqSum() pattern, just
+      // over livePrevSites instead of liveSites. s.enquiries is set outside recordFor()'s `if(full)`
+      // gate (it's a flow metric, see lib/buildPayload.js), so it's present on livePrevSites too.
+      const enqSumPrev = livePrevSites ? (k) => livePrevSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
+      const leadTotalsPrev = (liveLeadRows && enqSumPrev) ? {
+        phone: enqSumPrev('phone'), web: enqSumPrev('web'), walkin: enqSumPrev('walkin'), total: enqSumPrev('total'),
+        conv: enqSumPrev('total') ? +(enqSumPrev('reservationConversions') / enqSumPrev('total') * 100).toFixed(1) : 0,
+      } : null;
       out.tables.push({
-        title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsLabel: 'Total',
+        title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -1987,9 +2005,13 @@ export default function PortalV2Page() {
       // rollup in this file — rates/percentages are never averaged from already-divided per-size
       // figures.
       const byTypeSize = umRows || mockUM;
-      const rows = (() => {
+      // Extracted into a named function (task #121, 10 Jul 2026) — was an inline IIFE, but the same
+      // grouping needs to run a second time below over the PREVIOUS month's rentalActivityByTypeSize
+      // for the totals-row "vs last month" deltas, and hand-duplicating this logic would risk it
+      // drifting out of sync with itself over time.
+      const groupByType = (bySize) => {
         const g = {};
-        for (const r of byTypeSize) {
+        for (const r of bySize) {
           const o = (g[r.type] ??= { type: r.type, totalUnits: 0, occupied: 0, vacant: 0, occupiedRent: 0, movedIn: 0, movedOut: 0, netTransferred: 0, transfers: 0, net: 0, totalArea: r.totalArea != null ? 0 : undefined, occupiedArea: r.occupiedArea != null ? 0 : undefined, vacantArea: 0, netArea: 0, grossPotential: 0 });
           o.totalUnits += r.totalUnits; o.occupied += r.occupied; o.vacant += r.vacant; o.occupiedRent += r.occupiedRent;
           o.movedIn += r.movedIn; o.movedOut += r.movedOut; o.netTransferred += r.netTransferred; o.transfers += r.transfers; o.net += r.net;
@@ -2005,7 +2027,13 @@ export default function PortalV2Page() {
           occupiedDollarPerArea: o.occupiedArea ? R2(o.occupiedRent / o.occupiedArea * 12) : 0,
           occupiedRent: R2(o.occupiedRent), grossPotential: R2(o.grossPotential),
         })).sort((a, b) => b.totalUnits - a.totalUnits);
-      })();
+      };
+      const rows = groupByType(byTypeSize);
+      // "vs last month" totals-row deltas (task #121, 10 Jul 2026) — same computeTotals(livePrevSites)
+      // pattern used elsewhere, run through the SAME groupByType() so the comparison is apples-to-apples.
+      const umTPrev = livePrevSites ? computeTotals(livePrevSites) : null;
+      const umRowsPrev = umTPrev?.rentalActivityByTypeSize?.length ? umTPrev.rentalActivityByTypeSize : null;
+      const rowsPrev = (umRows && umRowsPrev) ? groupByType(umRowsPrev) : null;
 
       // 1. Unit Size Breakdown table (direct match for a widget in Michael's KPI reference doc we
       // didn't have anywhere yet — Occupancy Statistics doesn't carry a standalone rate column at
@@ -2017,6 +2045,7 @@ export default function PortalV2Page() {
         { key: 'standardRate', label: 'Avg List Rate', type: 'money', align: 'right' }, { key: 'occupiedDollarPerArea', label: 'Actual £/ft²', type: 'money2', align: 'right' },
       ];
       const breakdownTotals = { totalUnits: rows.reduce((a, r) => a + r.totalUnits, 0), occupied: rows.reduce((a, r) => a + r.occupied, 0), vacant: rows.reduce((a, r) => a + r.vacant, 0) };
+      const breakdownTotalsPrev = rowsPrev ? { totalUnits: rowsPrev.reduce((a, r) => a + r.totalUnits, 0), occupied: rowsPrev.reduce((a, r) => a + r.occupied, 0), vacant: rowsPrev.reduce((a, r) => a + r.vacant, 0) } : null;
 
       // 3. Rate Realization Gap — list vs actual achieved £/ft², both already annualised, so this
       // compares cleanly at ANY grain (type-level here) without needing a single unit's raw area.
@@ -2036,6 +2065,7 @@ export default function PortalV2Page() {
         { key: 'net', label: 'Net', type: 'int', align: 'right', color: 'delta' },
       ];
       const turnoverTotals = { movedIn: rows.reduce((a, r) => a + r.movedIn, 0), movedOut: rows.reduce((a, r) => a + r.movedOut, 0), net: rows.reduce((a, r) => a + r.net, 0) };
+      const turnoverTotalsPrev = rowsPrev ? { movedIn: rowsPrev.reduce((a, r) => a + r.movedIn, 0), movedOut: rowsPrev.reduce((a, r) => a + r.movedOut, 0), net: rowsPrev.reduce((a, r) => a + r.net, 0) } : null;
 
       // 5. Gross Potential vs Actual Revenue — the upside sitting in vacant units at list rate.
       const captureRows = rows.map((r) => ({ ...r, capturePct: r.grossPotential ? R2(r.occupiedRent / r.grossPotential * 100) : 0 }));
@@ -2049,9 +2079,9 @@ export default function PortalV2Page() {
       out.statCards = [];
       out.chartCards = [];
       out.tables = [
-        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, columns: breakdownCols, rows, totals: breakdownTotals, totalsLabel: 'Total' },
+        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
         { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, columns: gapCols, rows: gapRows },
-        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, columns: turnoverCols, rows, totals: turnoverTotals, totalsLabel: 'Total' },
+        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
         { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, wide: true, columns: captureCols, rows: captureRows },
       ];
     }
