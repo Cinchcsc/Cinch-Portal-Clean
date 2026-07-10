@@ -1048,7 +1048,7 @@ export default function PortalV2Page() {
         ? { occupied: prevT.occ ?? 0, total: prevT.tot ?? 0, occPct: prevT.occPC ?? 0, claPct: prevT.claPC ?? 0, rentRoll: prevT.rent ?? 0 }
         : null;
       out.tables = [{
-        title: 'Portfolio Occupancy', live: true, pageSize: 12, wide: true, totals: occTotals, totalsPrev: occTotalsPrev, totalsLabel: 'Total',
+        title: 'Portfolio Occupancy', live: !!liveOccRows, pageSize: 12, wide: true, totals: occTotals, totalsPrev: occTotalsPrev, totalsLabel: 'Total',
         columns: liveOccRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' }, { key: 'total', label: 'Total', type: 'int', align: 'right' },
@@ -1088,7 +1088,7 @@ export default function PortalV2Page() {
         ? { selfRate: prevT.ssRate ?? 0, totalRate: prevT.rate ?? 0, realRate: prevT.ssReal ?? 0, realTotal: prevT.realRate ?? 0, area: prevT.occA ?? 0 }
         : null;
       out.tables.push({
-        title: 'Rates per ft² (All Stores)', live: true, pageSize: 12, wide: true, totals: rateTotals, totalsPrev: rateTotalsPrev, totalsLabel: 'Average',
+        title: 'Rates per ft² (All Stores)', live: !!liveRateRows, pageSize: 12, wide: true, totals: rateTotals, totalsPrev: rateTotalsPrev, totalsLabel: 'Average',
         columns: liveRateRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' }, { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
@@ -1447,7 +1447,7 @@ export default function PortalV2Page() {
         return { total: tot, occupied: occ, available: s('available'), area: s('area'), occPct: tot ? +(occ / tot * 100).toFixed(1) : 0 };
       })();
       out.tables.push({
-        title: 'Unit Mix Occupancy (All Stores)', live: true, pageSize: 12, wide: true, totals: unitMixTotals, totalsLabel: 'Total',
+        title: 'Unit Mix Occupancy (All Stores)', live: !!(liveUnitMixRows && liveUnitMixRows.length), pageSize: 12, wide: true, totals: unitMixTotals, totalsLabel: 'Total',
         columns: (liveUnitMixRows && liveUnitMixRows.length) ? [
           { key: 'size', label: 'Unit Size', type: 'text' },
           { key: 'total', label: 'Total Units', type: 'int', align: 'right' }, { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' },
@@ -1486,7 +1486,7 @@ export default function PortalV2Page() {
         return { personal: p, business: b, personalPct: (p + b) ? +(p / (p + b) * 100).toFixed(1) : 0, rate };
       })();
       out.tables.push({
-        title: 'Units by Customer Type — by Store', live: true, pageSize: 10, wide: true, totals: custTypeTotals, totalsLabel: 'Total',
+        title: 'Units by Customer Type — by Store', live: !!liveCustTypeRows, pageSize: 10, wide: true, totals: custTypeTotals, totalsLabel: 'Total',
         columns: liveCustTypeRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'personal', label: 'Personal Units', type: 'int', align: 'right' }, { key: 'business', label: 'Business Units', type: 'int', align: 'right' },
@@ -1527,12 +1527,12 @@ export default function PortalV2Page() {
       const officesRows = liveOfficesRows || fs.map((s) => ({ name: s.name, occupied: 0, total: 0, rate: 0 }));
       const ssRows = liveSSRows || fs.map((s) => ({ name: s.name, occupied: s.occupied, total: s.total, rate: s.rate }));
       out.tables.push({
-        title: 'Offices Occupancy — by Store', live: true, pageSize: 10, wide: true,
+        title: 'Offices Occupancy — by Store', live: !!liveOfficesRows, pageSize: 10, wide: true,
         columns: officeSSColumns, rows: officesRows, totalsLabel: 'Total',
         totals: occRateTotals(officesRows, kpiT?.officesOcc, kpiT?.officesTot, kpiT?.officesRate),
       });
       out.tables.push({
-        title: 'Indoor Self Storage Occupancy — by Store', live: true, pageSize: 10, wide: true,
+        title: 'Indoor Self Storage Occupancy — by Store', live: !!liveSSRows, pageSize: 10, wide: true,
         columns: officeSSColumns, rows: ssRows, totalsLabel: 'Total',
         totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate),
       });
@@ -1551,7 +1551,7 @@ export default function PortalV2Page() {
         return { area, cla, claPct: kpiT ? (kpiT.claPC ?? 0) : (cla ? +(area / cla * 100).toFixed(1) : 0) };
       })();
       out.tables.push({
-        title: 'Occupied Area by % of CLA — by Store', live: true, pageSize: 10, wide: true, totals: claTotals, totalsLabel: 'Total',
+        title: 'Occupied Area by % of CLA — by Store', live: !!liveClaRows, pageSize: 10, wide: true, totals: claTotals, totalsLabel: 'Total',
         columns: liveClaRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' }, { key: 'cla', label: 'CLA (ft²)', type: 'ft', align: 'right' },
@@ -1649,8 +1649,8 @@ export default function PortalV2Page() {
         // "DriveUp" / "Drive up" into separate rows (fixed in lib/reportMap.js's groupBy). Bumped
         // pageSize so the (now-deduped, ~10-14 row) Unit Types table fits on one page, and the
         // ChargeDesc table shows more before needing Next.
-        { title: 'True Revenue', live: true, pageSize: 25, wide: true, columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
-        { title: 'True Revenue — Unit Types', live: true, pageSize: 20, wide: true, columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue', live: !!finT?.trueRevenueByDesc?.length, pageSize: 25, wide: true, columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue — Unit Types', live: !!finT?.trueRevenueByType?.length, pageSize: 20, wide: true, columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
       ];
     }
 
@@ -1801,7 +1801,7 @@ export default function PortalV2Page() {
         };
       })();
       out.tables.push({
-        title: 'Insurance Roll (All Stores)', live: true, pageSize: 12, wide: true, totals: insTotals, totalsLabel: 'Total',
+        title: 'Insurance Roll (All Stores)', live: !!liveInsRows, pageSize: 12, wide: true, totals: insTotals, totalsLabel: 'Total',
         columns: liveInsRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'premiums', label: 'Premiums', type: 'money', align: 'right' }, { key: 'pctRoll', label: '% Rent Roll', type: 'pct', align: 'right' },
@@ -1893,7 +1893,7 @@ export default function PortalV2Page() {
         return { phone, web, walkin, total, conv };
       })();
       out.tables.push({
-        title: 'Leads by Store (All Stores)', live: true, pageSize: 12, wide: true, totals: leadTotals, totalsLabel: 'Total',
+        title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsLabel: 'Total',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
