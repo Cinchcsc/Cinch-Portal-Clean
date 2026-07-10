@@ -100,7 +100,8 @@
     "probe:autobill-bicester": "node --env-file=.env scripts/probe-autobill-bicester.js",
     "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
     "backfill:delinquent30": "node --env-file=.env scripts/backfill-delinquent30.js",
-    "dump:report-tables": "node --env-file=.env scripts/dump-report-tables.js"
+    "dump:report-tables": "node --env-file=.env scripts/dump-report-tables.js",
+    "probe:l009-rentroll-2022": "node --env-file=.env scripts/probe-l009-rentroll-2022.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
