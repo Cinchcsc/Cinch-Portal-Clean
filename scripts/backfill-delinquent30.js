@@ -12,100 +12,123 @@ import { admin } from '../lib/supabaseAdmin.js';
 import { REPORTS, pullReport } from '../lib/reportMap.js';
 import { extractRows } from '../lib/sitelink.js';
 import { buildPayload } from '../lib/buildPayload.js';
+import { checkPullLock, startPullLog, finishPullLog } from '../lib/pullLock.js';
 
 const spec = REPORTS.management;
 
-async function withRetry(fn, attempts = 3, delayMs = 2000) {
-  let lastErr;
-  for (let i = 0; i < attempts; i++) {
-    try { return await fn(); } catch (e) {
-      lastErr = e;
-      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+// Shares the same lock as npm run pull / pull:snapshot / backfill-rentroll-gaps.js (10 Jul 2026 —
+// this script didn't have it when first written, same oversight as backfill-rentroll-gaps.js: the
+// live re-pull path below (used for pre-7-Jul rows with no stored raw_response) calls SiteLink, which
+// rejects concurrent logons on the same account).
+const lock = await checkPullLock();
+if (lock.locked) { console.error('[backfill-delinquent30] ' + lock.message); process.exit(1); }
+const logId = await startPullLog('backfill-delinquent30');
+
+// Everything below runs inside a try/catch so any failure — including the ones that used to call
+// process.exit(1) directly — still reaches finishPullLog() before the process exits, instead of
+// leaving refresh_log stuck at status:'running' until the 20min staleness auto-clear.
+try {
+  async function withRetry(fn, attempts = 3, delayMs = 2000) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try { return await fn(); } catch (e) {
+        lastErr = e;
+        if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+    throw lastErr;
+  }
+
+  const PAGE = 500;
+  async function fetchStoredManagementRows() {
+    let all = [];
+    for (let from = 0; ; from += PAGE) {
+      const data = await withRetry(async () => {
+        const res = await admin.from('raw_report').select('id,site_code,month,data').eq('report', 'management').order('id').range(from, from + PAGE - 1);
+        if (res.error) throw new Error(res.error.message);
+        return res.data;
+      });
+      all = all.concat(data);
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  }
+
+  console.log("Scanning stored 'management' rows for missing delinquent_30plus_total...");
+  const rows = await fetchStoredManagementRows();
+  const stale = rows.filter((r) => r.data && r.data.delinquent_30plus_total === undefined);
+  console.log(`${rows.length} total management rows, ${stale.length} missing delinquent_30plus_total.\n`);
+  if (!stale.length) {
+    console.log('Nothing to backfill.');
+    await finishPullLog(logId, 'ok', 'nothing to backfill');
+    process.exit(0);
+  }
+
+  const now = new Date();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function tryPull(key, loc, start, end) {
+    const backoff = [0, 2000, 5000];
+    for (let attempt = 1; ; attempt++) {
+      try { return await pullReport(key, loc, start, end); }
+      catch (e) { if (attempt >= backoff.length) throw e; await sleep(backoff[attempt]); }
     }
   }
-  throw lastErr;
-}
 
-const PAGE = 500;
-async function fetchStoredManagementRows() {
-  let all = [];
-  for (let from = 0; ; from += PAGE) {
-    const data = await withRetry(async () => {
-      const res = await admin.from('raw_report').select('id,site_code,month,data').eq('report', 'management').order('id').range(from, from + PAGE - 1);
-      if (res.error) throw new Error(res.error.message);
-      return res.data;
-    });
-    all = all.concat(data);
-    if (!data || data.length < PAGE) break;
-  }
-  return all;
-}
+  let reparsed = 0, repulled = 0, failed = 0;
+  for (const r of stale) {
+    const mk = String(r.month).slice(0, 7);
+    const [y, m] = mk.split('-').map(Number);
+    const startDate = new Date(y, m - 1, 1);
+    const fullMonthEnd = new Date(y, m, 0);
+    const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+    const endDate = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
 
-console.log("Scanning stored 'management' rows for missing delinquent_30plus_total...");
-const rows = await fetchStoredManagementRows();
-const stale = rows.filter((r) => r.data && r.data.delinquent_30plus_total === undefined);
-console.log(`${rows.length} total management rows, ${stale.length} missing delinquent_30plus_total.\n`);
-if (!stale.length) { console.log('Nothing to backfill.'); process.exit(0); }
-
-const now = new Date();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function tryPull(key, loc, start, end) {
-  const backoff = [0, 2000, 5000];
-  for (let attempt = 1; ; attempt++) {
-    try { return await pullReport(key, loc, start, end); }
-    catch (e) { if (attempt >= backoff.length) throw e; await sleep(backoff[attempt]); }
-  }
-}
-
-let reparsed = 0, repulled = 0, failed = 0;
-for (const r of stale) {
-  const mk = String(r.month).slice(0, 7);
-  const [y, m] = mk.split('-').map(Number);
-  const startDate = new Date(y, m - 1, 1);
-  const fullMonthEnd = new Date(y, m, 0);
-  const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
-  const endDate = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
-
-  try {
-    const raw_response = await withRetry(async () => {
-      const res = await admin.from('raw_report').select('raw_response').eq('id', r.id).single();
-      if (res.error) throw new Error(res.error.message);
-      return res.data.raw_response;
-    });
-
-    if (raw_response) {
-      // Free path — replay the already-stored raw SOAP response through the current parser.
-      const extracted = extractRows(raw_response);
-      const data = spec.parse(extracted, startDate, endDate, raw_response);
-      await withRetry(async () => {
-        const res = await admin.from('raw_report').update({ data }).eq('id', r.id);
+    try {
+      const raw_response = await withRetry(async () => {
+        const res = await admin.from('raw_report').select('raw_response').eq('id', r.id).single();
         if (res.error) throw new Error(res.error.message);
+        return res.data.raw_response;
       });
-      reparsed++;
-    } else {
-      // No raw_response stored (pulled before 7 Jul 2026) — needs a real live call. Store
-      // raw_response this time too, so this row is reparse-able for free from now on.
-      const { data, raw } = await tryPull('management', r.site_code, startDate, endDate);
-      await withRetry(async () => {
-        const res = await admin.from('raw_report').update({ data, raw_response: raw ?? null, pulled_at: new Date().toISOString() }).eq('id', r.id);
-        if (res.error) throw new Error(res.error.message);
-      });
-      repulled++;
+
+      if (raw_response) {
+        // Free path — replay the already-stored raw SOAP response through the current parser.
+        const extracted = extractRows(raw_response);
+        const data = spec.parse(extracted, startDate, endDate, raw_response);
+        await withRetry(async () => {
+          const res = await admin.from('raw_report').update({ data }).eq('id', r.id);
+          if (res.error) throw new Error(res.error.message);
+        });
+        reparsed++;
+      } else {
+        // No raw_response stored (pulled before 7 Jul 2026) — needs a real live call. Store
+        // raw_response this time too, so this row is reparse-able for free from now on.
+        const { data, raw } = await tryPull('management', r.site_code, startDate, endDate);
+        await withRetry(async () => {
+          const res = await admin.from('raw_report').update({ data, raw_response: raw ?? null, pulled_at: new Date().toISOString() }).eq('id', r.id);
+          if (res.error) throw new Error(res.error.message);
+        });
+        repulled++;
+      }
+    } catch (e) {
+      failed++;
+      console.error(`  ${r.site_code}/${mk}: FAILED — ${e.message}`);
     }
-  } catch (e) {
-    failed++;
-    console.error(`  ${r.site_code}/${mk}: FAILED — ${e.message}`);
+    const done = reparsed + repulled + failed;
+    if (done % 25 === 0 || done === stale.length) console.log(`  ...${done}/${stale.length} processed (${reparsed} reparsed free, ${repulled} re-pulled live, ${failed} failed)`);
   }
-  const done = reparsed + repulled + failed;
-  if (done % 25 === 0 || done === stale.length) console.log(`  ...${done}/${stale.length} processed (${reparsed} reparsed free, ${repulled} re-pulled live, ${failed} failed)`);
-}
 
-console.log(`\nDone — ${reparsed} reparsed locally (free), ${repulled} re-pulled live, ${failed} failed.`);
-console.log('Rebuilding portal_payload...');
-const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-const payload = await buildPayload(currentMonthStart, prevMonthStart);
-const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
-if (ppErr) { console.error('portal_payload write failed:', ppErr.message); process.exit(1); }
-console.log('Done — portal_payload rebuilt.');
-process.exit(failed > (reparsed + repulled) ? 1 : 0);
+  console.log(`\nDone — ${reparsed} reparsed locally (free), ${repulled} re-pulled live, ${failed} failed.`);
+  console.log('Rebuilding portal_payload...');
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const payload = await buildPayload(currentMonthStart, prevMonthStart);
+  const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
+  if (ppErr) throw new Error(`portal_payload write failed: ${ppErr.message}`);
+  console.log('Done — portal_payload rebuilt.');
+  await finishPullLog(logId, failed > (reparsed + repulled) ? 'error' : 'ok', `${reparsed} reparsed, ${repulled} repulled, ${failed} failed`);
+  process.exit(failed > (reparsed + repulled) ? 1 : 0);
+} catch (e) {
+  console.error('[backfill-delinquent30] fatal:', e.message);
+  await finishPullLog(logId, 'error', e.message);
+  process.exit(1);
+}
