@@ -1660,16 +1660,21 @@ export default function PortalV2Page() {
       // fields already existed as s.insurance.{premium,insured,penetration}).
       const ancT = liveSites ? computeTotals(liveSites) : null;   // recomputed client-side so the store filter applies
       if (!ancT) console.warn('[portal-v2] Ancillaries Insurance Roll stat card rendering with mock data (no live totals available).');
-      // Every top-row stat card below is scoped to the SAME "last complete month" as Enquiries/
-      // Move-ins & Move-outs. CORRECTED 3 Jul 2026: this comment previously claimed insuranceActivity
-      // and merchandise were already covered by buildPayload.js's prevByCode override — they weren't
-      // (only enquiries/moveIns/moveOuts/netArea/moveOutsYear were), so Insurance Conversion and
-      // Merchandise Sales/Income were silently computing off the in-progress CURRENT month while
-      // being divided against moveIns from the previous COMPLETE month. Now fixed (both the override
-      // list and lib/pull.js's TWO_MONTH set for insurance_activity/merchandise/rent_roll) — requires
-      // a fresh `npm run pull` to take effect (needs the previous month's insurance_activity/
-      // merchandise/rent_roll actually pulled, not just re-read from what's already stored).
-      const monthTag = (liveMonths && liveMonths.length >= 2) ? (() => { const [y, m] = liveMonths[liveMonths.length - 2].split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' }); })() : 'Jul 2026';
+      // Every top-row stat card below is computed from `liveSites` (the unscoped /api/portfolio call),
+      // which lib/buildPayload.js's buildPayload() builds from the CURRENT in-progress month (recordFor
+      // (..., idx[code][cur], true) — see buildPayload.js line ~588), not any previous-month override.
+      // FIXED 10 Jul 2026 (exhaustive bug audit): this comment previously claimed a "prevByCode
+      // override" made Autobill Conversion/Insurance Conversion/Merchandise Sales compute off the
+      // previous COMPLETE month, so monthTag intentionally read liveMonths[length-2] to label them.
+      // No such override exists anywhere in buildPayload.js — it was REVERTED on 7 Jul 2026 (see that
+      // file's buildPayload() header comment: "Enquiries/Move-ins/Move-outs and the OTHER flow/count
+      // metrics... now show the CURRENT in-progress month's own real (partial) data... instead of
+      // being silently overridden", applied portfolio-wide, not just to those 3 named metrics). So
+      // these 3 cards were showing THIS month's real data mislabeled with LAST month's name (e.g.
+      // showing July's partial Autobill/Insurance/Merchandise figures under a "Jun 2026" tag) —
+      // confirmed live right now, 10 Jul 2026 being mid-July. Fixed monthTag to read the LAST stored
+      // month (the current one), matching what ancT/moveInsSum/merchSalesSum actually are.
+      const monthTag = (liveMonths && liveMonths.length >= 1) ? (() => { const [y, m] = liveMonths[liveMonths.length - 1].split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' }); })() : 'Jul 2026';
       const moveInsSum = liveSites ? liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) : 0;
       // insNewSum/insNewCount MOVED UP 6 Jul 2026 — needed by Insurance Conversion below too, not
       // just Insurance Premiums (New Customers). See that widget's comment further down for the
@@ -1748,7 +1753,12 @@ export default function PortalV2Page() {
       const avgNewPremiumPerMoveIn = moveInsSum ? insNewPremium / moveInsSum : 0;
       const insPremNewCard = (liveSites && insNewCount)
         ? { title: 'Insurance Premiums (New Customers)', live: true, tiles: [{ value: money(insNewCoverage / insNewCount), label: 'Contents avg', delta: null, dir: null }, { value: '£' + (avgNewPremiumPerMoveIn / 4).toFixed(2), label: 'Premiums weekly', delta: null, dir: null }] }
-        : { title: 'Insurance Premiums (New Customers)', tiles: [{ value: money(8294 * f), label: 'Contents avg', delta: '£516', dir: 'up' }, { value: '£7.68', label: 'Premiums weekly', delta: '£0.09', dir: 'up' }] };
+        // FIXED 10 Jul 2026 (audit): "Contents avg" is a per-new-customer AVERAGE (insNewCoverage /
+        // insNewCount on the live path, never scaled by store count), not a portfolio total — was
+        // incorrectly scaled by the store-filter factor `f` here, unlike its own sibling tile
+        // ("Premiums weekly", a fixed £7.68) and the equivalent average on Merchandise Income per New
+        // Customer just below, both of which correctly leave the average unscaled.
+        : { title: 'Insurance Premiums (New Customers)', tiles: [{ value: money(8294), label: 'Contents avg', delta: '£516', dir: 'up' }, { value: '£7.68', label: 'Premiums weekly', delta: '£0.09', dir: 'up' }] };
       // Merchandise Income per New Customer: merchandise sales ÷ move-ins this month (both
       // MerchandiseSummary/ManagementSummary, real reports, sum-then-divide).
       const merchPerNewCust = (liveSites && moveInsSum) ? { title: 'Merchandise Income per New Customer', live: true, tiles: [{ value: '£' + (merchSalesSum / moveInsSum).toFixed(2), label: 'Income per move-in', delta: null, dir: null }] }
@@ -1822,7 +1832,10 @@ export default function PortalV2Page() {
         // entirely — see buildPayload.js) despite the "Reservation" title. Now uses
         // `reservationConversions`, the actual email-hash-matched Enquiry -> Reservation figure.
         const totalEnq = enqSum('total'), convPct = totalEnq ? +(enqSum('reservationConversions') / totalEnq * 100).toFixed(1) : 0;
-        enquiryToReservation = { title: 'Enquiry → Reservation', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
+        // up has it, this one never did, so this card never showed the green LIVE badge even while
+        // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         console.warn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -1950,12 +1963,22 @@ export default function PortalV2Page() {
       const umT = liveSites ? computeTotals(liveSites) : null;
       const umRows = umT?.rentalActivityByTypeSize?.length ? umT.rentalActivityByTypeSize : null;
       if (!umRows) console.warn('[portal-v2] Unit Mix Detail page rendering with mock data (no live rental_activity data yet — run npm run pull after adding rental_activity to the pipeline).');
+      // FIXED 10 Jul 2026 (audit): rows were missing totalArea/occupiedArea (only had per-unit `area`).
+      // The rollup below (line ~1978) only accumulates o.totalArea/o.occupiedArea `if (r.totalArea !=
+      // null)` / `if (r.occupiedArea != null)` — since these were always undefined here, every mock
+      // row's contribution was silently dropped, leaving Rate Realization Gap's totalDollarPerArea/
+      // occupiedDollarPerArea/gapPct at 0 for the whole page whenever live rental_activity data isn't
+      // loaded yet, even though totalDollarPerArea/occupiedDollarPerArea below were already hand-
+      // authored correctly. Added totalArea = area*totalUnits, occupiedArea = area*occupied (same
+      // convention as the live rollup and lib/reportMap.js's occupancy parser) — verified these
+      // reproduce the existing hand-authored totalDollarPerArea/occupiedDollarPerArea values exactly
+      // (e.g. row 1: 8555/4640*12 = 22.13, 7100/4320*12 = 19.73).
       const mockUM = [
-        { type: 'Drive Up', unitSize: '8x20', area: 160, totalUnits: 29, occupied: 27, vacant: 2, standardRate: 295, occupiedRent: 7100, movedIn: 3, movedOut: 5, transfers: 1, netTransferred: 0, net: -2, occPct: 93.1, vacPct: 6.9, totalDollarPerArea: 22.13, occupiedDollarPerArea: 19.73, grossPotential: 8555, vacantArea: 320, netArea: -320 },
-        { type: 'Indoor Self Storage', unitSize: '5x5', area: 25, totalUnits: 19, occupied: 18, vacant: 1, standardRate: 85, occupiedRent: 1397, movedIn: 2, movedOut: 2, transfers: 1, netTransferred: -1, net: 0, occPct: 94.7, vacPct: 5.3, totalDollarPerArea: 40.8, occupiedDollarPerArea: 37.25, grossPotential: 1615, vacantArea: 25, netArea: -25 },
-        { type: 'Indoor Self Storage', unitSize: '3x3', area: 9, totalUnits: 4, occupied: 3, vacant: 1, standardRate: 41, occupiedRent: 91, movedIn: 1, movedOut: 0, transfers: 0, netTransferred: 0, net: 1, occPct: 75, vacPct: 25, totalDollarPerArea: 54.7, occupiedDollarPerArea: 40.4, grossPotential: 164, vacantArea: 9, netArea: 9 },
-        { type: 'Enterprise', unitSize: '20x20', area: 400, totalUnits: 2, occupied: 2, vacant: 0, standardRate: 697, occupiedRent: 1394, movedIn: 0, movedOut: 0, transfers: 0, netTransferred: 0, net: 0, occPct: 100, vacPct: 0, totalDollarPerArea: 20.9, occupiedDollarPerArea: 20.9, grossPotential: 1394, vacantArea: 0, netArea: 0 },
-        { type: 'Office', unitSize: '10x10', area: 100, totalUnits: 6, occupied: 5, vacant: 1, standardRate: 210, occupiedRent: 950, movedIn: 1, movedOut: 1, transfers: 0, netTransferred: 0, net: 0, occPct: 83.3, vacPct: 16.7, totalDollarPerArea: 25.2, occupiedDollarPerArea: 22.8, grossPotential: 1260, vacantArea: 100, netArea: 0 },
+        { type: 'Drive Up', unitSize: '8x20', area: 160, totalUnits: 29, occupied: 27, vacant: 2, standardRate: 295, occupiedRent: 7100, movedIn: 3, movedOut: 5, transfers: 1, netTransferred: 0, net: -2, occPct: 93.1, vacPct: 6.9, totalArea: 4640, occupiedArea: 4320, totalDollarPerArea: 22.13, occupiedDollarPerArea: 19.73, grossPotential: 8555, vacantArea: 320, netArea: -320 },
+        { type: 'Indoor Self Storage', unitSize: '5x5', area: 25, totalUnits: 19, occupied: 18, vacant: 1, standardRate: 85, occupiedRent: 1397, movedIn: 2, movedOut: 2, transfers: 1, netTransferred: -1, net: 0, occPct: 94.7, vacPct: 5.3, totalArea: 475, occupiedArea: 450, totalDollarPerArea: 40.8, occupiedDollarPerArea: 37.25, grossPotential: 1615, vacantArea: 25, netArea: -25 },
+        { type: 'Indoor Self Storage', unitSize: '3x3', area: 9, totalUnits: 4, occupied: 3, vacant: 1, standardRate: 41, occupiedRent: 91, movedIn: 1, movedOut: 0, transfers: 0, netTransferred: 0, net: 1, occPct: 75, vacPct: 25, totalArea: 36, occupiedArea: 27, totalDollarPerArea: 54.7, occupiedDollarPerArea: 40.4, grossPotential: 164, vacantArea: 9, netArea: 9 },
+        { type: 'Enterprise', unitSize: '20x20', area: 400, totalUnits: 2, occupied: 2, vacant: 0, standardRate: 697, occupiedRent: 1394, movedIn: 0, movedOut: 0, transfers: 0, netTransferred: 0, net: 0, occPct: 100, vacPct: 0, totalArea: 800, occupiedArea: 800, totalDollarPerArea: 20.9, occupiedDollarPerArea: 20.9, grossPotential: 1394, vacantArea: 0, netArea: 0 },
+        { type: 'Office', unitSize: '10x10', area: 100, totalUnits: 6, occupied: 5, vacant: 1, standardRate: 210, occupiedRent: 950, movedIn: 1, movedOut: 1, transfers: 0, netTransferred: 0, net: 0, occPct: 83.3, vacPct: 16.7, totalArea: 600, occupiedArea: 500, totalDollarPerArea: 25.2, occupiedDollarPerArea: 22.8, grossPotential: 1260, vacantArea: 100, netArea: 0 },
       ];
       // Collapsed to ONE ROW PER UNIT TYPE (6 Jul 2026, Michael: "you have every piece of unit
       // showing... change that so it only shows one mail box, one indoor self storage... as a
