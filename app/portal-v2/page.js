@@ -548,6 +548,13 @@ function NavIcon({ id }) {
         <circle cx={8.5} cy={7.5} r={1.5} stroke="currentColor" strokeWidth={2} />
       </>
     ),
+    snapshot: (
+      <>
+        <path d="M3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" stroke="currentColor" strokeWidth={2} />
+        <path d="M12 7v5l3.5 2" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M12 2v2M22 12h-2M2 12h2" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+      </>
+    ),
   };
   return <svg width={18} height={18} viewBox="0 0 24 24" fill="none">{defs[id]}</svg>;
 }
@@ -709,6 +716,14 @@ export default function PortalV2Page() {
   const [liveMonths, setLiveMonths] = useState(null);   // portfolio.months (sorted ascending "YYYY-MM" strings) — ALWAYS the full stored history, never scoped to the selector, so Month-on-Month and the selector's own dropdowns keep working regardless of what's picked
   const [liveHistory, setLiveHistory] = useState(null); // portfolio.history (one point per stored month, portfolio-wide) — powers Month-on-Month, unaffected by the PERIOD selector below
   const [viewLive, setViewLive] = useState(true);       // false once a specific month/range has been picked and successfully loaded (vs. the default live-current-month view)
+  // Weekly/Daily Snapshot page (9 Jul 2026) — deliberately independent of the liveTotals/liveSitesRaw
+  // chain above: it's a different period concept entirely (yesterday / last 7 days / quarter-to-date,
+  // not the global month/range selector), backed by its own snapshot_payload row and its own lean
+  // pull (lib/pullSnapshot.js / npm run pull:snapshot), refreshed on its own schedule. Fetched once on
+  // mount, same as the unscoped /api/portfolio call — the store filter still applies client-side via
+  // computeSnapshotTotals() below, same pattern as computeTotals().
+  const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly } or null if unavailable/unconfigured
+  const [snapshotPeriod, setSnapshotPeriod] = useState('daily'); // 'daily' | 'weekly' | 'quarterly' — which liveSnapshot period the Snapshot page currently shows
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
@@ -833,6 +848,23 @@ export default function PortalV2Page() {
       });
   };
 
+  // Weekly/Daily Snapshot fetch — reads the persisted snapshot_payload row (no SiteLink calls; those
+  // only happen in lib/pullSnapshot.js). Independent of fetchLiveTotals/fetchLiveRange above, so a
+  // slow or failed snapshot fetch never blocks or flickers the rest of the app.
+  const fetchSnapshot = () => {
+    fetch('/api/snapshot')
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data || !data.configured || !data.daily) {
+          console.warn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
+          setLiveSnapshot(null);
+          return;
+        }
+        setLiveSnapshot({ daily: data.daily, weekly: data.weekly, quarterly: data.quarterly, generatedAt: data.generated_at });
+      })
+      .catch((err) => { console.warn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
+  };
+
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
   // and is invoked by every state-changing action (nav clicks, filters, refresh).
   // Hooked here to also re-fetch live totals so a manual refresh pulls fresh data.
@@ -867,6 +899,7 @@ export default function PortalV2Page() {
     if (!initialFetchStarted.current) {
       initialFetchStarted.current = true;
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
+      fetchSnapshot();
     }
     const onDocClick = (e) => {
       if (storePopOpen || periodPopOpen) {
@@ -2042,6 +2075,65 @@ export default function PortalV2Page() {
       ];
     }
 
+    else if (page === 'snapshot') {
+      // Weekly/Daily Snapshot — new page (9 Jul 2026, Michael: "add page 'Weekly/Daily snapshot under
+      // overview", "check original brief on timings of API"). Michael's decision (3rd AskUserQuestion,
+      // 9 Jul 2026): a live-style period query (yesterday / last 7 days / quarter-to-date), not a
+      // day-by-day accumulating trend chart — see docs/roadmap.md #5/#6 and lib/pullSnapshot.js's file
+      // header for the full feasibility writeup. Backed by its own snapshot_payload row, refreshed by
+      // `npm run pull:snapshot` (or GET /api/pull-snapshot), independent of the main monthly pull.
+      // Reservation Backlog ("forward move-ins", Michael's pick) is a known gap — shown as "—" below,
+      // pending scripts/probe-daily-granularity.js confirming a usable target-move-in-date field on
+      // InquiryTracking.
+      const snap = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
+      if (!snap) console.warn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
+      const periodLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
+      const fmtRange = (r) => {
+        if (!r) return '';
+        const f = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
+        return r.start === r.end ? f(r.start) : `${f(r.start)} – ${f(r.end)}`;
+      };
+      const mockSnap = {
+        range: (() => {
+          const y = new Date(); y.setDate(y.getDate() - 1);
+          const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          if (snapshotPeriod === 'daily') return { start: ymdLocal(y), end: ymdLocal(y) };
+          if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: ymdLocal(s), end: ymdLocal(y) }; }
+          const q = new Date(y.getFullYear(), Math.floor(y.getMonth() / 3) * 3, 1);
+          return { start: ymdLocal(q), end: ymdLocal(y) };
+        })(),
+        totals: { daily: { enquiries: 14, reservations: 5, moveIns: 3, moveOuts: 2, sqftIn: 312, sqftOut: 168 }, weekly: { enquiries: 96, reservations: 31, moveIns: 22, moveOuts: 17, sqftIn: 2150, sqftOut: 1340 }, quarterly: { enquiries: 1180, reservations: 402, moveIns: 268, moveOuts: 231, sqftIn: 27400, sqftOut: 21860 } }[snapshotPeriod],
+        sites: null,
+      };
+      const totals = snap ? snap.totals : mockSnap.totals;
+      const range = snap ? snap.range : mockSnap.range;
+      const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
+      out.statCards = [
+        { title: 'Enquiries', live: !!snap, tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
+        { title: 'Reservations', live: !!snap, tiles: [{ value: intFmt(totals.reservations), label: periodLabel, delta: null, dir: null }] },
+        { title: 'Reservation Backlog', live: false, tiles: [{ value: '—', label: 'Coming soon', delta: null, dir: null }], note: 'Pending confirmation of a usable field on InquiryTracking — see lib/pullSnapshot.js.' },
+        { title: 'Move-ins / Move-outs', live: !!snap, tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
+        { title: 'Sqft In / Out', live: !!snap, tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
+      ];
+      const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
+        .slice().sort((a, b) => a.code.localeCompare(b.code))
+        .map((s) => ({ store: nameForCode(s.code), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
+      out.tables = [
+        { title: `Per-Store Breakdown — ${periodLabel} (${fmtRange(range)})`, live: !!snap, pageSize: 29, wide: true,
+          columns: [
+            { key: 'store', label: 'Store', type: 'text' },
+            { key: 'enquiries', label: 'Enquiries', type: 'int', align: 'right' },
+            { key: 'reservations', label: 'Reservations', type: 'int', align: 'right' },
+            { key: 'moveIns', label: 'Move-ins', type: 'int', align: 'right' },
+            { key: 'sqftIn', label: 'Sqft In', type: 'int', align: 'right' },
+            { key: 'sqftOut', label: 'Sqft Out', type: 'int', align: 'right' },
+          ],
+          rows: siteRows.length ? siteRows : [{ store: '(run npm run pull:snapshot for per-store data)', enquiries: null, reservations: null, moveIns: null, sqftIn: null, sqftOut: null }],
+          totals: siteRows.length ? { enquiries: totals.enquiries, reservations: totals.reservations, moveIns: totals.moveIns, sqftIn: totals.sqftIn, sqftOut: totals.sqftOut } : null,
+          totalsLabel: 'Total' },
+      ];
+    }
+
     return out;
   }
 
@@ -2077,7 +2169,7 @@ export default function PortalV2Page() {
         return [['KPI', 'Value', 'Change'], ...d.kpiRow.map((k) => [k.label, k.value, k.delta ? (k.dir === 'up' ? '+' : '-') + k.delta : ''])];
       },
     });
-    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary' };
+    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot' };
     Object.keys(pages).forEach((pk) => {
       const d = pk === page ? pageData : withPage(pk);
       d.tables.forEach((t, i) => items.push({
@@ -2161,7 +2253,7 @@ export default function PortalV2Page() {
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
-  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary' };
+  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot' };
 
   const kpiRow = pageData.kpiRow.map((k) => ({ ...k, hasDelta: !!k.delta, ...chip(k.delta, k.dir) }));
   const statCards = pageData.statCards.map((c) => ({
@@ -2209,7 +2301,7 @@ export default function PortalV2Page() {
   const builderSigns = [{ value: '/', label: '÷' }, { value: '*', label: '×' }, { value: '+', label: '+' }, { value: '-', label: '−' }];
 
   const navGroups = [
-    { label: 'Overview', items: [{ id: 'dashboard', label: 'Dashboard' }] },
+    { label: 'Overview', items: [{ id: 'dashboard', label: 'Dashboard' }, { id: 'snapshot', label: 'Weekly/Daily Snapshot' }] },
     { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }, { id: 'discountSummary', label: 'Discount Summary' }] },
     { label: 'Growth', items: [{ id: 'marketing', label: 'Marketing' }] },
     { label: 'Trends', items: [{ id: 'mom', label: 'Month on Month' }] },
@@ -2405,6 +2497,15 @@ export default function PortalV2Page() {
                 <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#2757E8" strokeWidth={2} strokeLinecap="round" /></svg>
                 Build a widget
               </button>
+            )}
+            {page === 'snapshot' && (
+              <div style={{ display: 'flex', background: '#F2F4F7', borderRadius: '9px', padding: '3px', gap: '2px' }}>
+                {[{ id: 'daily', label: 'Daily' }, { id: 'weekly', label: 'Weekly' }, { id: 'quarterly', label: 'Quarterly' }].map((o) => (
+                  <button key={o.id} onClick={() => setSnapshotPeriod(o.id)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px', border: 'none', cursor: 'pointer', color: snapshotPeriod === o.id ? '#2757E8' : '#667085', background: snapshotPeriod === o.id ? '#fff' : 'transparent', boxShadow: snapshotPeriod === o.id ? '0 1px 2px rgba(16,24,40,.08)' : 'none' }}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
