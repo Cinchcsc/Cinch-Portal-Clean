@@ -54,6 +54,8 @@
     "kpis": "node --env-file=.env scripts/print-kpis.js",
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "pull": "node --env-file=.env scripts/run-pull.js",
+    "pull:snapshot": "node --env-file=.env scripts/run-pull-snapshot.js",
+    "probe:daily-granularity": "node --env-file=.env scripts/probe-daily-granularity.js",
     "check:sitelink-abingdon": "node --env-file=.env scripts/check-sitelink-abingdon.js",
     "check:debtor-gap-july": "node --env-file=.env scripts/check-debtor-gap-july.js",
     "check:debtor-auction-exclusion": "node --env-file=.env scripts/check-debtor-auction-exclusion.js",

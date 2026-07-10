@@ -68,6 +68,24 @@ create table if not exists autobill_daily (
 );
 create index if not exists autobill_daily_lookup on autobill_daily (site_code, month);
 
+-- ADDED 9 Jul 2026: Weekly/Daily/Quarterly Snapshot page (roadmap #5/#6). Deliberately NOT a
+-- day-by-day accumulating table — Michael's decision was a live-style period query (daily = just
+-- yesterday, weekly = last 7 days, quarterly = quarter-to-date), so this is a single overwritten
+-- row exactly like portal_payload, refreshed by lib/pullSnapshot.js instead of a growing history
+-- table. If a real day-by-day trend chart is wanted later, that's a schema change, not a data change
+-- (SiteLink's reports already accept the narrower ranges — confirmed via probe-daily-granularity.js).
+create table if not exists snapshot_payload (
+  id int primary key default 1,
+  generated_at timestamptz default now(),
+  payload jsonb not null,
+  constraint single_row check (id = 1)
+);
+alter table snapshot_payload enable row level security;
+drop policy if exists "anon reads snapshot" on snapshot_payload;
+create policy "anon reads snapshot" on snapshot_payload for select using (true);
+insert into snapshot_payload (id, payload) values (1, '{"sites":[],"daily":null,"weekly":null,"quarterly":null}'::jsonb)
+on conflict (id) do nothing;
+
 alter table portal_payload enable row level security;
 alter table sites enable row level security;
 alter table raw_report enable row level security;
