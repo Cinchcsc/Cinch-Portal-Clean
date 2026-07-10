@@ -28,7 +28,13 @@ console.log(`Querying LIVE SiteLink RentRoll for ${loc} (Newbury), Mar-Dec 2022,
 const num = (r, ...keys) => { for (const k of keys) { const v = r[k]; if (v !== undefined && v !== null && v !== '') { const n = Number(v); if (!isNaN(n)) return n; } } return 0; };
 const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
 
-let anyRealArea = false;
+// FIXED 10 Jul 2026: the conclusion below originally checked `totalArea` (the whole unit roster —
+// trivially nonzero, since the units physically exist) instead of `rentedArea` (the field that
+// actually corresponds to the ORIGINAL bug report — reportMap.js's area_sum/occupied_area, which
+// only sums RENTED rows). That made the printed conclusion wrong: it recommended a re-pull that, on
+// a live run (Michael, 10 Jul 2026), turned out to change nothing, because the live query itself
+// already confirmed rentedArea = 0 for every month. Corrected to check rentedArea instead.
+let anyRentedArea = false;
 const results = [];
 for (const mk of months) {
   const [y, m] = mk.split('-').map(Number);
@@ -40,7 +46,7 @@ for (const mk of months) {
     const rentedRows = rows.filter((r) => yes(r.bRented));
     const rentedArea = rentedRows.reduce((a, r) => a + num(r, 'Area', 'Area1'), 0);
     results.push({ mk, rowCount: rows.length, rentedCount: rentedRows.length, totalArea, rentedArea });
-    if (totalArea > 0) anyRealArea = true;
+    if (rentedArea > 0) anyRentedArea = true;
     console.log(`  ${mk}: ${rows.length} rows (${rentedRows.length} rented) — total area ${totalArea}, rented area ${rentedArea}`);
   } catch (e) {
     results.push({ mk, error: e.message });
@@ -49,19 +55,22 @@ for (const mk of months) {
 }
 
 console.log('\n--- Conclusion ---');
-if (!anyRealArea) {
-  console.log('Even LIVE queries right now return zero area for L009 across all of Mar-Dec 2022.');
-  console.log('This points to a genuine SiteLink-side gap for this site+period (unit data may not have');
-  console.log('existed / been tracked in RentRoll form that far back, or the site was configured');
-  console.log('differently then) — re-pulling would NOT recover anything. Recommend accepting this as a');
-  console.log('documented historical gap: Newbury Rate/Real Rate/Area read 0 for Mar-Dec 2022 on');
-  console.log('Month-on-Month, consistent with the RentRoll-only rule applied everywhere else.');
+if (!anyRentedArea) {
+  console.log('Even LIVE queries right now return zero RENTED area for L009 across all of Mar-Dec 2022 —');
+  console.log('the unit roster itself exists (physical units, nonzero total area), but RentRoll flags none');
+  console.log('of them bRented for this entire 10-month stretch, while Occupancy Statistics (a different');
+  console.log('report) shows real occupied units for the same months. Since this was JUST re-queried live');
+  console.log('and is still zero, re-pulling would fetch the identical answer — NOT a stale-pull issue.');
+  console.log('This is a genuine cross-report disagreement in SiteLink\'s own data for this site+period.');
+  console.log('Recommend accepting this as a documented historical gap: Newbury Rate/Real Rate/Area read 0');
+  console.log('for Mar-Dec 2022 on Month-on-Month, consistent with the RentRoll-only rule applied');
+  console.log('everywhere else (e.g. Enfield\'s similar RentRoll-vs-OccupancyStats disagreement).');
 } else {
-  const goodMonths = results.filter((r) => r.totalArea > 0).map((r) => r.mk);
-  console.log(`LIVE queries DO return nonzero area for: ${goodMonths.join(', ')}`);
-  console.log('Our STORED data for (at least) these months is stale/wrong — a targeted re-pull would fix it:');
+  const goodMonths = results.filter((r) => r.rentedArea > 0).map((r) => r.mk);
+  console.log(`LIVE queries DO return nonzero RENTED area for: ${goodMonths.join(', ')}`);
+  console.log('Our STORED data for (at least) these months may be stale — a targeted re-pull would help:');
   for (const mk of goodMonths) console.log(`  node --env-file=.env scripts/repull-report-month.js rent_roll ${mk}`);
-  const stillZero = results.filter((r) => !r.error && r.totalArea === 0).map((r) => r.mk);
+  const stillZero = results.filter((r) => !r.error && r.rentedArea === 0).map((r) => r.mk);
   if (stillZero.length) console.log(`\nStill zero even live (likely a genuine gap for just these months): ${stillZero.join(', ')}`);
 }
 process.exit(0);
