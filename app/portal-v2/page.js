@@ -2044,6 +2044,46 @@ export default function PortalV2Page() {
           ? { title: 'Reservations vs Move-ins', tip: 'Report: ReservationList (Reservations, live snapshot); ManagementSummary (Move-ins, this period).\nFormula: Σ activeReservations across sites vs. Σ moveIns across sites — a pipeline snapshot, not a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
           : { title: 'Reservations vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: 52 * f, disp: intFmt(52 * f), color: C.blue }, { label: 'Move-ins', value: 112 * f, disp: intFmt(112 * f), color: C.teal }]} opts={{ max: 130 * f }} /> },
       ];
+      // Marketing Year-on-Year (task #130/#136, 13 Jul 2026 — Michael picked "YoY trend chart" via
+      // AskUserQuestion) — trailing 12 months ending at the latest STORED month, overlaid against the
+      // same 12 calendar months one year earlier (dashed line), for total Enquiries and Enquiry ->
+      // Reservation conversion %. Deliberately keyed off the latest stored month rather than the
+      // PERIOD selector's own from/to — a YoY trend is inherently "last 12 months vs the 12 before
+      // that" regardless of which single month/range happens to be selected elsewhere on this page
+      // (same reasoning as Customer Churn's trailing h12 on the KPIs page). Reads liveHistory (the
+      // full unscoped stored history, already fetched for Month-on-Month/Customer Churn) rather than a
+      // new API call — lead_funnel has ~10 years of backfilled history (task #185), so a same-month-
+      // last-year match almost always exists; guarded with the sortedKeys/haveLastYear check below
+      // rather than assumed.
+      const yoySeries = (() => {
+        if (!liveHistory || liveHistory.length < 13) return null;
+        const byMonth = new Map(liveHistory.map((h) => [h.month, h]));
+        const sortedKeys = [...byMonth.keys()].sort(); // 'YYYY-MM-01' strings sort chronologically as-is
+        const latest = sortedKeys[sortedKeys.length - 1];
+        const [ly, lm] = latest.split('-').map(Number);
+        const thisYearMonths = [];
+        for (let i = 11; i >= 0; i--) {
+          const d = new Date(ly, lm - 1 - i, 1);
+          thisYearMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`);
+        }
+        const lastYearMonths = thisYearMonths.map((mk) => { const [y, m] = mk.split('-').map(Number); return `${y - 1}-${String(m).padStart(2, '0')}-01`; });
+        if (!lastYearMonths.every((mk) => byMonth.has(mk))) return null;
+        const g = (mk, key) => (byMonth.get(mk) || {})[key] || 0;
+        return {
+          labels: thisYearMonths.map((mk) => { const [y, m] = mk.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + String(y).slice(2); }),
+          enqThis: thisYearMonths.map((mk) => g(mk, 'enqTotal')), enqLast: lastYearMonths.map((mk) => g(mk, 'enqTotal')),
+          convThis: thisYearMonths.map((mk) => g(mk, 'enqConvPct')), convLast: lastYearMonths.map((mk) => g(mk, 'enqConvPct')),
+        };
+      })();
+      if (!yoySeries) debugWarn('[portal-v2] Marketing YoY charts rendering with mock data (need >=13 months of stored history with a same-month-last-year match — run npm run backfill if this persists).');
+      out.chartCards.push(
+        yoySeries
+          ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking (lead_funnel).\nColumn: sInquiryType (all channels).\nFormula: Σ total inquiries per month, portfolio-wide. Solid line = trailing 12 months ending this stored month; dashed line = the same 12 calendar months one year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
+          : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
+        yoySeries
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking (lead_funnel).\nColumns: total inquiries; reservationConversions.\nFormula: Σ reservationConversions ÷ Σ total inquiries × 100, per month (not an average of daily/weekly %s). Solid line = trailing 12 months; dashed line = the same 12 calendar months one year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
+      );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
       // (lib/reportMap.js's lead_funnel/InquiryTracking parser, locked spec Michael 1 Jul 2026) as
       // the Enquiries by Channel / Enquiry -> Reservation cards above, just per-store instead of
