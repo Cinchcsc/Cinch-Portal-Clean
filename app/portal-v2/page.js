@@ -10,6 +10,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
+import { supabaseBrowser } from '../../lib/supabaseBrowser.js';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
 const debugWarn = (...args) => {
@@ -772,6 +774,18 @@ export default function PortalV2Page() {
   const REGIONS = useMemo(() => [...new Set(STORES.map((s) => s.region))], [STORES]);
   const MONTHS = useMemo(buildMonths, []);
 
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+  // Task #202 (13 Jul 2026) — sign out via the browser Supabase client (clears the session cookie
+  // middleware.js checks on every request), then hard-send to /login. router.refresh() alone isn't
+  // enough here since we're navigating to a route middleware treats completely differently (public,
+  // no sidebar/portal chrome at all) rather than re-rendering this same page.
+  const signOut = async () => {
+    setSigningOut(true);
+    try { await supabaseBrowser().auth.signOut(); } catch {}
+    router.push('/login');
+    router.refresh();
+  };
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -2757,6 +2771,10 @@ export default function PortalV2Page() {
               <button onClick={() => setExportOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '7px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 600, color: '#fff', background: '#2757E8', border: 'none', borderRadius: '9px', padding: '9px 13px', cursor: 'pointer', boxShadow: '0 1px 2px rgba(39,87,232,.3)' }}>
                 <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
                 Export
+              </button>
+              <button onClick={signOut} disabled={signingOut} title="Sign out" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: signingOut ? 'default' : 'pointer', opacity: signingOut ? 0.6 : 1 }}>
+                <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke="#667085" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
+                {signingOut ? 'Signing out…' : 'Sign out'}
               </button>
             </div>
           </header>
