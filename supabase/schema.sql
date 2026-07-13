@@ -106,3 +106,28 @@ create policy "anon reads sites" on sites for select using (true);
 
 insert into portal_payload (id, payload) values (1, '{"sites":[],"reports":{},"months":[]}'::jsonb)
 on conflict (id) do nothing;
+
+-- ADDED 10 Jul 2026: floor-level unit data for the Occupancy by Floor widget (roadmap #132/#139,
+-- originally blocked -- confirmed against the live WSDL that "UnitStatus" is NOT a callable
+-- SiteLink SOAP method, only available via SiteLink's own web UI report picker). Michael exports
+-- this manually per-site (column P = Floor) and scripts/import-unit-status.js loads it -- this is
+-- a static unit-level snapshot, not a monthly time series like raw_report, so re-importing a site
+-- just replaces its rows (upsert on site_code+unit_name). Read via lib/floorOccupancy.js /
+-- /api/floor-occupancy, deliberately independent of buildPayload.js's monthly pipeline -- same
+-- separation already used for snapshot_payload.
+create table if not exists unit_floor_status (
+  id bigserial primary key,
+  site_code text references sites(code),
+  unit_name text not null,
+  unit_type text,
+  floor int,
+  area numeric,
+  rentable boolean,
+  occupied boolean,
+  imported_at timestamptz default now(),
+  unique (site_code, unit_name)
+);
+create index if not exists unit_floor_status_lookup on unit_floor_status (site_code);
+alter table unit_floor_status enable row level security;
+-- service-role only, same as raw_report -- the frontend never queries this directly, only via
+-- lib/floorOccupancy.js's aggregated output.

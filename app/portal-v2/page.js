@@ -204,7 +204,16 @@ function chip(delta, dir) {
 // convention the placeholder mock data already used: percentage tiles show the point difference
 // suffixed "%", money tiles show "£"+diff. Returns {delta: null, dir: null} — no chip at all, chip()
 // has no neutral/flat colour — whenever prev is unavailable or the change rounds to zero.
-function deltaTick(cur, prev, kind) {
+// `invert` (added 13 Jul 2026, pre-go-live re-audit): chip()'s up=green/down=red convention assumes
+// "up is good" — true for occupancy/revenue/move-ins, but backwards for metrics where a rise is BAD
+// news (overdue debt, move-outs). Found via independent re-audit: Debtor Levels and the Move-outs
+// count tile were showing a GREEN UP arrow when debt/move-outs INCREASED — the underlying number was
+// always correct, only the colour/arrow sentiment was misleading. Pass `true` for those metrics to
+// flip both the arrow and colour together (a rise still shows as a rise, just correctly flagged red).
+// "Sqft Out" alongside these already got this right, coincidentally, by negating the raw values
+// themselves before calling this (also flips its DISPLAYED figure negative, which is intentional
+// there for the Net ft² = Sqft In + Sqft Out arithmetic) — left as-is, not touched by this change.
+function deltaTick(cur, prev, kind, invert) {
   if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return { delta: null, dir: null };
   const diff = cur - prev;
   const eps = kind === 'money' || kind === 'moneyWhole' ? 0.005 : kind === 'count' || kind === 'ft' ? 0.5 : 0.05;
@@ -213,7 +222,8 @@ function deltaTick(cur, prev, kind) {
   // 'ft' ADDED 8 Jul 2026 alongside DataTable's totals-row deltas (see DELTA_KIND_FOR_TYPE below) —
   // same whole-number rounding as 'count', suffixed to match formatCell's 'ft' column type.
   const delta = kind === 'money' ? `£${abs.toFixed(2)}` : kind === 'moneyWhole' ? money(abs) : kind === 'count' ? intFmt(Math.round(abs)) : kind === 'ft' ? intFmt(Math.round(abs)) + ' ft²' : `${abs.toFixed(1)}%`;
-  return { delta, dir: diff > 0 ? 'up' : 'down' };
+  const rose = diff > 0;
+  return { delta, dir: (invert ? !rose : rose) ? 'up' : 'down' };
 }
 
 // Maps a DataTable column's `type` to the `kind` deltaTick() expects — lets DataTable's totals-row
@@ -729,6 +739,12 @@ export default function PortalV2Page() {
   // computeSnapshotTotals() below, same pattern as computeTotals().
   const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly } or null if unavailable/unconfigured
   const [snapshotPeriod, setSnapshotPeriod] = useState('daily'); // 'daily' | 'weekly' | 'quarterly' — which liveSnapshot period the Snapshot page currently shows
+  // Occupancy by Floor (10 Jul 2026, roadmap #132/#139) — same independent-fetch pattern as
+  // liveSnapshot above: floor is a static per-unit property sourced from a manually-imported
+  // SiteLink "UnitStatus" export (not a callable SOAP method, so it can't go through the normal
+  // per-month pull), not part of the global month/range selector at all. Covers however many sites
+  // have been imported so far via scripts/import-unit-status.js — starts at just one.
+  const [liveFloorOcc, setLiveFloorOcc] = useState(null); // { sites: [...codes], floors: [{floor,totalUnits,occupiedUnits,occPct}] } or null if unavailable
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
@@ -870,6 +886,23 @@ export default function PortalV2Page() {
       .catch((err) => { debugWarn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
   };
 
+  // Occupancy by Floor fetch — reads unit_floor_status via /api/floor-occupancy (no SiteLink calls;
+  // that table is only ever written by scripts/import-unit-status.js, run manually per exported
+  // site). Independent of every other live fetch, same reasoning as fetchSnapshot above.
+  const fetchFloorOccupancy = () => {
+    fetch('/api/floor-occupancy')
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data || !data.configured || !data.floors || !data.floors.length) {
+          debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run import:unit-status <file>`. Occupancy by Floor will show mock data.');
+          setLiveFloorOcc(null);
+          return;
+        }
+        setLiveFloorOcc({ sites: data.sites, floors: data.floors, generatedAt: data.generated_at });
+      })
+      .catch((err) => { debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err); setLiveFloorOcc(null); });
+  };
+
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
   // and is invoked by every state-changing action (nav clicks, filters, refresh).
   // Hooked here to also re-fetch live totals so a manual refresh pulls fresh data.
@@ -905,6 +938,7 @@ export default function PortalV2Page() {
       initialFetchStarted.current = true;
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
       fetchSnapshot();
+      fetchFloorOccupancy();
     }
     const onDocClick = (e) => {
       if (storePopOpen || periodPopOpen) {
@@ -969,7 +1003,12 @@ export default function PortalV2Page() {
   };
 
   // ---------- page content (verbatim port of buildPage()) ----------
-  function buildPage() {
+  // FIXED 10 Jul 2026 (pre-go-live audit): now takes an explicit `page` parameter instead of reading
+  // the `page` state via closure. Every internal `page === 'xxx'` check below is unaffected (same
+  // identifier, now sourced from the parameter) — this is what lets withPage() below actually build a
+  // DIFFERENT page's data on demand for the "export everything" flow, instead of always silently
+  // returning whatever the currently-viewed page happens to be.
+  function buildPage(page) {
     const fs = filteredStores();
     const f = factor();
     // Store-name filter for live data: same `selected` toggle state the mock filteredStores() above
@@ -1295,7 +1334,7 @@ export default function PortalV2Page() {
         // the source "ManagementSummary", but the fields actually live in PastDueBalances/
         // OccupancyStatistics in this pipeline). Total = raw £ overdue, summed across sites.
         kpiT
-          ? { title: 'Debtor Levels', live: true, tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', ...deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct') }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', ...deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct') }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole') }] }
+          ? { title: 'Debtor Levels', live: true, tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', ...deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct', true) }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', ...deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct', true) }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole', true) }] }
           : { title: 'Debtor Levels', tiles: [{ value: '1.8%', label: '% Tenants', delta: '0%', dir: null }, { value: '0.6%', label: '% Rent Roll', delta: '0%', dir: null }, { value: money(2790 * f), label: 'Total', delta: '£93', dir: 'up' }] },
         // Move-ins & Move-outs: was present on the legacy portal's KPIs page (missed when this page
         // was first built — it only existed on the Dashboard page here) — same live-data pattern as
@@ -1326,7 +1365,7 @@ export default function PortalV2Page() {
           const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
           return { title: 'Move-ins & Move-outs', live: true, tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
-              { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count') },
+              { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count', true) },
               { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'ft') },
               { value: intFmt(-moveOutArea) + ' ft²', label: 'Sqft Out', ...deltaTick(-moveOutArea, prevMoveOutArea != null ? -prevMoveOutArea : null, 'ft') },
               { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'ft') },
@@ -1424,6 +1463,27 @@ export default function PortalV2Page() {
           const data = (buckets && buckets.length ? buckets : mockBuckets).map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue }));
           if (!buckets || !buckets.length) debugWarn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
           return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
+        })(),
+        // Occupancy by Floor (10 Jul 2026, roadmap #132/#139 — previously blocked: UnitStatus, the
+        // SiteLink report carrying floor data, isn't a callable SOAP method, confirmed against the
+        // live WSDL). Sourced from liveFloorOcc — a manually-imported export (scripts/import-
+        // unit-status.js), independent of the month/range selector and everything else on this
+        // page, same as the Snapshot page's liveSnapshot. Covers however many sites have been
+        // imported so far (starts at one), so the title says exactly how many rather than implying
+        // full-portfolio coverage it doesn't have yet.
+        (() => {
+          const floors = liveFloorOcc?.floors;
+          const mockFloors = [{ floor: 1, occPct: 88.2 }, { floor: 2, occPct: 91.5 }, { floor: 3, occPct: 79.4 }];
+          const rows = (floors && floors.length ? floors : mockFloors).map((b) => ({
+            label: b.floor === 0 ? 'Ground' : `Floor ${b.floor}`,
+            value: b.occPct,
+            disp: b.occPct.toFixed(1) + '%',
+            color: b.occPct >= 85 ? C.green : b.occPct >= 75 ? C.amber : C.red,
+          }));
+          if (!floors || !floors.length) debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — run `npm run import:unit-status <file>` for at least one site.');
+          const siteCount = liveFloorOcc?.sites?.length || 0;
+          const title = siteCount ? `Occupancy by Floor (${siteCount} site${siteCount === 1 ? '' : 's'} imported: ${liveFloorOcc.sites.join(', ')})` : 'Occupancy by Floor (%)';
+          return { title, el: <VBars items={rows} opts={{ max: 100 }} /> };
         })(),
       ];
       const unitDefs = [['9 ft²', 'Locker', 4, 36], ['15 ft²', 'Locker', 16, 240], ['25 ft²', 'Small', 31, 775], ['35 ft²', 'Small', 78, 2730], ['50 ft²', 'Medium', 88, 4400], ['75 ft²', 'Medium', 40, 3000], ['100 ft²', 'Large', 13, 1300], ['125 ft²', 'Large', 10, 1250], ['150 ft²', 'Large', 9, 1350], ['180 ft²', 'Drive Up', 2, 360], ['200 ft²', 'Drive Up', 3, 600], ['250 ft²', 'Enterprise', 2, 500]];
@@ -1685,7 +1745,18 @@ export default function PortalV2Page() {
       // showing July's partial Autobill/Insurance/Merchandise figures under a "Jun 2026" tag) —
       // confirmed live right now, 10 Jul 2026 being mid-July. Fixed monthTag to read the LAST stored
       // month (the current one), matching what ancT/moveInsSum/merchSalesSum actually are.
-      const monthTag = (liveMonths && liveMonths.length >= 1) ? (() => { const [y, m] = liveMonths[liveMonths.length - 1].split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' }); })() : 'Jul 2026';
+      // FIXED AGAIN 10 Jul 2026 (pre-go-live audit): the fix above only covers the DEFAULT view. ancT/
+      // moveInsSum/merchSalesSum all derive from `liveSites`, which the global PERIOD selector (6 Jul
+      // 2026) swaps to whatever month/range is picked via fetchLiveRange() — but monthTag kept
+      // hardcoding the LATEST stored month regardless, so picking any past month or range re-introduces
+      // the exact same mislabeling under a more common trigger (just touching the header's period
+      // control). Built from monthFrom/monthTo directly instead — mirrors monthLbl/rangeLabel's own
+      // formatting (defined later in this function, out of scope here) since those aren't declared yet
+      // at this point in buildPage()'s top-to-bottom execution.
+      const monthTag = (() => {
+        const fmtMonth = (i) => { const [y, m] = monthKeyOf(i).split('-').map(Number); return new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' }); };
+        return monthFrom === monthTo ? fmtMonth(monthTo) : fmtMonth(monthFrom) + ' – ' + fmtMonth(monthTo);
+      })();
       const moveInsSum = liveSites ? liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) : 0;
       // insNewSum/insNewCount MOVED UP 6 Jul 2026 — needed by Insurance Conversion below too, not
       // just Insurance Premiums (New Customers). See that widget's comment further down for the
@@ -1952,8 +2023,22 @@ export default function PortalV2Page() {
       // stored month regardless of what's picked elsewhere on the portal.
       const selFromKey = monthKeyOf(monthFrom), selToKey = monthKeyOf(monthTo);
       const scopedHistory = liveHistory ? liveHistory.filter((h) => h.month >= selFromKey && h.month <= selToKey) : null;
-      const liveHist = (scopedHistory && scopedHistory.length >= 2) ? scopedHistory : null;
-      if (!liveHist) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (need >=2 months of stored history within the selected period — widen the PERIOD selector, run npm run pull a few more times, or npm run backfill).');
+      const scopedOk = !!(scopedHistory && scopedHistory.length >= 2);
+      // FIXED 10 Jul 2026 (pre-go-live audit): the PERIOD selector's OWN default state (the '1M'
+      // preset, monthFrom === monthTo) scopes down to a single point — below the >=2 a trend line
+      // needs — so on every fresh page load, and any time '1M' is picked, all 6 charts below silently
+      // rendered 100% FABRICATED seq() mock numbers with no visual difference from real data (chartCards
+      // never carry a live/mock badge). This wasn't a real data shortage: a multi-month backfill has
+      // since been run (see buildPayload.js's buildIndex() comment) and liveHistory (unscoped) reliably
+      // has well over 2 points. Falls back to the full unscoped history — still 100% real, already-
+      // stored data, just not narrowed to the selection — instead of inventing numbers whenever the
+      // selected range itself is too narrow to plot. True mock data is now reserved for the genuine
+      // "no live history at all" case.
+      const liveHist = scopedOk ? scopedHistory : (liveHistory && liveHistory.length >= 2 ? liveHistory : null);
+      const momUsingFullHistory = !scopedOk && !!liveHist;
+      if (!liveHist) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (no stored history at all yet — run npm run pull a few more times, or npm run backfill).');
+      else if (momUsingFullHistory) debugWarn('[portal-v2] Month-on-Month: selected period has <2 months of history — showing full stored history instead of the narrower selection.');
+      const momTitleSuffix = momUsingFullHistory ? ' (full history — selected period too narrow)' : '';
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
@@ -1968,12 +2053,12 @@ export default function PortalV2Page() {
       // the underlying data/labels were already complete. Zooming is done via the date-range presets
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
-        { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Insurance Roll', el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Revenue Collected' + momTitleSuffix, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Rent Roll' + momTitleSuffix, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Insurance Roll' + momTitleSuffix, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Total Occupied Area' + momTitleSuffix, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Occupied Area' + momTitleSuffix, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Rate per ft²' + momTitleSuffix, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
@@ -2199,21 +2284,18 @@ export default function PortalV2Page() {
     return out;
   }
 
-  const pageData = buildPage();
+  const pageData = buildPage(page);
 
   // ---------- export (Excel) ----------
   const exportItemsRef = useRef([]);
+  // FIXED 10 Jul 2026 (pre-go-live audit): this used to always `return pageData` regardless of `pk`,
+  // silently mislabeling every non-active-page group in the "export everything" Excel file with the
+  // CURRENTLY-VIEWED page's data instead of the page named in each group's header — e.g. exporting
+  // while on Dashboard would fill the KPIs/Financials/Ancillaries/etc. groups with copies of the
+  // Dashboard's own tables. buildPage() now takes an explicit `page` param (see its definition above),
+  // so calling it with `pk` actually recomputes that specific page's real data.
   function withPage(pk) {
-    const prev = page;
-    // buildPage() closes over `page` state via closure — to preview another
-    // page's data without a full state change we temporarily can't mutate React
-    // state synchronously, so we recompute using a tiny local re-implementation
-    // guard: since buildPage reads `page` from the outer scope, we call it only
-    // for the current page in practice (all pages funnel through export below
-    // using pageData for the active page, matching original behaviour for the
-    // common case of exporting from the page currently in view).
-    void prev;
-    return pageData;
+    return buildPage(pk);
   }
   function buildExportGroups() {
     const sel = exportSel;

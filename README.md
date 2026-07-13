@@ -1,35 +1,34 @@
-# Cinch Portal — live data backend (SiteLink → Supabase → portal)
+# Cinch Portal Clean
 
-A scheduled job pulls SiteLink reports into Supabase; the portal reads the result. **The SiteLink
-credentials never touch the browser or chat — they live in Vercel, used only server-side.** No tenant
-PII is stored, only aggregated per-site, per-month numbers.
+Lean Next.js portal for Cinch reporting.
 
-```
-SiteLink ReportingWs.asmx ──(daily pull, server-side)──► Supabase portal_payload ──(anon read)──► portal
-```
+## What stays in this repo
+- `app/` — live portal UI and API routes
+- `lib/` — SiteLink pull, payload build, Supabase access
+- `supabase/schema.sql` — database schema
+- `scripts/` — operational maintenance scripts only
 
-## Files
-- `supabase/schema.sql` — database tables + read security. Run once.
-- `lib/sitelink.js` — SOAP client + auth (license key rides on username as `user:::key`).
-- `lib/reportMap.js` — confirmed method per report + how to aggregate it.
-- `lib/buildPayload.js` — assembles the JSON the portal reads.
-- `lib/pull.js` — runs a refresh (all sites, this month + last). Default reports: occupancy + rent_roll.
-- `app/api/pull/route.js` — endpoint Vercel cron calls.
-- `vercel.json` — one cron at 05:00 UTC (= 6am UK in summer).
-- `scripts/test-connection.js` — confirms creds, lists methods, prints the real response columns.
-- `app/`, `next.config.mjs`, `package.json` — make it a deployable Next.js app that also serves the portal.
+## Core commands
+- `npm run dev` — local app on port `3001`
+- `npm run build` — production build check
+- `npm run pull` — run the main SiteLink pull
+- `npm run pull:snapshot` — refresh the snapshot payload
+- `npm run rebuild` — rebuild `portal_payload` from stored raw data
+- `npm run rebuild:as-of -- 2026-06` — rebuild for a chosen month
+- `npm run backfill` — backfill historical data
+- `npm run reparse -- <report> [YYYY-MM]` — replay parser changes against stored raw responses
+- `npm run repull:month -- <report> <YYYY-MM>` — repull one report/month
+- `npm run repull:all -- <report>` — repull one report for every stored month
+- `npm run check` — inspect the latest stored payload
 
-## What the API docs confirmed
-- Reports are on **`ReportingWs.asmx`** (not CallCenterWs). All 13 methods we need exist.
-- Auth = corp code + `username:::licenseKey` + password; API user needs the **"API All Reports"** right.
-- **True Revenue (#781861) is NOT exposed by the API** — derive from FinancialSummary or keep manual.
-- The doc doesn't list success **columns** — `npm run test:connection` prints them; then we lock the mapping.
+## Setup
+1. Point `.env` at valid SiteLink and Supabase credentials.
+2. Run `supabase/schema.sql`.
+3. Run `npm run test:connection`.
+4. Run `npm run init:sites`.
+5. Run `npm run pull`.
 
-## Go live
-1. **Supabase** → SQL editor → run `supabase/schema.sql`.
-2. **Vercel** → add the env vars from `.env.example` (SiteLink creds, locations, Supabase keys, a random `CRON_SECRET`). Deploy.
-3. **Confirm columns:** `cp .env.example .env`, fill it, `npm install`, `npm run test:connection`. Send me the printed method check + columns → I finalise `reportMap.js`.
-4. Trigger once via `/api/pull` (or `npm run pull`); check `refresh_log` = ok and `portal_payload` filled.
-5. In `Cinch_Portal.html` set `LIVE = { url, anon }` → header flips to "Live data".
+## Rollback
+Pre-cleanup checkpoint branch:
 
-Occupancy widgets light up first; the rest follow as each method's columns are confirmed.
+`backup/pre-cleanup-2026-07-10`

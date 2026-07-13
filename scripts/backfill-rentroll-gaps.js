@@ -32,8 +32,13 @@ try {
   const PAGE = 1000;
   async function fetchAllMonths(rep) {
     let all = [];
+    // FIXED 10 Jul 2026 (pre-go-live audit): was missing .order('id') before .range() — the exact same
+    // bug already found and fixed in buildPayload.js's fetchAllRaw() (6 Jul 2026). Without a stable
+    // sort, Postgres/PostgREST doesn't guarantee the same row lands on the same page across requests,
+    // so as raw_report grows (3000+ rows already) this could silently skip or duplicate rows between
+    // pages, corrupting this script's own gap-detection.
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin.from('raw_report').select('month').eq('report', rep).range(from, from + PAGE - 1);
+      const { data, error } = await admin.from('raw_report').select('month').eq('report', rep).order('id').range(from, from + PAGE - 1);
       if (error) throw new Error(error.message);
       all = all.concat(data);
       if (!data || data.length < PAGE) break;

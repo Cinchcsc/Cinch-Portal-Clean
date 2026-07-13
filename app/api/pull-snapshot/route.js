@@ -1,7 +1,6 @@
 // Vercel cron (or manual hit) triggers the Weekly/Daily/Quarterly Snapshot pull. Mirrors
-// app/api/pull/route.js's auth/runtime pattern exactly. NOT wired into vercel.json's cron list yet
-// (that list is still empty — see docs/roadmap.md's "Automation" note on the main pull) — trigger
-// manually via `npm run pull:snapshot` (no timeout) until you're ready to schedule this one too.
+// app/api/pull/route.js's auth/runtime pattern exactly. Trigger manually via
+// `npm run pull:snapshot` until you're ready to schedule it.
 import { NextResponse } from 'next/server';
 import { runSnapshotPull } from '../../../lib/pullSnapshot.js';
 
