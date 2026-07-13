@@ -9,6 +9,7 @@
 // using hooks, preserving all state, derived values, and markup 1:1.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
 const debugWarn = (...args) => {
@@ -496,13 +497,55 @@ function LineChart({ series, opts = {} }) {
 // widget (not per individual table column) covering every sub-part in its text — adding per-column
 // hover targets to DataTable would mean reworking its shared header-rendering for every table on
 // every page, a much larger and riskier change than this info-bubble approach for the same result.
-// No dependency — plain hover-controlled absolute-positioned div, matching every other hand-rolled
-// component in this file (Donut/Gauge/StoreBarChart/etc.).
+// No dependency — plain hover-controlled div, matching every other hand-rolled component in this
+// file (Donut/Gauge/StoreBarChart/etc.), EXCEPT the bubble itself is portaled to document.body.
+// FIXED 13 Jul 2026 (Michael: "tooltips appear behind other widgets"): every widget/table card
+// wrapper uses `overflow: hidden` (for rounded corners — see the card divs around line ~2745/2780/
+// 2802 and DataTable's own outer wrapper). The bubble used to be a plain absolutely-positioned child
+// of the icon, popping open with `bottom: 100%` — since the icon sits in the card's HEADER (right at
+// the card's top edge), that pop-up bubble immediately poked outside the card's own box and got
+// clipped by that SAME card's `overflow: hidden`, regardless of its zIndex (clipping happens before
+// stacking is even considered — a high z-index can't rescue an element clipped by an ancestor's
+// overflow). Portaling the bubble to document.body (position: fixed, coordinates computed from the
+// icon's getBoundingClientRect()) escapes every ancestor's overflow/stacking context entirely, which
+// is the standard fix for tooltips/popovers living inside clipped card layouts.
+// FIXED AGAIN 13 Jul 2026 (Michael: "I can only see the bottom edge of them"): the first portal-based
+// version still tried to open UPWARD (anchored by `bottom`, growing up) whenever the icon was more
+// than 180px from the top of the viewport — a guessed threshold that didn't account for how TALL a
+// given tooltip's actual text is (several run 5-6 lines). For any bubble taller than the real
+// available space above the icon, its top edge landed above y=0 and got clipped by the viewport
+// itself (a `position: fixed` box doesn't wrap/scroll on its own) — leaving only the bottom sliver
+// nearest the icon visible, exactly the symptom reported. Simplified to ALWAYS open DOWNWARD from
+// the icon instead (predictable, and the card's own `overflow: hidden` no longer matters since this
+// is portaled out of the card entirely) — the only remaining edge case is an icon very near the
+// BOTTOM of the viewport, guarded with a computed `maxHeight` + internal scroll so a long bubble
+// there scrolls instead of silently clipping.
 function InfoTip({ text }) {
   const [show, setShow] = useState(false);
+  const [pos, setPos] = useState(null);
+  const iconRef = useRef(null);
+  const place = () => {
+    const r = iconRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const left = Math.min(Math.max(8, r.left), vw - 328);   // keep the 320px-wide bubble on-screen horizontally
+    const top = r.bottom + 6;
+    const maxHeight = Math.max(80, vh - top - 12);          // leave the bubble fully inside the viewport vertically; scrolls internally if still too tall
+    setPos({ left, top, maxHeight });
+  };
+  useEffect(() => {
+    if (!show) return;
+    place();
+    const onMove = () => place();
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => { window.removeEventListener('scroll', onMove, true); window.removeEventListener('resize', onMove); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show]);
   if (!text) return null;
   return (
     <span
+      ref={iconRef}
       onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
       style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', cursor: 'help', flex: 'none' }}
     >
@@ -510,15 +553,17 @@ function InfoTip({ text }) {
         <circle cx="12" cy="12" r="9.5" stroke="#98A2B3" strokeWidth="1.6" />
         <path d="M12 11.2v5.3M12 7.6v.01" stroke="#98A2B3" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
-      {show && (
+      {show && pos && typeof document !== 'undefined' && createPortal(
         <div style={{
-          position: 'absolute', bottom: '100%', left: 0, marginBottom: '6px', width: '320px', maxWidth: '80vw',
+          position: 'fixed', left: pos.left, top: pos.top, width: '320px', maxWidth: '80vw',
+          maxHeight: pos.maxHeight, overflowY: 'auto',
           background: '#0C1425', color: '#E4E7EC', fontSize: '11.5px', fontWeight: 400, lineHeight: 1.55,
           textTransform: 'none', letterSpacing: 'normal', whiteSpace: 'pre-line', padding: '10px 12px',
-          borderRadius: '8px', boxShadow: '0 8px 20px rgba(16,24,40,.25)', zIndex: 60,
+          borderRadius: '8px', boxShadow: '0 8px 20px rgba(16,24,40,.25)', zIndex: 9999, pointerEvents: 'none',
         }}>
           {text}
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );
