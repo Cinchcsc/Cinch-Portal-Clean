@@ -24,6 +24,7 @@
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",
+    "probe:dm-groupkey": "node --env-file=.env scripts/probe-dm-groupkey-mismatch.js",
     "test:discounts": "node scripts/test-discounts-parser.mjs"
   },
   "dependencies": {
