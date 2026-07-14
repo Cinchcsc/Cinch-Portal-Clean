@@ -1,9 +1,9 @@
 {
   "crons": [
-    { "path": "/api/pull", "schedule": "0 6 * * *" },
-    { "path": "/api/pull?reports=management,move_ins_outs,past_due,scheduled_outs", "schedule": "10 6 * * *" },
-    { "path": "/api/pull?reports=insurance_roll,insurance_activity,lead_funnel,marketing", "schedule": "20 6 * * *" },
-    { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "30 6 * * *" },
-    { "path": "/api/pull?reports=true_revenue,rental_activity,discounts", "schedule": "40 6 * * *" }
+    { "path": "/api/pull", "schedule": "0 5 * * *" },
+    { "path": "/api/pull?reports=management,move_ins_outs,past_due,scheduled_outs", "schedule": "10 5 * * *" },
+    { "path": "/api/pull?reports=insurance_roll,insurance_activity,lead_funnel,marketing", "schedule": "20 5 * * *" },
+    { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "30 5 * * *" },
+    { "path": "/api/pull?reports=true_revenue,rental_activity,discounts", "schedule": "40 5 * * *" }
   ]
 }
