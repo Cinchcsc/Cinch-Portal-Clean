@@ -2399,8 +2399,9 @@ export default function PortalV2Page() {
       // 9 Jul 2026): a live-style period query (yesterday / last 7 days / quarter-to-date), not a
       // day-by-day accumulating trend chart. Backed by its own snapshot_payload row, refreshed by
       // `npm run pull:snapshot` (or GET /api/pull-snapshot), independent of the main monthly pull.
-      // Reservation Backlog ("forward move-ins", Michael's pick) is a known gap — shown as "—" below,
-      // pending confirmation of a usable target-move-in-date field on InquiryTracking.
+      // Reservation Backlog ("forward move-ins", Michael's pick) card REMOVED 14 Jul 2026 (Michael) —
+      // was a "Coming soon" placeholder pending confirmation of a usable target-move-in-date field on
+      // InquiryTracking, which still doesn't exist. See the tables[] block below for the removal note.
       const snap = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
       if (!snap) debugWarn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
       const periodLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
@@ -2427,7 +2428,10 @@ export default function PortalV2Page() {
       out.statCards = [
         { title: 'Enquiries', live: !!snap, tip: 'Report: InquiryTracking.\nCount of inquiry rows placed within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Own pipeline (lib/pullSnapshot.js) — separate from the main monthly pull, always capped at yesterday.', tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
         { title: 'Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nreservationStageCount for the selected window — trusts the SOAP-level date range directly (not independently re-filtered client-side).', tiles: [{ value: intFmt(totals.reservations), label: periodLabel, delta: null, dir: null }] },
-        { title: 'Reservation Backlog', live: false, tiles: [{ value: '—', label: 'Coming soon', delta: null, dir: null }], note: 'Pending confirmation of a usable field on InquiryTracking — see lib/pullSnapshot.js.' },
+        // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
+        // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
+        // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
+        // record so this can come back easily if that field is ever found.
         { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nCount of move-in / move-out rows within the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
         { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nIn = Σ MovedInArea; Out = Σ MovedOutArea (shown negative), within the selected window.', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
       ];
