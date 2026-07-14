@@ -2433,6 +2433,104 @@ export default function PortalV2Page() {
       ];
     }
 
+    else if (page === 'districtManager') {
+      // District Manager-style widgets (task #174/#203, from Michael's own live Qstrom DM screenshots,
+      // 14 Jul 2026: "some qstrom widget ideas to add" → "im back, start"). Two of the twelve widgets
+      // Michael photographed are buildable now with ZERO new SiteLink calls (RentalActivity + RentRoll
+      // are both already pulled): "Watchdog - Discounted Units in Fully Occupied Groups" and "Unit
+      // Groups - Stay & Re-Lease". Both are inherently PER-SITE (a "fully occupied group" is a fact
+      // about one facility, not a portfolio-wide sum — summing vacancy across sites first would hide a
+      // site whose own group is genuinely full), so this reads straight off each site's own raw
+      // rentalActivityByTypeSize/unitRows arrays instead of the cross-site computeTotals() rollup used
+      // elsewhere on this page. groupKey joins RentalActivity's (type, area) group to RentRoll's
+      // per-unit rows the same way lib/reportMap.js's rent_roll parser builds it: `${type}|${round(area)}`
+      // — RentRoll has no separate width/length columns, only combined Area, so this is an
+      // approximation (good enough in practice since unit sizes within a site are standardized).
+      // NOT included here (flagged to Michael, not silently dropped): "Watchdog - Never Leased Units"
+      // — no SiteLink report exposes a never-leased flag or days-vacant for currently-vacant units,
+      // confirmed via a dedicated investigation; and "Cockpit Charting" (daily income-by-category vs
+      // 3-month average) — needs a new DAILY financial pull, which lib/pullSnapshot.js doesn't do
+      // today (only enquiries/move-ins are pulled at daily grain) — a genuinely separate, bigger lift.
+      const dmSites = liveSites || [];
+      const discountedRows = [];
+      const groupRows = [];
+      for (const s of dmSites) {
+        const groups = s.rentalActivityByTypeSize || [];
+        const unitsAtSite = s.unitRows || [];
+        for (const g of groups) {
+          const key = `${g.type}|${Math.round(g.area)}`;
+          const unitsInGroup = unitsAtSite.filter((u) => u.groupKey === key);
+          const stays = unitsInGroup.map((u) => u.leaseDays).filter((d) => d != null);
+          const avgStay = stays.length ? Math.round(stays.reduce((a, d) => a + d, 0) / stays.length) : null;
+          groupRows.push({
+            store: s.name, type: g.type, area: Math.round(g.area), totalUnits: g.totalUnits, occupied: g.occupied,
+            vacant: g.vacant, occPct: g.occPct, standardRate: g.standardRate, effectiveRate: g.occupiedDollarPerArea,
+            grossPotential: g.grossPotential, avgStay,
+          });
+          if (g.totalUnits > 0 && g.vacant === 0) {
+            for (const u of unitsInGroup) {
+              if (u.stdRate > 0 && u.rent < u.stdRate) {
+                discountedRows.push({
+                  store: s.name, unit: u.unit, type: u.type, area: u.area,
+                  stdRate: u.stdRate, rent: u.rent, discountPct: R2((u.stdRate - u.rent) / u.stdRate * 100),
+                });
+              }
+            }
+          }
+        }
+      }
+      discountedRows.sort((a, b) => b.discountPct - a.discountPct);
+      groupRows.sort((a, b) => a.store.localeCompare(b.store) || a.type.localeCompare(b.type) || a.area - b.area);
+
+      const haveData = !!liveSites;
+      if (!haveData) debugWarn('[portal-v2] District Manager page rendering with mock data (no live unitRows/rentalActivityByTypeSize yet — run npm run pull).');
+      const mockDiscounted = [
+        { store: 'Bicester', unit: 'OFF3', type: 'Self Storage', area: 50, stdRate: 62.50, rent: 48.00, discountPct: 23.2 },
+        { store: 'Newbury', unit: 'A114', type: 'Self Storage', area: 75, stdRate: 88.00, rent: 70.40, discountPct: 20.0 },
+      ];
+      const mockGroups = [
+        { store: 'Bicester', type: 'Self Storage', area: 50, totalUnits: 40, occupied: 40, vacant: 0, occPct: 100, standardRate: 30.5, effectiveRate: 27.8, grossPotential: 61000, avgStay: 412 },
+        { store: 'Newbury', type: 'Drive Up', area: 100, totalUnits: 22, occupied: 20, vacant: 2, occPct: 90.9, standardRate: 24.0, effectiveRate: 22.1, grossPotential: 52800, avgStay: 305 },
+      ];
+      const dRows = haveData ? discountedRows : mockDiscounted;
+      const gRows = haveData ? groupRows : mockGroups;
+
+      out.statCards = [
+        { title: 'Discounted Units in Full Groups', live: haveData, tip: 'Report: RentalActivity (fully occupied (type, size) groups, Vacant = 0) cross-referenced against RentRoll per-unit dcStdRate vs dcRent.\nCount of occupied units currently billed BELOW their own standard rate, inside a group that\'s 100% occupied — a candidate to have its discount reviewed since the group no longer needs it to stay full.', tiles: [{ value: intFmt(dRows.length), label: 'Units', delta: null, dir: null }] },
+        { title: 'Groups Analyzed', live: haveData, tip: 'Report: RentalActivity.\nCount of (store, unit type, unit size) groups across the selected stores this month.', tiles: [{ value: intFmt(gRows.length), label: '(store, type, size) groups', delta: null, dir: null }] },
+      ];
+      out.chartCards = [];
+      out.tables = [
+        { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true,
+          tip: 'Report: RentalActivity (identifies groups with Vacant = 0); RentRoll (dcStdRate vs dcRent per unit).\nA unit qualifies when its (store, type, size) group is 100% occupied AND the unit\'s actual rent (dcRent) is below that unit\'s own standard rate (dcStdRate) — i.e. a discount that\'s arguably no longer needed to keep the group full.',
+          columns: [
+            { key: 'store', label: 'Store', type: 'text' },
+            { key: 'unit', label: 'Unit', type: 'text' },
+            { key: 'type', label: 'Type', type: 'text' },
+            { key: 'area', label: 'Area (ft²)', type: 'int', align: 'right' },
+            { key: 'stdRate', label: 'Standard Rate', type: 'money2', align: 'right' },
+            { key: 'rent', label: 'Actual Rent', type: 'money2', align: 'right' },
+            { key: 'discountPct', label: 'Discount %', type: 'pct', align: 'right' },
+          ],
+          rows: dRows.length ? dRows : [{ store: '(no discounted units found in fully occupied groups this month)', unit: null, type: null, area: null, stdRate: null, rent: null, discountPct: null }],
+        },
+        { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 29, wide: true,
+          tip: 'Report: RentalActivity (units/occupied/vacant/standard rate/effective rate/gross potential, per (store, type, size) group); RentRoll (avg stay = mean of today − dLeaseDate across the group\'s currently-occupied units).\nEffective Rate = Σ occupiedRent ÷ Σ occupiedArea × 12 (concessions already reflected, unlike Standard Rate). Avg Stay does not include re-lease/vacancy-to-next-move-in duration — SiteLink does not expose that timing anywhere (see task #174 notes).',
+          columns: [
+            { key: 'store', label: 'Store', type: 'text' },
+            { key: 'type', label: 'Type', type: 'text' },
+            { key: 'area', label: 'Area (ft²)', type: 'int', align: 'right' },
+            { key: 'totalUnits', label: 'Units', type: 'int', align: 'right' },
+            { key: 'occPct', label: 'Occupied %', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'standardRate', label: 'Standard Rate', type: 'money2', align: 'right' },
+            { key: 'effectiveRate', label: 'Effective Rate', type: 'money2', align: 'right' },
+            { key: 'avgStay', label: 'Avg Stay (days)', type: 'int', align: 'right' },
+          ],
+          rows: gRows.length ? gRows : [{ store: '(no groups found)', type: null, area: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
+        },
+      ];
+    }
+
     return out;
   }
 
@@ -2465,7 +2563,7 @@ export default function PortalV2Page() {
         return [['KPI', 'Value', 'Change'], ...d.kpiRow.map((k) => [k.label, k.value, k.delta ? (k.dir === 'up' ? '+' : '-') + k.delta : ''])];
       },
     });
-    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot' };
+    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
     Object.keys(pages).forEach((pk) => {
       const d = pk === page ? pageData : withPage(pk);
       d.tables.forEach((t, i) => items.push({
@@ -2549,7 +2647,7 @@ export default function PortalV2Page() {
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
-  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot' };
+  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
 
   // `tip` (13 Jul 2026): carried through unchanged from whatever buildPage() set on each kpiRow tile/
   // statCard/chartCard/table object — see InfoTip's own definition above for why this is one tip per
@@ -2604,6 +2702,7 @@ export default function PortalV2Page() {
     { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }, { id: 'discountSummary', label: 'Discount Summary' }] },
     { label: 'Growth', items: [{ id: 'marketing', label: 'Marketing' }] },
     { label: 'Trends', items: [{ id: 'mom', label: 'Month on Month' }] },
+    { label: 'District Manager', items: [{ id: 'districtManager', label: 'District Manager' }] },
   ];
 
   const createWidget = () => {
