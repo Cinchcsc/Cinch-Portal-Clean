@@ -908,11 +908,25 @@ export default function PortalV2Page() {
       .then((data) => {
         if (!data || !data.configured || !data.totals) {
           debugWarn('[portal-v2] /api/portfolio not configured — dashboard KPI row + rate table + trend charts are using mock data.');
-          setLiveTotals(null);
-          setLiveSitesRaw(null);
-          setLiveMonthly(null);
-          setLiveMonths(null);
-          setLiveHistory(null);
+          // FIXED 14 Jul 2026 (Michael: District Manager page shows real data for a few seconds then
+          // reverts to blank/mock right after first switching to it) — this branch used to
+          // unconditionally null liveTotals/liveSitesRaw/etc, but the 8 Jul fix above already stopped
+          // this function's SUCCESS path from setting liveTotals/liveSitesRaw (fetchLiveRange owns
+          // those exclusively now) without updating this failure path to match. reload() re-runs this
+          // whole fetch on every nav click; if this one unscoped call (used only for month-list
+          // metadata) has any transient hiccup — a Vercel cold start right after a fresh deploy is the
+          // likely trigger — it wiped out perfectly good data that fetchLiveRange had already loaded,
+          // and nothing re-fetched it afterward since fetchLiveRange is only called from the success
+          // branch below. Only clear state when there's no previous good load to protect (the real
+          // first load); otherwise keep showing what's already there, same "keep current view" rule
+          // fetchLiveRange's own error handling already follows.
+          if (!rangeInitialized.current) {
+            setLiveTotals(null);
+            setLiveSitesRaw(null);
+            setLiveMonthly(null);
+            setLiveMonths(null);
+            setLiveHistory(null);
+          }
           onInitialSettled && onInitialSettled();
           return;
         }
@@ -955,11 +969,15 @@ export default function PortalV2Page() {
       })
       .catch((err) => {
         debugWarn('[portal-v2] /api/portfolio fetch failed — dashboard KPI row + rate table + trend charts are using mock data.', err);
-        setLiveTotals(null);
-        setLiveSitesRaw(null);
-        setLiveMonthly(null);
-        setLiveMonths(null);
-        setLiveHistory(null);
+        // Same fix as the "not configured" branch above: don't erase already-loaded good data just
+        // because THIS particular re-fetch (triggered by reload() on a nav click) failed.
+        if (!rangeInitialized.current) {
+          setLiveTotals(null);
+          setLiveSitesRaw(null);
+          setLiveMonthly(null);
+          setLiveMonths(null);
+          setLiveHistory(null);
+        }
         onInitialSettled && onInitialSettled();
       });
   };
