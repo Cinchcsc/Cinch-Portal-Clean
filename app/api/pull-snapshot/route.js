@@ -1,14 +1,16 @@
-// Vercel cron (or manual hit) triggers the Weekly/Daily/Quarterly Snapshot pull. Mirrors
-// app/api/pull/route.js's auth/runtime pattern exactly. Trigger manually via
-// `npm run pull:snapshot` until you're ready to schedule it.
+// Vercel cron (see vercel.json, scheduled 0 6 * * * — its own hour, same reasoning as every other
+// cron entry there) triggers the Weekly/Daily/Quarterly Snapshot pull. Mirrors app/api/pull/route.js's
+// auth/runtime pattern exactly. Can still be run manually any time via `npm run pull:snapshot`.
 import { NextResponse } from 'next/server';
 import { runSnapshotPull } from '../../../lib/pullSnapshot.js';
 
 export const runtime = 'nodejs';        // the SOAP client needs the Node runtime, not Edge
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;         // needs Vercel Pro — 174 sequential SiteLink calls (3
-                                         // periods x 2 reports x 29 sites) won't finish in Hobby's 60s.
-                                         // Prefer `npm run pull:snapshot` on Hobby until this is split up.
+// CHECKED 14 Jul 2026 (Michael confirmed Hobby plan): 300s is Hobby's default+max duration too, via
+// Vercel's now-default-on Fluid Compute — NOT Pro-only, contrary to this comment's old assumption.
+// 174 sequential SiteLink calls (3 periods x 2 reports x 29 sites) needs the full 300s regardless of
+// plan; that part is unchanged.
+export const maxDuration = 300;
 
 export async function GET(request) {
   const secret = process.env.CRON_SECRET;
