@@ -2908,13 +2908,6 @@ export default function PortalV2Page() {
                   </div>
                 )}
 
-                {page === 'marketing' && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#B54708', background: '#FFFAEB', border: '1px solid #FEDF89', borderRadius: '10px', padding: '10px 14px' }}>
-                    <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M12 8v5m0 3h.01M12 3l9 16H3l9-16Z" stroke="#B54708" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    Marketing widgets are inferred — no reference screenshot was supplied. Share the live page and I&apos;ll match its exact widgets.
-                  </div>
-                )}
-
               </div>
             )}
           </main>
