@@ -30,7 +30,17 @@ const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
 });
 
 if (error) {
-  console.error(`Failed to invite ${email}:`, error.message);
+  // FIXED 14 Jul 2026: error.message alone was printing "{}" for every failure — Supabase's client
+  // sometimes returns an error whose useful fields (status, code) live outside a plain .message
+  // string, and a bare Error's own .message isn't picked up by default JSON.stringify (non-enumerable),
+  // so a naive dump also shows "{}". This logs every likely field explicitly, plus a full dump using
+  // getOwnPropertyNames (catches Error instances too) so nothing is hidden.
+  console.error(`Failed to invite ${email}:`);
+  console.error('  message:', error.message);
+  console.error('  status:', error.status);
+  console.error('  code:', error.code);
+  console.error('  name:', error.name);
+  console.error('  full:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
   process.exit(1);
 }
 
