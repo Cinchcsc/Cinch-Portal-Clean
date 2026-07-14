@@ -36,7 +36,17 @@ export default function SetPasswordPage() {
     const supabase = supabaseBrowser();
     const { error: err } = await supabase.auth.updateUser({ password });
     setBusy(false);
-    if (err) return setError(err.message);
+    if (err) {
+      // Same fix as app/login/page.js (14 Jul 2026): some Supabase auth errors have an unhelpful
+      // .message (e.g. literally "{}"), so fall back to status/code instead of a dead-end message.
+      let msg = err.message;
+      const looksUnhelpful = !msg || msg === '{}' || msg === '[object Object]';
+      if (looksUnhelpful || err.status || err.code) {
+        const details = [err.status && `status ${err.status}`, err.code && `code ${err.code}`].filter(Boolean).join(', ');
+        msg = `${looksUnhelpful ? 'Something went wrong' : msg}${details ? ` (${details})` : ''}`;
+      }
+      return setError(msg);
+    }
     router.push('/portal-v2');
     router.refresh();
   };

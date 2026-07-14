@@ -11,6 +11,7 @@ import { admin } from '../lib/supabaseAdmin.js';
 import { pullReport } from '../lib/reportMap.js';
 import { buildPayload } from '../lib/buildPayload.js';
 import { checkPullLock, startPullLog, finishPullLog } from '../lib/pullLock.js';
+import { describeError } from '../lib/describeError.js';
 
 const reportKey = process.argv[2] || 'rent_roll';
 const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -107,7 +108,7 @@ try {
   await finishPullLog(logId, failed > ok ? 'error' : 'ok', `${ok} ok, ${failed} failed`);
   process.exit(failed > ok ? 1 : 0);
 } catch (e) {
-  console.error('[backfill-rentroll-gaps] fatal:', e.message);
-  await finishPullLog(logId, 'error', e.message);
+  console.error('[backfill-rentroll-gaps] fatal:', describeError(e));
+  await finishPullLog(logId, 'error', describeError(e));
   process.exit(1);
 }

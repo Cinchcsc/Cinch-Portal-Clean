@@ -13,6 +13,7 @@ import { REPORTS, pullReport } from '../lib/reportMap.js';
 import { extractRows } from '../lib/sitelink.js';
 import { buildPayload } from '../lib/buildPayload.js';
 import { checkPullLock, startPullLog, finishPullLog } from '../lib/pullLock.js';
+import { describeError } from '../lib/describeError.js';
 
 const spec = REPORTS.management;
 
@@ -128,7 +129,7 @@ try {
   await finishPullLog(logId, failed > (reparsed + repulled) ? 'error' : 'ok', `${reparsed} reparsed, ${repulled} repulled, ${failed} failed`);
   process.exit(failed > (reparsed + repulled) ? 1 : 0);
 } catch (e) {
-  console.error('[backfill-delinquent30] fatal:', e.message);
-  await finishPullLog(logId, 'error', e.message);
+  console.error('[backfill-delinquent30] fatal:', describeError(e));
+  await finishPullLog(logId, 'error', describeError(e));
   process.exit(1);
 }
