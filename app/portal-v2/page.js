@@ -1090,7 +1090,13 @@ export default function PortalV2Page() {
     let from = latestIdx;
     if (pl === '3M') from = latestIdx - 2;
     else if (pl === '6M') from = latestIdx - 5;
-    else if (pl === '12M') from = latestIdx - 11;
+    // FIXED 14 Jul 2026 (Michael: "12m should be for example june 25 to jun26") — was latestIdx - 11,
+    // a plain trailing-12-calendar-months window (e.g. Jul'25-Jun'26 if latest=Jun'26: 12 points, but
+    // starting a month AFTER last year's same month). Michael wants the FROM month to land on the
+    // exact same calendar month one year before TO — i.e. latestIdx - 12 (e.g. Jun'25-Jun'26). YTD and
+    // All were checked against his examples too (Jan-of-this-year -> latest, and earliest stored month
+    // -> latest, respectively) and are already correct — no change needed there.
+    else if (pl === '12M') from = latestIdx - 12;
     else if (pl === 'YTD') from = indexOfMonthKey(`${monthKeyOf(latestIdx).slice(0, 4)}-01`);
     else if (pl === 'All') from = earliestIdx;
     setPeriod(pl);
