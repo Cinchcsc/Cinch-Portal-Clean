@@ -39,7 +39,17 @@ function LoginForm() {
         router.refresh();
       }
     } catch (err) {
-      setError(err.message === 'Invalid login credentials' ? 'Incorrect email or password.' : err.message);
+      // FIXED 14 Jul 2026: same class of bug as scripts/invite-user.js — some Supabase errors come
+      // back with a message that isn't human-readable (e.g. literally "{}"), so showing err.message
+      // alone can be a dead end. Append status/code when the message looks unhelpful, so there's
+      // always something diagnosable on screen instead of just "{}".
+      let msg = err.message === 'Invalid login credentials' ? 'Incorrect email or password.' : err.message;
+      const looksUnhelpful = !msg || msg === '{}' || msg === '[object Object]';
+      if (looksUnhelpful || err.status || err.code) {
+        const details = [err.status && `status ${err.status}`, err.code && `code ${err.code}`].filter(Boolean).join(', ');
+        msg = `${looksUnhelpful ? 'Something went wrong' : msg}${details ? ` (${details})` : ''}`;
+      }
+      setError(msg);
     } finally {
       setBusy(false);
     }
