@@ -87,16 +87,25 @@ for (const loc of locations) {
 console.log('\n=== Per-site results ===');
 console.log('site   rowsA/B/C   moveIns A/B/C   moveOuts A/B/C   netArea A/B/C            stored netArea   DIFF?');
 console.log('-'.repeat(110));
-let anyDiff = false;
+// NOTE (14 Jul 2026, corrected after first live run): A vs B is the ACTUAL test for "does midnight vs
+// end-of-day on the SAME calendar date matter" — both name June 30, just at different times. C is a
+// DIFFERENT calendar date entirely (July 1st @00:00), so C differing from A is expected whenever July
+// 1st had any real move-in/move-out activity — that's C picking up an extra day, not "recovering"
+// anything. Only an A vs B difference would mean midnight-vs-end-of-day time-of-day matters; A vs C
+// differing proves nothing about that question. Tracked separately below.
+let anyDiffAB = false, anyDiffAC = false;
 for (const r of rows) {
-  const diff = r.pa.net_area !== r.pb.net_area || r.pa.net_area !== r.pc.net_area || r.rowsA !== r.rowsB || r.rowsA !== r.rowsC;
-  if (diff) anyDiff = true;
+  const diffAB = r.pa.net_area !== r.pb.net_area || r.rowsA !== r.rowsB;
+  const diffAC = r.pa.net_area !== r.pc.net_area || r.rowsA !== r.rowsC;
+  if (diffAB) anyDiffAB = true;
+  if (diffAC) anyDiffAC = true;
+  const flag = diffAB ? '<<<< A vs B DIFFERS (real bug signal)' : (diffAC ? '(C differs — likely just Jul 1st activity, not a bug)' : '');
   console.log(
     `${r.loc.padEnd(6)} ${String(r.rowsA).padStart(3)}/${String(r.rowsB).padStart(3)}/${String(r.rowsC).padStart(3)}` +
     `      ${String(r.pa.move_ins).padStart(3)}/${String(r.pb.move_ins).padStart(3)}/${String(r.pc.move_ins).padStart(3)}` +
     `        ${String(r.pa.move_outs).padStart(3)}/${String(r.pb.move_outs).padStart(3)}/${String(r.pc.move_outs).padStart(3)}` +
     `         ${String(r.pa.net_area).padStart(6)}/${String(r.pb.net_area).padStart(6)}/${String(r.pc.net_area).padStart(6)}` +
-    `      ${String(r.stored?.net_area ?? '(none)').padStart(10)}      ${diff ? '<<<< DIFFERS' : ''}`
+    `      ${String(r.stored?.net_area ?? '(none)').padStart(10)}      ${flag}`
   );
 }
 
@@ -111,20 +120,24 @@ const storedNet = rows.reduce((a, r) => a + (r.stored?.net_area || 0), 0);
 console.log(`Stored (production) net area total: ${storedNet}`);
 
 console.log('\n=== Verdict ===');
-if (!anyDiff) {
-  console.log('A, B, and C are IDENTICAL for every site — SiteLink normalizes the end date to a whole calendar');
-  console.log('day regardless of the time component. The last-day-of-month timing is NOT causing an undercount.');
+if (!anyDiffAB) {
+  console.log('A and B are IDENTICAL for every site (C is expected to differ — see note above, not evidence of a');
+  console.log('bug) — SiteLink normalizes the end date to the WHOLE calendar day named, regardless of the time');
+  console.log('component. Midnight-vs-end-of-day is NOT causing an undercount. Do NOT adopt window C (pushing to');
+  console.log('the 1st of next month) — that would double-count that day\'s real activity into the wrong month.');
+  console.log('lib/pull.js\'s current endOf()/fmtDate() end-date handling is correct as-is; no change needed.');
   console.log('If the portal\'s net sqft still looks wrong, the bug is elsewhere — worth checking the STORED');
   console.log('column above against A: if stored != A, the pipeline captured this month\'s data before it was');
   console.log('locked (see lib/pull.js\'s prevLocked comment) and is now frozen on a stale/partial snapshot.');
 } else {
-  console.log('B and/or C differ from A for at least one site — CONFIRMED: ending the request at midnight of');
-  console.log('the last day (today\'s production behavior) misses that day\'s move-ins/move-outs. Recommend');
+  console.log('A vs B differ for at least one site — CONFIRMED: ending the request at midnight of the last day');
+  console.log('(today\'s production behavior) misses some of that SAME day\'s move-ins/move-outs. Recommend');
   console.log('changing lib/pull.js\'s endOf() (or lib/sitelink.js\'s fmtDate() end-date handling) to push the');
-  console.log('end boundary to 23:59:59 (matches B) or the 1st of the next month (matches C) — whichever this');
-  console.log('output shows recovers the missing rows — and applying it to every other `dated: true` report');
-  console.log('call in the pipeline (lead_funnel, insurance_roll, insurance_activity, discounts, true_revenue,');
-  console.log('rate_changes, financial, merchandise, marketing, management, past_due, reservations,');
-  console.log('rental_activity), not just move_ins_outs, since they all share this same endOf()/fmtDate() path.');
+  console.log('end boundary to 23:59:59 that same day (matches B) — and applying it to every other `dated: true`');
+  console.log('report call in the pipeline (lead_funnel, insurance_roll, insurance_activity, discounts,');
+  console.log('true_revenue, rate_changes, financial, merchandise, marketing, management, past_due,');
+  console.log('reservations, rental_activity), not just move_ins_outs, since they all share this same');
+  console.log('endOf()/fmtDate() path. NOTE: true_revenue\'s period_days calc and insurance_roll/discounts\' own');
+  console.log('date-window filters would also need adjusting to match the new end-date convention.');
 }
 process.exit(0);
