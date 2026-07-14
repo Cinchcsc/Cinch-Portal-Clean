@@ -683,7 +683,7 @@ function thresholdColor(value) {
 // summed and rates/percentages are re-derived sum-then-divide by the CALLER (same rule as
 // computeTotals — never average per-site rates here). `totalsLabel` is the first-column label
 // ("Total" or "Average").
-function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip }) {
+function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip, headerExtra }) {
   // REMOVED 8 Jul 2026 (Michael: "remove the scroll bar and scrolling thing on the big widgets... it
   // makes navigating annoying") — this used to cap tall tables to a fixed ~pageSize-row viewport with
   // their own internal scrollbar (6 Jul 2026 change, replacing Prev/Next pagination). In practice that
@@ -699,6 +699,9 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
         <span style={{ fontSize: '12.5px', fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#475467', flex: 1 }}>{title}</span>
         <InfoTip text={tip} />
         {live && <span style={{ fontSize: '9.5px', fontWeight: 700, letterSpacing: '.08em', color: '#08875D', background: '#E7F6EF', borderRadius: '5px', padding: '2px 6px' }}>LIVE</span>}
+        {/* headerExtra (14 Jul 2026): optional per-table controls, e.g. the District Manager Unit
+            Groups widget's own location/type filters — additive, every other table simply omits it. */}
+        {headerExtra}
       </div>
       <div style={{ overflowX: 'auto', overflowY: needsScroll ? 'auto' : 'visible', maxHeight: needsScroll ? (ROW_H * pageSize) + 'px' : undefined }}>
         <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13.5px', minWidth: '560px' }}>
@@ -840,6 +843,21 @@ export default function PortalV2Page() {
   // per-month pull), not part of the global month/range selector at all. Covers however many sites
   // have been imported so far via scripts/import-unit-status.js — starts at just one.
   const [liveFloorOcc, setLiveFloorOcc] = useState(null); // { sites: [...codes], floors: [{floor,totalUnits,occupiedUnits,occPct}] } or null if unavailable
+
+  // District Manager — Unit Groups Stay & Re-Lease widget-local filters (14 Jul 2026, Michael:
+  // "condense... add a filter for that specific widget to filter by location and by type or both, all
+  // of them or none of them"). Deliberately SEPARATE from the global store filter (selected/region
+  // above) — this table can run into the thousands of (store, type, size) rows across the whole
+  // portfolio, so it needs its OWN narrower location/type filter regardless of what the page-wide
+  // store filter is set to. 'All' means no filtering on that axis; the two filters combine (AND), so
+  // picking a location AND a type shows just that one row, either alone narrows one axis, and leaving
+  // both on 'All' shows everything (unfiltered, matching today's behavior).
+  const [dmGroupLocation, setDmGroupLocation] = useState('All');
+  const [dmGroupType, setDmGroupType] = useState('All');
+  // Cockpit Charting (14 Jul 2026, task #174/#207) — same independent-fetch pattern as liveSnapshot/
+  // liveFloorOcc above: its own accumulating table (daily_financial_snapshot), refreshed by its own
+  // daily cron (lib/pullCockpit.js), not part of the global month/range selector.
+  const [liveCockpit, setLiveCockpit] = useState(null); // { month, curve, avgDailyRate } or null if unavailable
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
@@ -1016,6 +1034,23 @@ export default function PortalV2Page() {
       .catch((err) => { debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err); setLiveFloorOcc(null); });
   };
 
+  // Cockpit Charting fetch — reads the accumulated daily_financial_snapshot rows via /api/cockpit (no
+  // live SiteLink calls; those only happen in lib/pullCockpit.js). Independent of every other live
+  // fetch, same reasoning as fetchSnapshot/fetchFloorOccupancy above.
+  const fetchCockpit = () => {
+    fetch('/api/cockpit')
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data || !data.configured) {
+          debugWarn('[portal-v2] /api/cockpit not configured yet — run `npm run pull:cockpit`. Cockpit Charting will show mock data.');
+          setLiveCockpit(null);
+          return;
+        }
+        setLiveCockpit({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate });
+      })
+      .catch((err) => { debugWarn('[portal-v2] /api/cockpit fetch failed.', err); setLiveCockpit(null); });
+  };
+
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
   // and is invoked by every state-changing action (nav clicks, filters, refresh).
   // Hooked here to also re-fetch live totals so a manual refresh pulls fresh data.
@@ -1052,6 +1087,7 @@ export default function PortalV2Page() {
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
       fetchSnapshot();
       fetchFloorOccupancy();
+      fetchCockpit();
     }
     const onDocClick = (e) => {
       if (storePopOpen || periodPopOpen) {
@@ -2517,6 +2553,33 @@ export default function PortalV2Page() {
       const dRows = haveData ? discountedRows : mockDiscounted;
       const gRows = haveData ? groupRows : mockGroups;
 
+      // Unit Groups — Stay & Re-Lease widget-local filters (14 Jul 2026, Michael: "condense... add a
+      // filter for that specific widget to filter by location and by type or both, all of them or
+      // none of them"). Separate from the page-wide store filter — this table alone can run into the
+      // thousands of rows across the whole portfolio (1300+ confirmed via npm run probe:dm-groupkey),
+      // so it needs its own narrower controls regardless of what the global store filter is set to.
+      // Options are built from gRows itself (not a hardcoded list) so they always match what's
+      // actually on the table; 'All' on either axis means no filtering on that axis, and the two
+      // combine with AND — pick both for one exact slice, either alone to narrow one axis, or leave
+      // both on 'All' to see everything (today's unfiltered behavior).
+      const dmLocations = ['All', ...new Set(gRows.map((r) => r.store))].sort((a, b) => a === 'All' ? -1 : b === 'All' ? 1 : a.localeCompare(b));
+      const dmTypes = ['All', ...new Set(gRows.map((r) => r.type))].sort((a, b) => a === 'All' ? -1 : b === 'All' ? 1 : a.localeCompare(b));
+      const gRowsFiltered = gRows.filter((r) => (dmGroupLocation === 'All' || r.store === dmGroupLocation) && (dmGroupType === 'All' || r.type === dmGroupType));
+      const selStyle = { fontFamily: 'inherit', fontSize: '12px', padding: '5px 8px', border: '1px solid #E4E7EC', borderRadius: '7px', background: '#fff', color: '#344054' };
+      const dmGroupFilterControls = (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <select value={dmGroupLocation} onChange={(e) => setDmGroupLocation(e.target.value)} style={selStyle}>
+            {dmLocations.map((l) => <option key={l} value={l}>{l === 'All' ? 'All locations' : l}</option>)}
+          </select>
+          <select value={dmGroupType} onChange={(e) => setDmGroupType(e.target.value)} style={selStyle}>
+            {dmTypes.map((t) => <option key={t} value={t}>{t === 'All' ? 'All types' : t}</option>)}
+          </select>
+          {(dmGroupLocation !== 'All' || dmGroupType !== 'All') && (
+            <button onClick={() => { setDmGroupLocation('All'); setDmGroupType('All'); }} style={{ fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, color: '#2757E8', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 2px' }}>Clear</button>
+          )}
+        </div>
+      );
+
       out.statCards = [
         { title: 'Discounted Units in Full Groups', live: haveData, tip: 'Report: RentalActivity (fully occupied (type, size) groups, Vacant = 0) cross-referenced against RentRoll per-unit dcStdRate vs dcRent.\nCount of occupied units currently billed BELOW their own standard rate, inside a group that\'s 100% occupied — a candidate to have its discount reviewed since the group no longer needs it to stay full.', tiles: [{ value: intFmt(dRows.length), label: 'Units', delta: null, dir: null }] },
         { title: 'Groups Analyzed', live: haveData, tip: 'Report: RentalActivity.\nCount of (store, unit type, unit size) groups across the selected stores this month.', tiles: [{ value: intFmt(gRows.length), label: '(store, type, size) groups', delta: null, dir: null }] },
@@ -2536,8 +2599,9 @@ export default function PortalV2Page() {
           ],
           rows: dRows.length ? dRows : [{ store: '(no discounted units found in fully occupied groups this month)', unit: null, type: null, area: null, stdRate: null, rent: null, discountPct: null }],
         },
-        { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 29, wide: true,
-          tip: 'Report: RentalActivity (units/occupied/vacant/standard rate/effective rate/gross potential, per (store, type, size) group); RentRoll (avg stay = mean of today − dLeaseDate across the group\'s currently-occupied units).\nEffective Rate = Σ occupiedRent ÷ Σ occupiedArea × 12 (concessions already reflected, unlike Standard Rate). Avg Stay does not include re-lease/vacancy-to-next-move-in duration — SiteLink does not expose that timing anywhere (see task #174 notes).',
+        { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true,
+          tip: 'Report: RentalActivity (units/occupied/vacant/standard rate/effective rate/gross potential, per (store, type, size) group); RentRoll (avg stay = mean of today − dLeaseDate across the group\'s currently-occupied units).\nEffective Rate = Σ occupiedRent ÷ Σ occupiedArea × 12 (concessions already reflected, unlike Standard Rate). Avg Stay does not include re-lease/vacancy-to-next-move-in duration — SiteLink does not expose that timing anywhere (see task #174 notes).\nUse the Location/Type filters above the table to narrow this down — portfolio-wide this table can run into the thousands of rows.',
+          headerExtra: dmGroupFilterControls,
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'type', label: 'Type', type: 'text' },
@@ -2548,9 +2612,78 @@ export default function PortalV2Page() {
             { key: 'effectiveRate', label: 'Effective Rate', type: 'money2', align: 'right' },
             { key: 'avgStay', label: 'Avg Stay (days)', type: 'int', align: 'right' },
           ],
-          rows: gRows.length ? gRows : [{ store: '(no groups found)', type: null, area: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
+          rows: gRowsFiltered.length ? gRowsFiltered : [{ store: '(no groups match this filter)', type: null, area: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
         },
       ];
+
+      // Facility Groups (task #174/#207, Michael's decision: group by manager/team — no such field
+      // existed anywhere before today, see supabase/schema.sql's `sites.manager` column and
+      // scripts/set-site-manager.js). Sites with no manager assigned yet fall into "Unassigned"
+      // rather than being silently dropped, so the page stays usable before every site is mapped.
+      // Sum-then-divide-once for occPct/rate (never average already-divided per-site rates —
+      // same rule as computeTotals() elsewhere on this page).
+      const groupsByManager = {};
+      for (const s of dmSites) {
+        const mgr = s.manager || 'Unassigned';
+        const g = (groupsByManager[mgr] ??= { manager: mgr, sites: 0, occ: 0, tot: 0, rent: 0, stdRentSum: 0, areaSum: 0 });
+        g.sites++; g.occ += s.occ || 0; g.tot += s.tot || 0; g.rent += s.rent || 0;
+        g.stdRentSum += s.stdRentSum || 0; g.areaSum += s.areaSum || 0;
+      }
+      const facilityGroupRows = Object.values(groupsByManager).map((g) => ({
+        manager: g.manager, sites: g.sites, occ: g.occ, tot: g.tot,
+        occPct: g.tot ? +(g.occ / g.tot * 100).toFixed(1) : 0,
+        rent: Math.round(g.rent), rate: g.areaSum ? R2(g.stdRentSum / g.areaSum * 12) : 0,
+      })).sort((a, b) => b.occPct - a.occPct);
+      const mockFacilityGroups = [
+        { manager: 'Jane Smith', sites: 6, occ: 1240, tot: 1360, occPct: 91.2, rent: 182000, rate: 28.4 },
+        { manager: 'Tom Lee', sites: 5, occ: 980, tot: 1120, occPct: 87.5, rent: 151000, rate: 26.9 },
+        { manager: 'Unassigned', sites: 18, occ: 3720, tot: 4180, occPct: 89.0, rent: 560000, rate: 27.6 },
+      ];
+      const fgRows = haveData ? facilityGroupRows : mockFacilityGroups;
+      if (haveData && fgRows.every((r) => r.manager === 'Unassigned')) debugWarn('[portal-v2] Facility Groups: no site has a manager assigned yet — run npm run set:site-manager.');
+      out.statCards.push({ title: 'Facility Groups', live: haveData, tip: 'sites.manager (set via npm run set:site-manager).\nCount of distinct manager/team groups across the selected stores — sites with no manager assigned yet count as one "Unassigned" group.', tiles: [{ value: intFmt(fgRows.length), label: 'Groups', delta: null, dir: null }] });
+      out.chartCards.push({ title: 'Occupancy % by Facility Group', tip: 'sites.manager grouping; OccupancyStatistics for occ/tot.\nΣ occupied units ÷ Σ total units × 100, per manager/team group.', el: <VBars items={fgRows.map((r) => ({ label: r.manager, value: r.occPct, disp: r.occPct.toFixed(1) + '%', color: thresholdColor(r.occPct) }))} opts={{ max: 100 }} /> });
+      out.tables.push({
+        title: 'Facility Groups — Comparison', live: haveData, pageSize: 20, wide: true,
+        tip: 'sites.manager (set via npm run set:site-manager); OccupancyStatistics (occ/tot); RentRoll (rent, rate).\nOne row per manager/team. Occupied % and Rate are sum-then-divide-once across every site in the group, never an average of already-divided per-site rates.',
+        columns: [
+          { key: 'manager', label: 'Manager / Team', type: 'text' },
+          { key: 'sites', label: 'Sites', type: 'int', align: 'right' },
+          { key: 'occ', label: 'Occupied Units', type: 'int', align: 'right' },
+          { key: 'tot', label: 'Total Units', type: 'int', align: 'right' },
+          { key: 'occPct', label: 'Occupied %', type: 'pct', align: 'right', color: 'threshold' },
+          { key: 'rent', label: 'Monthly Rent', type: 'money', align: 'right' },
+          { key: 'rate', label: 'Rate / ft²', type: 'money2', align: 'right' },
+        ],
+        rows: fgRows,
+      });
+
+      // Cockpit Charting (task #174/#207) — day-by-day cumulative income this month vs a 3-month-
+      // average pace line. See lib/pullCockpit.js/lib/cockpitData.js for why this needed a whole new
+      // daily pull (a real growing time series), unlike every other District Manager widget above,
+      // which reuse data that was already being pulled monthly.
+      const cockpitOk = !!(liveCockpit && liveCockpit.curve && liveCockpit.curve.length);
+      if (!cockpitOk) debugWarn('[portal-v2] Cockpit Charting rendering with mock data (no daily_financial_snapshot rows yet — run npm run pull:cockpit, then again daily to build up the curve).');
+      const cockpitCurve = cockpitOk ? liveCockpit.curve : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
+      const cockpitAvgRate = cockpitOk ? liveCockpit.avgDailyRate : 3400;
+      const cockpitActual = cockpitCurve.map((c) => c.total_charge);
+      const cockpitPace = cockpitCurve.map((_, i) => Math.round(cockpitAvgRate * (i + 1)));
+      const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
+      const cockpitToDate = cockpitActual[cockpitActual.length - 1] || 0;
+      const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
+      out.statCards.push({
+        title: 'Cockpit — Month to Date', live: cockpitOk,
+        tip: 'Report: FinancialSummary, pulled daily (lib/pullCockpit.js) — Σ charge, month start through the latest complete day, across all sites.\nCompared against the 3-month-average pace: avg(last 3 closed months\' total charge ÷ days in that month) × day-of-month.',
+        tiles: [
+          { value: money(cockpitToDate), label: 'Actual so far', delta: null, dir: null },
+          { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
+        ],
+      });
+      out.chartCards.push({
+        title: 'Cockpit — Income vs 3-Month Average Pace', wide: true,
+        tip: 'Report: FinancialSummary, pulled daily (lib/pullCockpit.js).\nActual = cumulative Σ charge from month start through each day. 3-month avg pace = avg(last 3 closed months\' total charge ÷ days in that month) × day-of-month — a straight reference line, not a real historical daily curve (no daily history existed before this feature).',
+        el: <LineChart series={[{ name: 'This month (cumulative)', color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
+      });
     }
 
     return out;
@@ -2997,7 +3130,7 @@ export default function PortalV2Page() {
                 {tables.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     {tables.map((t, ti) => (
-                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} />
+                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} headerExtra={t.headerExtra} />
                     ))}
                   </div>
                 )}

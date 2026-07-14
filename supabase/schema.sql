@@ -6,6 +6,12 @@
 create table if not exists sites (
   code text primary key, name text, lat numeric, lng numeric, active boolean default true
 );
+-- ADDED 14 Jul 2026 (task #174/#207, Michael: group Facility Groups by manager/team, not region) —
+-- no such field existed anywhere (not in any SiteLink report, not in this table). Nullable/free-text:
+-- populated by Michael directly (via Supabase table editor or scripts/set-site-manager.js), sites
+-- with no value yet fall into an "Unassigned" bucket in the Facility Groups view rather than being
+-- dropped, so the page is usable before every site has an assignment.
+alter table sites add column if not exists manager text;
 
 create table if not exists raw_report (
   id bigserial primary key,
@@ -131,3 +137,26 @@ create index if not exists unit_floor_status_lookup on unit_floor_status (site_c
 alter table unit_floor_status enable row level security;
 -- service-role only, same as raw_report -- the frontend never queries this directly, only via
 -- lib/floorOccupancy.js's aggregated output.
+
+-- ADDED 14 Jul 2026 (task #174/#207, Cockpit Charting — District Manager): DELIBERATELY an
+-- ACCUMULATING table, one row per site per calendar day, unlike snapshot_payload's single
+-- overwritten row. Cockpit's whole point is a day-by-day cumulative income-by-category line within
+-- the current month vs a 3-month-average pace line — that needs a real growing time series, not a
+-- live "as of right now" period query. Each day's row stores the MONTH-TO-DATE cumulative total as of
+-- that day (one FinancialSummary call per site per day, range = [month start, today]) — so the full
+-- daily curve builds up for free across the month from cheap, single-call-per-day snapshots, with no
+-- need to ever re-pull the same day twice or make N calls for N days. See lib/pullCockpit.js.
+create table if not exists daily_financial_snapshot (
+  id bigserial primary key,
+  site_code text references sites(code),
+  snapshot_date date not null,
+  total_charge numeric not null,
+  total_payment numeric not null,
+  categories jsonb not null default '[]'::jsonb,
+  pulled_at timestamptz default now(),
+  unique (site_code, snapshot_date)
+);
+create index if not exists daily_financial_snapshot_lookup on daily_financial_snapshot (snapshot_date);
+alter table daily_financial_snapshot enable row level security;
+-- service-role only, same as raw_report/autobill_daily -- the frontend never queries this directly,
+-- only via lib/pullCockpit.js's aggregated /api/cockpit output.

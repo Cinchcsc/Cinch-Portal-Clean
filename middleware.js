@@ -1,9 +1,9 @@
 // Task #202 (13 Jul 2026, Michael: "password protect the site so each individual puts their own
 // unique email and password into it"). Gates every page/API route behind a real Supabase Auth
 // session, EXCEPT:
-//   - /api/pull and /api/pull-snapshot — Vercel's own cron hits these directly with no browser/
-//     cookies at all; they're already protected by their own CRON_SECRET bearer-token check (see
-//     those route.js files). Gating them here too would just break the daily auto-update.
+//   - /api/pull, /api/pull-snapshot, and /api/pull-cockpit — Vercel's own cron hits these directly
+//     with no browser/cookies at all; they're already protected by their own CRON_SECRET bearer-token
+//     check (see those route.js files). Gating them here too would just break the daily auto-update.
 //   - /login and /auth/confirm — have to be reachable BEFORE a session exists (the login form itself,
 //     and the invite/reset-link landing route that's the very thing that ESTABLISHES a session).
 //     /set-password is deliberately NOT listed here: by the time a user reaches it, /auth/confirm has
@@ -20,7 +20,7 @@ import { NextResponse } from 'next/server';
 const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const CRON_PATHS = ['/api/pull', '/api/pull-snapshot'];
+const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit'];
 const PUBLIC_PATHS = ['/login', '/auth/confirm'];
 
 export async function middleware(request) {

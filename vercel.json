@@ -5,6 +5,7 @@
     { "path": "/api/pull?reports=insurance_roll,insurance_activity,lead_funnel,marketing", "schedule": "0 3 * * *" },
     { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "0 4 * * *" },
     { "path": "/api/pull?reports=true_revenue,rental_activity,discounts", "schedule": "0 5 * * *" },
-    { "path": "/api/pull-snapshot", "schedule": "0 6 * * *" }
+    { "path": "/api/pull-snapshot", "schedule": "0 6 * * *" },
+    { "path": "/api/pull-cockpit", "schedule": "0 7 * * *" }
   ]
 }
