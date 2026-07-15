@@ -2530,6 +2530,10 @@ export default function PortalV2Page() {
       // confirmed via a dedicated investigation; and "Cockpit Charting" (daily income-by-category vs
       // 3-month average) — needs a new DAILY financial pull, which lib/pullSnapshot.js doesn't do
       // today (only enquiries/move-ins are pulled at daily grain) — a genuinely separate, bigger lift.
+      // ADDED 15 Jul 2026 (Michael: "add the ones you think are important" — the remaining 7 of the
+      // twelve photographed widgets have no recoverable spec anywhere in this repo): "Watchdog —
+      // Occupancy Decline vs Last Month" and "Watchdog — Delinquency by Site", two NEW per-site
+      // watchlists built from data already pulled (livePrevSites + s.debtors) — see below.
       const dmSites = liveSites || [];
       const discountedRows = [];
       const groupRows = [];
@@ -2695,6 +2699,76 @@ export default function PortalV2Page() {
           rows: gRowsFiltered.length ? gRowsFiltered : [{ store: '(no groups match this filter)', typeArea: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
         },
       ];
+
+      // Two more DM widgets (added 15 Jul 2026, Michael: "add the ones you think are important" — of
+      // the twelve Qstrom-inspired widgets he originally photographed, only 5 were ever individually
+      // named anywhere in this codebase; the other 7 have no recoverable spec without the original
+      // screenshots, so these are two NEW, genuinely useful DM-scoped additions built entirely from
+      // data already pulled — no new SiteLink calls. Both surface a per-SITE view of numbers that
+      // today only exist as portfolio-wide aggregates elsewhere on this page: a DM needs to know WHICH
+      // store is sliding or WHICH store has a collections problem, not just the portfolio average.
+
+      // Occupancy Decline vs Last Month — reuses livePrevSites (same "vs last month" snapshot every
+      // other totals-row delta on this page already depends on), matched by store name like every
+      // other live/prev pairing in this file. Degrades gracefully (empty table, no LIVE badge) when
+      // livePrevSites isn't available yet, exactly like the delta ticks elsewhere.
+      const occDeclineHave = !!(haveData && livePrevSites);
+      const occDeclineRows = occDeclineHave ? dmSites.map((s) => {
+        const prev = livePrevSites.find((p) => p.name === s.name);
+        if (!prev) return null;
+        const curPct = s.occPC || 0, prevPct = prev.occPC || 0;
+        return { store: s.name, curPct, prevPct, change: R2(curPct - prevPct) };
+      }).filter(Boolean).sort((a, b) => a.change - b.change) : [];
+      const mockOccDecline = [
+        { store: 'Newmarket', curPct: 61.1, prevPct: 66.4, change: -5.3 },
+        { store: 'Enfield', curPct: 31.7, prevPct: 35.0, change: -3.3 },
+        { store: 'Bicester', curPct: 96.0, prevPct: 94.5, change: 1.5 },
+      ];
+      const occDeclineFinal = occDeclineHave ? occDeclineRows : mockOccDecline;
+      const sitesDecliningCount = occDeclineFinal.filter((r) => r.change < 0).length;
+
+      // Delinquency by Site — same ManagementSummary delinquent_30plus_* fields as the Financials
+      // page's portfolio-wide "Debtor Levels" stat card (lib/buildPayload.js's `debtors` object),
+      // just broken out per site and sorted worst-first instead of summed into one number.
+      const delinquencyRows = dmSites.filter((s) => s.debtors && (s.debtors.accounts > 0 || s.debtors.total > 0))
+        .map((s) => ({
+          store: s.name, accounts: s.debtors.accounts || 0, total: s.debtors.total || 0,
+          tenantPct: s.debtors.tenantPct || 0, rentRollPct: s.debtors.rentRollPct || 0,
+        }))
+        .sort((a, b) => b.rentRollPct - a.rentRollPct);
+      const mockDelinquency = [
+        { store: 'Sittingbourne', accounts: 14, total: 3200, tenantPct: 4.2, rentRollPct: 3.1 },
+        { store: 'Letchworth', accounts: 9, total: 2100, tenantPct: 2.8, rentRollPct: 2.0 },
+      ];
+      const delinquencyFinal = haveData ? delinquencyRows : mockDelinquency;
+
+      out.statCards.push(
+        { title: 'Sites Losing Occupancy', live: occDeclineHave, tip: 'sites.occPC, current vs prior month (same snapshot every "vs last month" delta on this page uses).\nCount of sites whose occupancy % fell month over month.', tiles: [{ value: intFmt(sitesDecliningCount), label: 'Sites declining', delta: null, dir: null }] },
+        { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card.\nCount of sites with at least one 30+ day delinquent account.', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
+      );
+      out.tables.push(
+        { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, wide: true,
+          tip: 'sites.occPC, current vs prior month.\nSorted worst decline first; a positive Change means occupancy improved, not worsened.',
+          columns: [
+            { key: 'store', label: 'Store', type: 'text' },
+            { key: 'curPct', label: 'Occupancy % (This Month)', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'prevPct', label: 'Occupancy % (Prior Month)', type: 'pct', align: 'right' },
+            { key: 'change', label: 'Change (pts)', type: 'pct', align: 'right', color: 'delta' },
+          ],
+          rows: occDeclineFinal.length ? occDeclineFinal : [{ store: '(no prior-month data available yet — run npm run pull again next month)', curPct: null, prevPct: null, change: null }],
+        },
+        { title: 'Watchdog — Delinquency by Site', live: haveData, pageSize: 20, wide: true,
+          tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card, broken out per site.\nSorted worst Rent Roll % first.',
+          columns: [
+            { key: 'store', label: 'Store', type: 'text' },
+            { key: 'accounts', label: 'Delinquent Accounts', type: 'int', align: 'right' },
+            { key: 'total', label: 'Delinquent Balance', type: 'money', align: 'right' },
+            { key: 'tenantPct', label: '% of Tenants', type: 'pct', align: 'right' },
+            { key: 'rentRollPct', label: '% of Rent Roll', type: 'pct', align: 'right' },
+          ],
+          rows: delinquencyFinal.length ? delinquencyFinal : [{ store: '(no delinquent accounts this month)', accounts: null, total: null, tenantPct: null, rentRollPct: null }],
+        },
+      );
 
       // Cockpit Charting (task #174/#207) — day-by-day cumulative income this month vs a 3-month-
       // average pace line. See lib/pullCockpit.js/lib/cockpitData.js for why this needed a whole new
