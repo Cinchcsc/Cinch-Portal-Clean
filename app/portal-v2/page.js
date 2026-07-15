@@ -817,6 +817,13 @@ export default function PortalV2Page() {
   const [customWidgets, setCustomWidgets] = useState([]);
   const [updated, setUpdated] = useState('just now');
   const [spin, setSpin] = useState(false);
+  // lastPullAt (15 Jul 2026, Michael: "check if the auto updates are working a different way, so we
+  // can be certain") — the REAL last-successful-cron timestamp (portal_payload.generated_at, written
+  // by lib/pull.js only when a pull actually completes), as opposed to `updated` above which is a
+  // purely cosmetic "just now" the Refresh button sets on itself regardless of whether any new data
+  // came back. This gives anyone looking at the portal a genuine, at-a-glance answer to "did the
+  // overnight cron actually run" with no script/dashboard-digging required.
+  const [lastPullAt, setLastPullAt] = useState(null);
 
   // Live data (dashboard KPI row + Rates per ft² table only so far). Everything else on every
   // page continues to read from the RAW_STORES-derived mock data above.
@@ -969,6 +976,8 @@ export default function PortalV2Page() {
         const months = Array.isArray(data.months) ? data.months : null;
         setLiveMonths(months);
         setLiveHistory(Array.isArray(data.history) ? data.history : null);
+        // Real cron timestamp, not the client-side "just now" — see lastPullAt's declaration above.
+        if (data.generated_at) setLastPullAt(data.generated_at);
 
         if (months && months.length) {
           if (!rangeInitialized.current) {
@@ -2826,6 +2835,22 @@ export default function PortalV2Page() {
   const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthLbl = (i) => { const [y, m] = monthKeyOf(i).split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${y}`; };
   const rangeLabel = monthFrom === monthTo ? monthLbl(monthTo) : monthLbl(monthFrom) + ' → ' + monthLbl(monthTo);
+  // Real "did the cron actually run" label (15 Jul 2026) — see lastPullAt's declaration for why this
+  // exists alongside the cosmetic `updated` state. Under 60 min: relative ("42m ago"). Under 36h:
+  // hours, so a stuck/failed overnight cron reads as a big, obvious "14h ago" instead of quietly
+  // rolling over to a vague day count. Beyond that: an absolute date+time, since "3d ago" alone
+  // would bury exactly how stale the portal actually is.
+  const lastPullLabel = (() => {
+    if (!lastPullAt) return null;
+    const ms = Date.now() - new Date(lastPullAt).getTime();
+    if (ms < 0) return 'just now';
+    const mins = Math.round(ms / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 36) return `${hrs}h ago`;
+    return new Date(lastPullAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  })();
   // FIXED 8 Jul 2026: fs.length was always the mock STORES count (27), even in live mode — with 29
   // real sites now configured, the subtitle would keep showing the stale "27" regardless. Can't
   // reuse buildPage()'s own `liveSites` const here — this block is a SEPARATE, outer scope (that
@@ -3058,6 +3083,15 @@ export default function PortalV2Page() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: '#08875D', background: '#E7F6EF', borderRadius: '8px', padding: '6px 10px', fontWeight: 600 }}>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#08875D' }} />Live data
               </div>
+              {lastPullLabel && (
+                <span
+                  title="When the daily auto-update (SiteLink pull) last actually completed — not when you last refreshed this page."
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><circle cx={12} cy={12} r={9} stroke="#98A2B3" strokeWidth={2} /><path d="M12 7v5l3 2" stroke="#98A2B3" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  Auto-updated {lastPullLabel}
+                </span>
+              )}
               <span style={{ fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}>Updated {updated}</span>
               <button onClick={() => { setSpin(true); setUpdated('just now'); reload(); setTimeout(() => setSpin(false), 650); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', animation: spin ? 'spin .65s linear' : 'none' }}>
