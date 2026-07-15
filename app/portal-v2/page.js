@@ -854,6 +854,8 @@ export default function PortalV2Page() {
   // both on 'All' shows everything (unfiltered, matching today's behavior).
   const [dmGroupLocation, setDmGroupLocation] = useState('All');
   const [dmGroupType, setDmGroupType] = useState('All');
+  const [dmWatchLocation, setDmWatchLocation] = useState('All');
+  const [dmWatchType, setDmWatchType] = useState('All');
   // Cockpit Charting (14 Jul 2026, task #174/#207) — same independent-fetch pattern as liveSnapshot/
   // liveFloorOcc above: its own accumulating table (daily_financial_snapshot), refreshed by its own
   // daily cron (lib/pullCockpit.js), not part of the global month/range selector.
@@ -2580,6 +2582,27 @@ export default function PortalV2Page() {
         </div>
       );
 
+      // Watchdog — Discounted Units widget-local filters (15 Jul 2026, Michael: "adda filter to watch
+      // dog as well same on the unit groups one") — same Location/Type/AND/Clear pattern as Unit
+      // Groups — Stay & Re-Lease above, but built off dRows (its own store/type shape) and its own
+      // state, since the two tables can be filtered independently.
+      const dmWatchLocations = ['All', ...new Set(dRows.map((r) => r.store))].sort((a, b) => a === 'All' ? -1 : b === 'All' ? 1 : a.localeCompare(b));
+      const dmWatchTypes = ['All', ...new Set(dRows.map((r) => r.type))].sort((a, b) => a === 'All' ? -1 : b === 'All' ? 1 : a.localeCompare(b));
+      const dRowsFiltered = dRows.filter((r) => (dmWatchLocation === 'All' || r.store === dmWatchLocation) && (dmWatchType === 'All' || r.type === dmWatchType));
+      const dmWatchFilterControls = (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <select value={dmWatchLocation} onChange={(e) => setDmWatchLocation(e.target.value)} style={selStyle}>
+            {dmWatchLocations.map((l) => <option key={l} value={l}>{l === 'All' ? 'All locations' : l}</option>)}
+          </select>
+          <select value={dmWatchType} onChange={(e) => setDmWatchType(e.target.value)} style={selStyle}>
+            {dmWatchTypes.map((t) => <option key={t} value={t}>{t === 'All' ? 'All types' : t}</option>)}
+          </select>
+          {(dmWatchLocation !== 'All' || dmWatchType !== 'All') && (
+            <button onClick={() => { setDmWatchLocation('All'); setDmWatchType('All'); }} style={{ fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, color: '#2757E8', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 2px' }}>Clear</button>
+          )}
+        </div>
+      );
+
       out.statCards = [
         { title: 'Discounted Units in Full Groups', live: haveData, tip: 'Report: RentalActivity (fully occupied (type, size) groups, Vacant = 0) cross-referenced against RentRoll per-unit dcStdRate vs dcRent.\nCount of occupied units currently billed BELOW their own standard rate, inside a group that\'s 100% occupied — a candidate to have its discount reviewed since the group no longer needs it to stay full.', tiles: [{ value: intFmt(dRows.length), label: 'Units', delta: null, dir: null }] },
         { title: 'Groups Analyzed', live: haveData, tip: 'Report: RentalActivity.\nCount of (store, unit type, unit size) groups across the selected stores this month.', tiles: [{ value: intFmt(gRows.length), label: '(store, type, size) groups', delta: null, dir: null }] },
@@ -2587,7 +2610,8 @@ export default function PortalV2Page() {
       out.chartCards = [];
       out.tables = [
         { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true,
-          tip: 'Report: RentalActivity (identifies groups with Vacant = 0); RentRoll (dcStdRate vs dcRent per unit).\nA unit qualifies when its (store, type, size) group is 100% occupied AND the unit\'s actual rent (dcRent) is below that unit\'s own standard rate (dcStdRate) — i.e. a discount that\'s arguably no longer needed to keep the group full.',
+          tip: 'Report: RentalActivity (identifies groups with Vacant = 0); RentRoll (dcStdRate vs dcRent per unit).\nA unit qualifies when its (store, type, size) group is 100% occupied AND the unit\'s actual rent (dcRent) is below that unit\'s own standard rate (dcStdRate) — i.e. a discount that\'s arguably no longer needed to keep the group full.\nUse the Location/Type filters above the table to narrow this down.',
+          headerExtra: dmWatchFilterControls,
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'unit', label: 'Unit', type: 'text' },
@@ -2597,7 +2621,7 @@ export default function PortalV2Page() {
             { key: 'rent', label: 'Actual Rent', type: 'money2', align: 'right' },
             { key: 'discountPct', label: 'Discount %', type: 'pct', align: 'right' },
           ],
-          rows: dRows.length ? dRows : [{ store: '(no discounted units found in fully occupied groups this month)', unit: null, type: null, area: null, stdRate: null, rent: null, discountPct: null }],
+          rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, type: null, area: null, stdRate: null, rent: null, discountPct: null }],
         },
         { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true,
           tip: 'Report: RentalActivity (units/occupied/vacant/standard rate/effective rate/gross potential, per (store, type, size) group); RentRoll (avg stay = mean of today − dLeaseDate across the group\'s currently-occupied units).\nEffective Rate = Σ occupiedRent ÷ Σ occupiedArea × 12 (concessions already reflected, unlike Standard Rate). Avg Stay does not include re-lease/vacancy-to-next-move-in duration — SiteLink does not expose that timing anywhere (see task #174 notes).\nUse the Location/Type filters above the table to narrow this down — portfolio-wide this table can run into the thousands of rows.',
