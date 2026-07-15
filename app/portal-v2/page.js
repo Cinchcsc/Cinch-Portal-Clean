@@ -827,6 +827,10 @@ export default function PortalV2Page() {
   // using the portal is effectively impossible. secretOpen shows the full-screen overlay once the
   // whole word is typed in order; see the keydown handler in the effect below for the matching logic.
   const [secretOpen, setSecretOpen] = useState(false);
+  // Second Easter egg (15 Jul 2026, Michael: moved the "Jesus is Truly Loves You" line to its own
+  // separate typed-word trigger, "marty") — same mechanism as secretOpen/"benson" above, just a
+  // second independent word tracked in parallel and its own text-only overlay (no photo).
+  const [martyOpen, setMartyOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState({});
   const [region, setRegion] = useState('All');
@@ -908,6 +912,8 @@ export default function PortalV2Page() {
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
   const secretIdx = useRef(0);   // Easter egg: how many letters of SECRET_WORD typed correctly so far, in order — a ref (not state) since the keydown handler below needs the latest value synchronously between keystrokes, not on next render
   const secretResetTimer = useRef(null);
+  const martyIdx = useRef(0);   // Second Easter egg — same pattern as secretIdx, tracked independently for MARTY_WORD
+  const martyResetTimer = useRef(null);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
 
   // Index <-> "YYYY-MM" key helpers (index 0 = Jan 2025; negative indices reach back into real stored
@@ -1156,11 +1162,16 @@ export default function PortalV2Page() {
     // wrong letter resets to 0 UNLESS that wrong letter happens to be the word's own first letter (so
     // "bebenson" still works — it doesn't just die because of one restart). Skips entirely while
     // focus is in a real input/textarea/select so normal typing elsewhere on the page can't interfere.
+    // MARTY_WORD (added 15 Jul 2026, Michael: put "Jesus is Truly Loves You" behind its own separate
+    // command) tracked in parallel with SECRET_WORD via the exact same matching rule, just its own
+    // idx/reset-timer refs so the two words don't interfere with each other's progress.
     const SECRET_WORD = 'benson';
+    const MARTY_WORD = 'marty';
     const onSecretKeydown = (e) => {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
       clearTimeout(secretResetTimer.current);
       secretResetTimer.current = setTimeout(() => { secretIdx.current = 0; }, 2000);
       if (key === SECRET_WORD[secretIdx.current]) {
@@ -1173,12 +1184,26 @@ export default function PortalV2Page() {
       } else {
         secretIdx.current = key === SECRET_WORD[0] ? 1 : 0;
       }
+
+      clearTimeout(martyResetTimer.current);
+      martyResetTimer.current = setTimeout(() => { martyIdx.current = 0; }, 2000);
+      if (key === MARTY_WORD[martyIdx.current]) {
+        martyIdx.current++;
+        if (martyIdx.current === MARTY_WORD.length) {
+          martyIdx.current = 0;
+          clearTimeout(martyResetTimer.current);
+          setMartyOpen(true);
+        }
+      } else {
+        martyIdx.current = key === MARTY_WORD[0] ? 1 : 0;
+      }
     };
     document.addEventListener('keydown', onSecretKeydown);
 
     return () => {
       clearTimeout(safety);
       clearTimeout(secretResetTimer.current);
+      clearTimeout(martyResetTimer.current);
       document.removeEventListener('click', onDocClick, true);
       document.removeEventListener('keydown', onSecretKeydown);
     };
@@ -3487,8 +3512,19 @@ export default function PortalV2Page() {
             <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', maxWidth: '640px', width: '100%' }}>
               <div style={{ fontFamily: 'inherit', fontSize: '15px', fontWeight: 700, color: '#fff', textAlign: 'center', letterSpacing: '.02em' }}>Made by the Greatest to Ever Do It Michael Liam Kurschat</div>
               <img src="/og-fallback.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
-              <div style={{ fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, color: 'rgba(255,255,255,.85)', textAlign: 'center' }}>Jesus is Truly Loves You</div>
               <button onClick={() => setSecretOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
+            </div>
+          </div>
+        )}
+
+        {/* Second Easter egg (15 Jul 2026, Michael: moved the "Jesus is Truly Loves You" line here,
+            under its own separate typed-word trigger) — same plain-letter Konami-style matching as
+            "benson" above, just a different word and a text-only overlay (no photo). */}
+        {martyOpen && (
+          <div onClick={() => setMartyOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', maxWidth: '480px', width: '100%' }}>
+              <div style={{ fontFamily: 'inherit', fontSize: '20px', fontWeight: 600, color: '#fff', textAlign: 'center' }}>Jesus is Truly Loves You</div>
+              <button onClick={() => setMartyOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         )}
