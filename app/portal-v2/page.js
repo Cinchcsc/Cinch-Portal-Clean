@@ -2536,21 +2536,57 @@ export default function PortalV2Page() {
       for (const s of dmSites) {
         const groups = s.rentalActivityByTypeSize || [];
         const unitsAtSite = s.unitRows || [];
+        // FIXED 15 Jul 2026 (Michael: "too much going on... saw duplicate... units in the same
+        // store"): RentalActivity is one row per (Type, UnitSize), but RentRoll's per-unit rows only
+        // ever carry ROUNDED AREA (no separate width/length columns — see reportMap.js's unitRows
+        // comment). Two distinct UnitSize rows that happen to round to the same area (e.g. two sizes
+        // a fraction of a sqft apart) collapse onto the SAME `${type}|${roundedArea}` key, but were
+        // still being looped over as two separate groups — so a unit matching that key got pushed to
+        // the Watchdog table once per colliding group (confirmed via scripts/probe-dm-widget-
+        // duplicates.js). Merging same-key groups FIRST guarantees each key is processed exactly once
+        // per site; vacant/totalUnits are summed across the colliding rows so "fully occupied"
+        // reflects the true combined vacancy for that rounded-area bucket (RentRoll units can't be
+        // told apart between the colliding sizes anyway), and rate fields are unit-count-weighted
+        // rather than blindly averaged.
+        const merged = new Map();
         for (const g of groups) {
           const key = `${g.type}|${Math.round(g.area)}`;
+          const m = merged.get(key);
+          if (!m) {
+            merged.set(key, {
+              type: g.type, area: Math.round(g.area), totalUnits: g.totalUnits, occupied: g.occupied, vacant: g.vacant,
+              grossPotential: g.grossPotential,
+              stdRateWeighted: g.standardRate * g.totalUnits, stdRateUnits: g.totalUnits,
+              effRateWeighted: g.occupiedDollarPerArea * g.occupied, effRateUnits: g.occupied,
+            });
+          } else {
+            m.totalUnits += g.totalUnits; m.occupied += g.occupied; m.vacant += g.vacant; m.grossPotential += g.grossPotential;
+            m.stdRateWeighted += g.standardRate * g.totalUnits; m.stdRateUnits += g.totalUnits;
+            m.effRateWeighted += g.occupiedDollarPerArea * g.occupied; m.effRateUnits += g.occupied;
+          }
+        }
+        // Dedupe by unit name too — belt-and-braces against RentRoll itself ever returning two rows
+        // for the same physical unit in one pull (see probe-dm-widget-duplicates.js's separate
+        // RentRoll-level check); scoped per-site since unit names aren't unique across stores.
+        const seenUnits = new Set();
+        for (const [key, g] of merged) {
           const unitsInGroup = unitsAtSite.filter((u) => u.groupKey === key);
           const stays = unitsInGroup.map((u) => u.leaseDays).filter((d) => d != null);
           const avgStay = stays.length ? Math.round(stays.reduce((a, d) => a + d, 0) / stays.length) : null;
           groupRows.push({
-            store: s.name, type: g.type, area: Math.round(g.area), totalUnits: g.totalUnits, occupied: g.occupied,
-            vacant: g.vacant, occPct: g.occPct, standardRate: g.standardRate, effectiveRate: g.occupiedDollarPerArea,
+            store: s.name, type: g.type, area: g.area, typeArea: `${g.type} · ${g.area} ft²`,
+            totalUnits: g.totalUnits, occupied: g.occupied,
+            vacant: g.vacant, occPct: g.totalUnits ? +(g.occupied / g.totalUnits * 100).toFixed(1) : 0,
+            standardRate: g.stdRateUnits ? R2(g.stdRateWeighted / g.stdRateUnits) : 0,
+            effectiveRate: g.effRateUnits ? R2(g.effRateWeighted / g.effRateUnits) : 0,
             grossPotential: g.grossPotential, avgStay,
           });
           if (g.totalUnits > 0 && g.vacant === 0) {
             for (const u of unitsInGroup) {
-              if (u.stdRate > 0 && u.rent < u.stdRate) {
+              if (u.stdRate > 0 && u.rent < u.stdRate && !seenUnits.has(u.unit)) {
+                seenUnits.add(u.unit);
                 discountedRows.push({
-                  store: s.name, unit: u.unit, type: u.type, area: u.area,
+                  store: s.name, unit: u.unit, type: u.type, area: u.area, typeArea: `${u.type} · ${u.area} ft²`,
                   stdRate: u.stdRate, rent: u.rent, discountPct: R2((u.stdRate - u.rent) / u.stdRate * 100),
                 });
               }
@@ -2564,12 +2600,12 @@ export default function PortalV2Page() {
       const haveData = !!liveSites;
       if (!haveData) debugWarn('[portal-v2] District Manager page rendering with mock data (no live unitRows/rentalActivityByTypeSize yet — run npm run pull).');
       const mockDiscounted = [
-        { store: 'Bicester', unit: 'OFF3', type: 'Self Storage', area: 50, stdRate: 62.50, rent: 48.00, discountPct: 23.2 },
-        { store: 'Newbury', unit: 'A114', type: 'Self Storage', area: 75, stdRate: 88.00, rent: 70.40, discountPct: 20.0 },
+        { store: 'Bicester', unit: 'OFF3', type: 'Self Storage', area: 50, typeArea: 'Self Storage · 50 ft²', stdRate: 62.50, rent: 48.00, discountPct: 23.2 },
+        { store: 'Newbury', unit: 'A114', type: 'Self Storage', area: 75, typeArea: 'Self Storage · 75 ft²', stdRate: 88.00, rent: 70.40, discountPct: 20.0 },
       ];
       const mockGroups = [
-        { store: 'Bicester', type: 'Self Storage', area: 50, totalUnits: 40, occupied: 40, vacant: 0, occPct: 100, standardRate: 30.5, effectiveRate: 27.8, grossPotential: 61000, avgStay: 412 },
-        { store: 'Newbury', type: 'Drive Up', area: 100, totalUnits: 22, occupied: 20, vacant: 2, occPct: 90.9, standardRate: 24.0, effectiveRate: 22.1, grossPotential: 52800, avgStay: 305 },
+        { store: 'Bicester', type: 'Self Storage', area: 50, typeArea: 'Self Storage · 50 ft²', totalUnits: 40, occupied: 40, vacant: 0, occPct: 100, standardRate: 30.5, effectiveRate: 27.8, grossPotential: 61000, avgStay: 412 },
+        { store: 'Newbury', type: 'Drive Up', area: 100, typeArea: 'Drive Up · 100 ft²', totalUnits: 22, occupied: 20, vacant: 2, occPct: 90.9, standardRate: 24.0, effectiveRate: 22.1, grossPotential: 52800, avgStay: 305 },
       ];
       const dRows = haveData ? discountedRows : mockDiscounted;
       const gRows = haveData ? groupRows : mockGroups;
@@ -2631,31 +2667,32 @@ export default function PortalV2Page() {
         { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true,
           tip: 'Report: RentalActivity (fully occupied groups); RentRoll (standard rate vs actual rent).\nA unit qualifies when its group is 100% occupied and billed below its own standard rate.\nUse the filters above to narrow this down.',
           headerExtra: dmWatchFilterControls,
+          // CONDENSED 15 Jul 2026 (Michael: "too much going on"): Type + Area merged into one "Unit
+          // Type" column (e.g. "Self Storage · 50 ft²") — same information, one less column to scan.
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'unit', label: 'Unit', type: 'text' },
-            { key: 'type', label: 'Type', type: 'text' },
-            { key: 'area', label: 'Area (ft²)', type: 'int', align: 'right' },
+            { key: 'typeArea', label: 'Unit Type', type: 'text' },
             { key: 'stdRate', label: 'Standard Rate', type: 'money2', align: 'right' },
             { key: 'rent', label: 'Actual Rent', type: 'money2', align: 'right' },
             { key: 'discountPct', label: 'Discount %', type: 'pct', align: 'right' },
           ],
-          rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, type: null, area: null, stdRate: null, rent: null, discountPct: null }],
+          rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, typeArea: null, stdRate: null, rent: null, discountPct: null }],
         },
         { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true,
           tip: 'Report: RentalActivity (units, occupancy, rates); RentRoll (avg stay = days since move-in).\nEffective Rate reflects concessions; Standard Rate doesn\'t. Avg Stay excludes re-lease/vacancy time (not tracked by SiteLink).\nUse the filters above to narrow this down.',
           headerExtra: dmGroupFilterControls,
+          // CONDENSED 15 Jul 2026: same Type+Area merge as the Watchdog table above.
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
-            { key: 'type', label: 'Type', type: 'text' },
-            { key: 'area', label: 'Area (ft²)', type: 'int', align: 'right' },
+            { key: 'typeArea', label: 'Unit Type', type: 'text' },
             { key: 'totalUnits', label: 'Units', type: 'int', align: 'right' },
             { key: 'occPct', label: 'Occupied %', type: 'pct', align: 'right', color: 'threshold' },
             { key: 'standardRate', label: 'Standard Rate', type: 'money2', align: 'right' },
             { key: 'effectiveRate', label: 'Effective Rate', type: 'money2', align: 'right' },
             { key: 'avgStay', label: 'Avg Stay (days)', type: 'int', align: 'right' },
           ],
-          rows: gRowsFiltered.length ? gRowsFiltered : [{ store: '(no groups match this filter)', type: null, area: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
+          rows: gRowsFiltered.length ? gRowsFiltered : [{ store: '(no groups match this filter)', typeArea: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
         },
       ];
 

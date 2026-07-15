@@ -28,6 +28,7 @@
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",
     "probe:dm-groupkey": "node --env-file=.env scripts/probe-dm-groupkey-mismatch.js",
+    "probe:dm-duplicates": "node --env-file=.env scripts/probe-dm-widget-duplicates.js",
     "test:discounts": "node scripts/test-discounts-parser.mjs"
   },
   "dependencies": {
