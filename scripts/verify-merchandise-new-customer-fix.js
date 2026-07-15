@@ -6,13 +6,22 @@
 // like "Business Bundle" [a service package] and "MAILBOX" [likely a unit-type charge, not a
 // product, and tiny either way]).
 //
-// This computes the CANDIDATE fix properly: sum Amount for MERCH_DESCS rows where dMovedIn falls in
-// the current month (i.e. billed to a customer who moved in this month), portfolio-wide, divided by
-// move-ins. Compare the result to legacy's £1.12 -- if close, this confirms the formula and field
-// names are right and it's safe to wire into reportMap.js/buildPayload.js/page.js for real.
-// Run:  cd cinch-portal-clean && node --env-file=.env scripts/verify-merchandise-new-customer-fix.js
-import { callCustomReport, extractRows } from '../lib/sitelink.js';
-import { callReport } from '../lib/sitelink.js';
+// UPDATED 15 Jul 2026 (Michael: "would it help if i got june merchper new cust"): YES -- the only
+// data point so far was July, a partial/MTD month, so there was no way to tell a real formula
+// mismatch apart from a mid-month timing artifact (e.g. move-ins counted immediately but
+// merchandise transactions batched/invoiced with a lag). Added a month argument so this can run
+// against a COMPLETE, CLOSED month (June) instead of always defaulting to the live current month.
+// Also now prints candidates against BOTH move-ins and total occupied units as denominators, plus
+// the FinancialSummary-based merchandise total (the one already confirmed accurate for the
+// Merchandise Sales card) alongside the True-Revenue-based one, so all 4 combinations tried so far
+// are visible side by side for whichever month you give it.
+//
+// Run (defaults to current month):
+//   cd cinch-portal-clean && node --env-file=.env scripts/verify-merchandise-new-customer-fix.js
+// Run (a specific closed month, e.g. June 2026):
+//   node --env-file=.env scripts/verify-merchandise-new-customer-fix.js 2026-06
+import { callCustomReport, extractRows, callReport } from '../lib/sitelink.js';
+import { pullReport } from '../lib/reportMap.js';
 import { checkPullLock } from '../lib/pullLock.js';
 
 const lock = await checkPullLock();
@@ -47,33 +56,59 @@ const num = (row, ...keys) => {
 const isBlankDate = (v) => v === undefined || v === null || v === '' || v === '0001-01-01T00:00:00';
 
 const now = new Date();
-const start = new Date(now.getFullYear(), now.getMonth(), 1);
+const monthArg = process.argv[2]; // optional YYYY-MM
+let start, end, monthLabel;
+if (monthArg) {
+  const [y, m] = monthArg.split('-').map(Number);
+  start = new Date(y, m - 1, 1);
+  const fullMonthEnd = new Date(y, m, 0, 23, 59, 59);
+  const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+  end = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
+  monthLabel = monthArg + (isCurrentMonth ? ' (current, partial)' : ' (closed, complete)');
+} else {
+  start = new Date(now.getFullYear(), now.getMonth(), 1);
+  end = now;
+  monthLabel = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')} (current, partial)`;
+}
 
-let allMerchTotal = 0, newCustMerchTotal = 0, moveInsTotal = 0;
+let allMerchTR = 0, newCustMerchTR = 0, allMerchFin = 0, moveInsTotal = 0, occTotal = 0;
 
 for (const [loc, name] of Object.entries(NAMES)) {
   try {
-    const { raw } = await callCustomReport(781861, loc, start, now);
+    const { raw } = await callCustomReport(781861, loc, start, end);
     const rows = extractRows(raw);
     const merchRows = rows.filter((r) => MERCH_DESCS.has(String(r.ChargeDesc ?? '').trim()));
     const allMerch = merchRows.reduce((a, r) => a + num(r, 'Amount'), 0);
     const newCustMerch = merchRows
-      .filter((r) => { const mv = r.dMovedIn; if (isBlankDate(mv)) return false; const d = new Date(mv); return d >= start && d <= now; })
+      .filter((r) => { const mv = r.dMovedIn; if (isBlankDate(mv)) return false; const d = new Date(mv); return d >= start && d <= end; })
       .reduce((a, r) => a + num(r, 'Amount'), 0);
 
-    const { rows: mioRows } = await callReport('MoveInsAndMoveOuts', loc, start, now);
+    const { rows: mioRows } = await callReport('MoveInsAndMoveOuts', loc, start, end);
     const moveIns = mioRows.length;
 
-    allMerchTotal += allMerch; newCustMerchTotal += newCustMerch; moveInsTotal += moveIns;
-    process.stderr.write(`  ${loc} ${name}: all-merch £${allMerch.toFixed(2)}, new-cust-merch £${newCustMerch.toFixed(2)}, move-ins ${moveIns}\n`);
+    const { data: finData } = await pullReport('financial', loc, start, end);
+    const finMerch = (finData.categories || []).filter((c) => c.category === 'POS').reduce((a, c) => a + (c.charge || 0), 0);
+
+    const { data: occData } = await pullReport('occupancy', loc, start, end);
+    const occ = occData.occupied_units || 0;
+
+    allMerchTR += allMerch; newCustMerchTR += newCustMerch; allMerchFin += finMerch; moveInsTotal += moveIns; occTotal += occ;
+    process.stderr.write(`  ${loc} ${name}: TR-merch £${allMerch.toFixed(2)}, new-cust £${newCustMerch.toFixed(2)}, Fin-merch £${finMerch.toFixed(2)}, move-ins ${moveIns}, occ ${occ}\n`);
   } catch (e) {
     console.error(`  ${loc}: FAILED — ${e.message}`);
   }
 }
 
-console.log(`\nPortfolio (${Object.keys(NAMES).length} sites, Bedford/Paulton/Exeter excluded):`);
-console.log(`  Move-ins: ${moveInsTotal}`);
-console.log(`  All-customer merch revenue (retail SKUs only): £${allMerchTotal.toFixed(2)}`);
-console.log(`  New-customer-only merch revenue (dMovedIn this month): £${newCustMerchTotal.toFixed(2)}`);
-console.log(`  CANDIDATE: new-customer merch ÷ move-ins = £${(newCustMerchTotal / moveInsTotal).toFixed(2)}  <- compare to legacy's £1.12`);
+console.log(`\nMonth: ${monthLabel}`);
+console.log(`Portfolio (${Object.keys(NAMES).length} sites, Bedford/Paulton/Exeter excluded):`);
+console.log(`  Move-ins: ${moveInsTotal}, Occupied units: ${occTotal}`);
+console.log(`  Merchandise total via FinancialSummary POS category (matches Merchandise Sales card): £${allMerchFin.toFixed(2)}`);
+console.log(`  Merchandise total via True Revenue retail-SKU rows: £${allMerchTR.toFixed(2)}`);
+console.log(`  New-customer-only merch (dMovedIn this month, True Revenue rows): £${newCustMerchTR.toFixed(2)}`);
+console.log(`\n  Candidate A — FinancialSummary merch ÷ move-ins:        £${(allMerchFin / moveInsTotal).toFixed(2)}`);
+console.log(`  Candidate B — FinancialSummary merch ÷ occupied units:  £${(allMerchFin / occTotal).toFixed(2)}`);
+console.log(`  Candidate C — True Revenue merch ÷ move-ins:            £${(allMerchTR / moveInsTotal).toFixed(2)}`);
+console.log(`  Candidate D — True Revenue merch ÷ occupied units:      £${(allMerchTR / occTotal).toFixed(2)}`);
+console.log(`  Candidate E — new-customer-only merch ÷ move-ins:       £${(newCustMerchTR / moveInsTotal).toFixed(2)}`);
+console.log(`\nCompare all 5 to legacy's own "Merchandise Income per New Customer" figure for THIS SAME MONTH (check portal.cinchstorage.co.uk/ancillaries/ with the date range set to this month).`);
 process.exit(0);
