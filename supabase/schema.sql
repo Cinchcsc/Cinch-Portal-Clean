@@ -6,12 +6,12 @@
 create table if not exists sites (
   code text primary key, name text, lat numeric, lng numeric, active boolean default true
 );
--- ADDED 14 Jul 2026 (task #174/#207, Michael: group Facility Groups by manager/team, not region) —
--- no such field existed anywhere (not in any SiteLink report, not in this table). Nullable/free-text:
--- populated by Michael directly (via Supabase table editor or scripts/set-site-manager.js), sites
--- with no value yet fall into an "Unassigned" bucket in the Facility Groups view rather than being
--- dropped, so the page is usable before every site has an assignment.
-alter table sites add column if not exists manager text;
+-- REMOVED 15 Jul 2026 (Michael: "remove anything to do with manager") — this column was added 14 Jul
+-- 2026 for the Facility Groups widget (task #174/#207), grouping sites by manager/team. Michael never
+-- provided the site->manager mapping, Facility Groups was removed the same day it was flagged as
+-- unused, and this column had no other reader (dead field). Drops it outright rather than leaving an
+-- orphaned column around; safe to run against production even if the column doesn't exist yet.
+alter table sites drop column if exists manager;
 
 create table if not exists raw_report (
   id bigserial primary key,
