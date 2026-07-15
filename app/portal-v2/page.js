@@ -3478,11 +3478,14 @@ export default function PortalV2Page() {
 
         {/* Secret Easter egg overlay (15 Jul 2026) — reached only via the Cmd+Shift+Tab -> 1 -> Space
             key sequence handled in the mount effect above. Deliberately not a route (no nav entry, no
-            URL, nothing in middleware.js) so it stays genuinely hidden rather than just unlinked. */}
+            URL, nothing in middleware.js) so it stays genuinely hidden rather than just unlinked. The
+            image file itself is named og-fallback.jpg (RENAMED 15 Jul 2026, Michael: "rename it to
+            something less conspicuous") — deliberately unremarkable next to other public/ static
+            assets rather than a name that gives away what it actually is. */}
         {secretOpen && (
           <div onClick={() => setSecretOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
             <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', maxWidth: '640px', width: '100%' }}>
-              <img src="/easter-egg.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
+              <img src="/og-fallback.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
               <button onClick={() => setSecretOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
