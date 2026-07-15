@@ -2337,7 +2337,13 @@ export default function PortalV2Page() {
       const momUsingFullHistory = !scopedOk && !!liveHist;
       if (!liveHist) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (no stored history at all yet — run npm run pull a few more times, or npm run backfill).');
       else if (momUsingFullHistory) debugWarn('[portal-v2] Month-on-Month: selected period has <2 months of history — showing full stored history instead of the narrower selection.');
-      const momTitleSuffix = momUsingFullHistory ? ' (full history — selected period too narrow)' : '';
+      // FIXED 15 Jul 2026 (pre-go-live audit finding): this used to be appended straight onto the
+      // visible chart TITLE ('(full history — selected period too narrow)'), which meant every user
+      // saw a debug-sounding string in all-caps (titles render text-transform:uppercase) on every one
+      // of these 6 charts on every page load, since the default '1M' period is <2 months by
+      // definition. debugWarn above already covers the developer-facing signal; the user-facing note
+      // now lives only in the tooltip (tip), worded plainly, not shouted in the header.
+      const momTip = momUsingFullHistory ? '\nShowing full history — the selected period is too narrow to plot.' : '';
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
@@ -2352,12 +2358,12 @@ export default function PortalV2Page() {
       // the underlying data/labels were already complete. Zooming is done via the date-range presets
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
-        { title: 'Revenue Collected' + momTitleSuffix, tip: 'Report: ManagementSummary.\nCharge minus credit, portfolio-wide, per stored month.', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Rent Roll' + momTitleSuffix, tip: 'Report: RentRoll.\nTotal rent across occupied units, per stored month.', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Insurance Roll' + momTitleSuffix, tip: 'Report: InsuranceRoll.\nTotal premium across all sites, per stored month.', el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area' + momTitleSuffix, tip: 'Report: OccupancyStatistics.\nTotal occupied area across all sites, per stored month.', el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Occupied Area' + momTitleSuffix, tip: 'Report: OccupancyStatistics, self storage only.\nTotal occupied area, per stored month.', el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Rate per ft²' + momTitleSuffix, tip: 'Report: RentRoll, self storage only.\nStandard rate per ft², per stored month.', el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Revenue Collected', tip: 'Report: ManagementSummary.\nCharge minus credit, portfolio-wide, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nTotal rent across occupied units, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nTotal premium across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nTotal occupied area across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics, self storage only.\nTotal occupied area, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll, self storage only.\nStandard rate per ft², per stored month.' + momTip, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
