@@ -819,6 +819,12 @@ export default function PortalV2Page() {
   };
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Easter egg (15 Jul 2026, Michael: "add an easter egg... goes to a secret page that shows this
+  // image") — a 3-step key SEQUENCE (not a held chord): Cmd+Shift+Tab, then 1, then Space, each
+  // pressed and released in order. secretStep tracks progress (0 = nothing yet, 1 = got the
+  // Cmd+Shift+Tab step, 2 = also got the "1"); secretOpen shows the full-screen overlay once all
+  // three land in order. See the keydown handler in the effect below for the actual matching logic.
+  const [secretOpen, setSecretOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState({});
   const [region, setRegion] = useState('All');
@@ -898,6 +904,8 @@ export default function PortalV2Page() {
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
+  const secretStep = useRef(0);   // Easter egg sequence progress — a ref (not state) since the keydown handler below needs the latest value synchronously between keystrokes, not on next render
+  const secretResetTimer = useRef(null);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
 
   // Index <-> "YYYY-MM" key helpers (index 0 = Jan 2025; negative indices reach back into real stored
@@ -1137,9 +1145,42 @@ export default function PortalV2Page() {
       }
     };
     document.addEventListener('click', onDocClick, true);
+
+    // Easter egg key SEQUENCE: Cmd+Shift+Tab, then 1, then Space, each its own keydown in order
+    // (confirmed with Michael — not a held chord). Any other key, or more than 2s between steps,
+    // resets progress back to step 0 rather than silently getting stuck partway. Cmd+Shift+Tab is
+    // also a browser/OS tab-switch shortcut in some browsers, which can swallow the event before
+    // this ever fires — preventDefault() below is a best effort, not a guarantee, on every browser.
+    const onSecretKeydown = (e) => {
+      const resetSoon = () => {
+        clearTimeout(secretResetTimer.current);
+        secretResetTimer.current = setTimeout(() => { secretStep.current = 0; }, 2000);
+      };
+      if (secretStep.current === 0 && e.metaKey && e.shiftKey && e.key === 'Tab') {
+        e.preventDefault();
+        secretStep.current = 1;
+        resetSoon();
+      } else if (secretStep.current === 1 && e.key === '1') {
+        secretStep.current = 2;
+        resetSoon();
+      } else if (secretStep.current === 2 && e.key === ' ') {
+        e.preventDefault();
+        clearTimeout(secretResetTimer.current);
+        secretStep.current = 0;
+        setSecretOpen(true);
+      } else if (!(e.metaKey || e.shiftKey || e.key === 'Meta' || e.key === 'Shift')) {
+        // A plain unrelated keystroke breaks the sequence; modifier-only keydowns (holding Cmd/Shift
+        // on the way to the chord) are ignored so they don't reset progress before Tab even lands.
+        secretStep.current = 0;
+      }
+    };
+    document.addEventListener('keydown', onSecretKeydown);
+
     return () => {
       clearTimeout(safety);
+      clearTimeout(secretResetTimer.current);
       document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('keydown', onSecretKeydown);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -3431,6 +3472,18 @@ export default function PortalV2Page() {
                 <button onClick={() => setBuilderOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '10px', padding: '10px 16px', cursor: 'pointer' }}>Cancel</button>
                 <button onClick={createWidget} style={{ fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 600, color: '#fff', background: '#2757E8', border: 'none', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer' }}>Create widget</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Secret Easter egg overlay (15 Jul 2026) — reached only via the Cmd+Shift+Tab -> 1 -> Space
+            key sequence handled in the mount effect above. Deliberately not a route (no nav entry, no
+            URL, nothing in middleware.js) so it stays genuinely hidden rather than just unlinked. */}
+        {secretOpen && (
+          <div onClick={() => setSecretOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', maxWidth: '640px', width: '100%' }}>
+              <img src="/easter-egg.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
+              <button onClick={() => setSecretOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         )}
