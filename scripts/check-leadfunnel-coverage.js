@@ -38,11 +38,22 @@ async function fetchAllRows(report, columns) {
 const months = await listStoredMonths();
 console.log(`Stored months (${months.length}): ${months.join(', ')}\n`);
 
+// FIXED 15 Jul 2026: month keys were compared as exact raw strings, but raw_report.month is NOT a
+// consistent format across pull paths -- some rows are written end-of-month ('2026-04-30'), others
+// start-of-month/canonical ('2026-04-01') -- see lib/buildPayload.js's buildIndex() comment on
+// "legacy end-of-month keys vs canonical -01 keys". A same-calendar-month row written under a
+// different convention than its occupancy counterpart showed up here as "missing" even when a
+// lead_funnel row genuinely existed (confirmed against Michael's repull-report-month.js run for
+// lead_funnel 2026-04/2026-05: both completed 29/29 with 0 failures, yet this script still flagged
+// all 54 combos as missing). buildIndex() itself never has this problem -- it slices every month to
+// its first 7 chars (YYYY-MM) before ever comparing -- so normalize the same way here rather than
+// inventing a second, stricter notion of "the same month" that the app itself doesn't use.
+const mk = (m) => String(m).slice(0, 7);
 const occRows = await fetchAllRows('occupancy', 'site_code,month');
-const activeCombos = new Set(occRows.map((r) => `${r.site_code}|${r.month}`));
+const activeCombos = new Set(occRows.map((r) => `${r.site_code}|${mk(r.month)}`));
 
 const lfRows = await fetchAllRows('lead_funnel', 'site_code,month,pulled_at');
-const lfMap = new Map(lfRows.map((r) => [`${r.site_code}|${r.month}`, r.pulled_at]));
+const lfMap = new Map(lfRows.map((r) => [`${r.site_code}|${mk(r.month)}`, r.pulled_at]));
 
 const missing = [];
 let mostRecent = null, oldest = null;
