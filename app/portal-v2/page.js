@@ -2098,10 +2098,27 @@ export default function PortalV2Page() {
         // ("Premiums weekly", a fixed £7.68) and the equivalent average on Merchandise Income per New
         // Customer just below, both of which correctly leave the average unscaled.
         : { title: 'Insurance Premiums (New Customers)', tiles: [{ value: money(8294), label: 'Contents avg', delta: '£516', dir: 'up' }, { value: '£7.68', label: 'Premiums weekly', delta: '£0.09', dir: 'up' }] };
-      // Merchandise Income per New Customer: merchandise sales ÷ move-ins this month (both
-      // MerchandiseSummary/ManagementSummary, real reports, sum-then-divide).
-      const merchPerNewCust = (liveSites && moveInsSum) ? { title: 'Merchandise Income per New Customer', live: true, tip: 'Report: FinancialSummary (POS charges); MoveInsAndMoveOuts.\nMerchandise charge ÷ move-ins this month.', tiles: [{ value: '£' + (merchSalesSum / moveInsSum).toFixed(2), label: 'Income per move-in', delta: null, dir: null }] }
-        : { title: 'Merchandise Income per New Customer', tiles: [{ value: '£2.01', label: 'Income per move-in', delta: '£0.24', dir: 'down' }] };
+      // Merchandise Income per Customer — CHANGED 15 Jul 2026 (pre-go-live audit finding, task
+      // #230): this used to divide ALL customers' merchandise spend by just THIS MONTH'S move-ins
+      // (moveInsSum), reading £9.12 vs legacy's £1.12 — internally consistent (merchSalesSum and
+      // moveInsSum both independently matched legacy fine on their own) but structurally the wrong
+      // question, since most merchandise revenue in any given month comes from long-standing
+      // tenants, not this month's handful of new move-ins. Tried properly scoping the numerator to
+      // just new-move-in tenants' own merchandise purchases (via True Revenue's per-transaction
+      // table, which does carry tenant identity + move-in date) — live-verified 15 Jul via
+      // scripts/verify-merchandise-new-customer-fix.js: £7.51, still ~6.7x too high. Two different
+      // SiteLink reports also disagree with each other on "total merchandise revenue" by ~2.7x
+      // (FinancialSummary POS category £4,421 vs True Revenue's per-transaction retail-SKU rows
+      // £11,940 for the same month), so legacy's exact source/formula for this specific widget
+      // can't be confidently reverse-engineered from what's been tried so far — it has no tooltip on
+      // the live legacy site either. Switching the denominator to TOTAL OCCUPIED UNITS (ancT.occ,
+      // already correct/used elsewhere) instead of move-ins lands much closer (~£0.52, vs legacy's
+      // £1.12 — same order of magnitude, not 8x off) using only already-validated data, so that's
+      // the safer interim fix. Renamed the widget honestly since it's no longer claiming to be
+      // "new customer"-scoped. Revisit if legacy's actual formula is ever confirmed (e.g. via R6
+      // Digital, who built the legacy portal per its own footer credit).
+      const merchPerNewCust = (liveSites && ancT && ancT.occ) ? { title: 'Merchandise Income per Occupied Unit', live: true, tip: 'Report: FinancialSummary (POS charges); Occupancy Statistics.\nMerchandise charge ÷ total occupied units this period.\nNote: legacy\'s equivalent widget reads meaningfully lower (~£1.12 vs ours ~£0.5) and has no visible tooltip/formula to match against — treat as an approximation, not a confirmed like-for-like.', tiles: [{ value: '£' + (merchSalesSum / ancT.occ).toFixed(2), label: 'Income per occupied unit', delta: null, dir: null }] }
+        : { title: 'Merchandise Income per Occupied Unit', tiles: [{ value: '£0.52', label: 'Income per occupied unit', delta: '£0.06', dir: 'down' }] };
       const merchSalesCard = liveSites
         ? { title: 'Merchandise Sales', live: true, tip: 'Report: FinancialSummary (POS charges).\nTotal merchandise charge across all sites for the selected period.', tiles: [{ value: money(merchSalesSum), label: monthTag, delta: null, dir: null }] }
         : { title: 'Merchandise Sales', tiles: [{ value: money(209 * f), label: 'May 2026', delta: '£21', dir: 'up' }] };
