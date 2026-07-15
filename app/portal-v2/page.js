@@ -602,6 +602,12 @@ function Gauge({ pct }) {
 
 // Nav icons (verbatim path data from navGroups())
 function NavIcon({ id }) {
+  // District Manager (15 Jul 2026, Michael: "add a little emoji... it's missing it when all other
+  // pages have it") — every other nav item below is an SVG line icon, but District Manager was added
+  // later (task #174/#203) and never got an entry in `defs`, so NavIcon silently rendered an empty
+  // <svg> for it. Michael asked for an emoji specifically rather than a matching line icon, so this
+  // is the one exception to the SVG-icon pattern — a compass, evoking "overseeing multiple sites."
+  if (id === 'districtManager') return <span style={{ fontSize: '15px', lineHeight: 1 }}>🧭</span>;
   const defs = {
     dashboard: (
       <>
