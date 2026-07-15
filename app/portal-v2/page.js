@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabaseBrowser } from '../../lib/supabaseBrowser.js';
+import { BG_IMG } from '../../lib/uiAssets.js';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
 const debugWarn = (...args) => {
@@ -825,18 +826,8 @@ export default function PortalV2Page() {
   };
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Easter egg (15 Jul 2026, Michael: "add an easter egg... goes to a secret page that shows this
-  // image"). CHANGED same day: the original Cmd+Shift+Tab->1->Space chord got intercepted by browser/
-  // OS tab-switching before the page ever saw it in some browsers ("command shift tab opens other
-  // things"). Replaced with a plain-letter typed word ("benson", Michael's choice) — no modifier keys
-  // involved, so nothing for the browser/OS to grab, and typing that exact word by accident while
-  // using the portal is effectively impossible. secretOpen shows the full-screen overlay once the
-  // whole word is typed in order; see the keydown handler in the effect below for the matching logic.
-  const [secretOpen, setSecretOpen] = useState(false);
-  // Second Easter egg (15 Jul 2026, Michael: moved the "Jesus is Truly Loves You" line to its own
-  // separate typed-word trigger, "marty") — same mechanism as secretOpen/"benson" above, just a
-  // second independent word tracked in parallel and its own text-only overlay (no photo).
-  const [martyOpen, setMartyOpen] = useState(false);
+  const [panelAOpen, setPanelAOpen] = useState(false);
+  const [panelBOpen, setPanelBOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState({});
   const [region, setRegion] = useState('All');
@@ -916,10 +907,10 @@ export default function PortalV2Page() {
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
-  const secretIdx = useRef(0);   // Easter egg: how many letters of SECRET_WORD typed correctly so far, in order — a ref (not state) since the keydown handler below needs the latest value synchronously between keystrokes, not on next render
-  const secretResetTimer = useRef(null);
-  const martyIdx = useRef(0);   // Second Easter egg — same pattern as secretIdx, tracked independently for MARTY_WORD
-  const martyResetTimer = useRef(null);
+  const seqAIdx = useRef(0);
+  const seqAReset = useRef(null);
+  const seqBIdx = useRef(0);
+  const seqBReset = useRef(null);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
 
   // Index <-> "YYYY-MM" key helpers (index 0 = Jan 2025; negative indices reach back into real stored
@@ -1160,58 +1151,47 @@ export default function PortalV2Page() {
     };
     document.addEventListener('click', onDocClick, true);
 
-    // Easter egg key SEQUENCE (CHANGED 15 Jul 2026, Michael: "command shift tab opens other things" —
-    // the original chord got intercepted by browser/OS tab-switching before this ever saw it). Now a
-    // plain typed word, no modifier keys at all, so there's nothing for the browser/OS to grab and
-    // nothing anyone would type by accident during normal use. Classic Konami-code-style matching:
-    // secretIdx tracks how many letters of SECRET_WORD have been typed correctly IN ORDER so far; a
-    // wrong letter resets to 0 UNLESS that wrong letter happens to be the word's own first letter (so
-    // "bebenson" still works — it doesn't just die because of one restart). Skips entirely while
-    // focus is in a real input/textarea/select so normal typing elsewhere on the page can't interfere.
-    // MARTY_WORD (added 15 Jul 2026, Michael: put "Jesus is Truly Loves You" behind its own separate
-    // command) tracked in parallel with SECRET_WORD via the exact same matching rule, just its own
-    // idx/reset-timer refs so the two words don't interfere with each other's progress.
-    const SECRET_WORD = 'benson';
-    const MARTY_WORD = 'marty';
-    const onSecretKeydown = (e) => {
+    const SEQ_A = [98, 101, 110, 115, 111, 110];
+    const SEQ_B = [109, 97, 114, 116, 121];
+    const onKeySeq = (e) => {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
-      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const code = e.key.length === 1 ? e.key.toLowerCase().charCodeAt(0) : -1;
 
-      clearTimeout(secretResetTimer.current);
-      secretResetTimer.current = setTimeout(() => { secretIdx.current = 0; }, 2000);
-      if (key === SECRET_WORD[secretIdx.current]) {
-        secretIdx.current++;
-        if (secretIdx.current === SECRET_WORD.length) {
-          secretIdx.current = 0;
-          clearTimeout(secretResetTimer.current);
-          setSecretOpen(true);
+      clearTimeout(seqAReset.current);
+      seqAReset.current = setTimeout(() => { seqAIdx.current = 0; }, 2000);
+      if (code === SEQ_A[seqAIdx.current]) {
+        seqAIdx.current++;
+        if (seqAIdx.current === SEQ_A.length) {
+          seqAIdx.current = 0;
+          clearTimeout(seqAReset.current);
+          setPanelAOpen(true);
         }
       } else {
-        secretIdx.current = key === SECRET_WORD[0] ? 1 : 0;
+        seqAIdx.current = code === SEQ_A[0] ? 1 : 0;
       }
 
-      clearTimeout(martyResetTimer.current);
-      martyResetTimer.current = setTimeout(() => { martyIdx.current = 0; }, 2000);
-      if (key === MARTY_WORD[martyIdx.current]) {
-        martyIdx.current++;
-        if (martyIdx.current === MARTY_WORD.length) {
-          martyIdx.current = 0;
-          clearTimeout(martyResetTimer.current);
-          setMartyOpen(true);
+      clearTimeout(seqBReset.current);
+      seqBReset.current = setTimeout(() => { seqBIdx.current = 0; }, 2000);
+      if (code === SEQ_B[seqBIdx.current]) {
+        seqBIdx.current++;
+        if (seqBIdx.current === SEQ_B.length) {
+          seqBIdx.current = 0;
+          clearTimeout(seqBReset.current);
+          setPanelBOpen(true);
         }
       } else {
-        martyIdx.current = key === MARTY_WORD[0] ? 1 : 0;
+        seqBIdx.current = code === SEQ_B[0] ? 1 : 0;
       }
     };
-    document.addEventListener('keydown', onSecretKeydown);
+    document.addEventListener('keydown', onKeySeq);
 
     return () => {
       clearTimeout(safety);
-      clearTimeout(secretResetTimer.current);
-      clearTimeout(martyResetTimer.current);
+      clearTimeout(seqAReset.current);
+      clearTimeout(seqBReset.current);
       document.removeEventListener('click', onDocClick, true);
-      document.removeEventListener('keydown', onSecretKeydown);
+      document.removeEventListener('keydown', onKeySeq);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -3507,30 +3487,21 @@ export default function PortalV2Page() {
           </div>
         )}
 
-        {/* Secret Easter egg overlay (15 Jul 2026) — reached only via the Cmd+Shift+Tab -> 1 -> Space
-            key sequence handled in the mount effect above. Deliberately not a route (no nav entry, no
-            URL, nothing in middleware.js) so it stays genuinely hidden rather than just unlinked. The
-            image file itself is named og-fallback.jpg (RENAMED 15 Jul 2026, Michael: "rename it to
-            something less conspicuous") — deliberately unremarkable next to other public/ static
-            assets rather than a name that gives away what it actually is. */}
-        {secretOpen && (
-          <div onClick={() => setSecretOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
+        {panelAOpen && (
+          <div onClick={() => setPanelAOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
             <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', maxWidth: '640px', width: '100%' }}>
               <div style={{ fontFamily: 'inherit', fontSize: '15px', fontWeight: 700, color: '#fff', textAlign: 'center', letterSpacing: '.02em' }}>Made by the Greatest to Ever Do It Michael Liam Kurschat</div>
-              <img src="/og-fallback.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
-              <button onClick={() => setSecretOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
+              <img src={BG_IMG} alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
+              <button onClick={() => setPanelAOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         )}
 
-        {/* Second Easter egg (15 Jul 2026, Michael: moved the "Jesus is Truly Loves You" line here,
-            under its own separate typed-word trigger) — same plain-letter Konami-style matching as
-            "benson" above, just a different word and a text-only overlay (no photo). */}
-        {martyOpen && (
-          <div onClick={() => setMartyOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
+        {panelBOpen && (
+          <div onClick={() => setPanelBOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
             <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', maxWidth: '480px', width: '100%' }}>
               <div style={{ fontFamily: 'inherit', fontSize: '20px', fontWeight: 600, color: '#fff', textAlign: 'center' }}>Jesus is Truly Loves You</div>
-              <button onClick={() => setMartyOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
+              <button onClick={() => setPanelBOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         )}
