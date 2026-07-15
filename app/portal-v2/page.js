@@ -2659,48 +2659,6 @@ export default function PortalV2Page() {
         },
       ];
 
-      // Facility Groups (task #174/#207, Michael's decision: group by manager/team — no such field
-      // existed anywhere before today, see supabase/schema.sql's `sites.manager` column and
-      // scripts/set-site-manager.js). Sites with no manager assigned yet fall into "Unassigned"
-      // rather than being silently dropped, so the page stays usable before every site is mapped.
-      // Sum-then-divide-once for occPct/rate (never average already-divided per-site rates —
-      // same rule as computeTotals() elsewhere on this page).
-      const groupsByManager = {};
-      for (const s of dmSites) {
-        const mgr = s.manager || 'Unassigned';
-        const g = (groupsByManager[mgr] ??= { manager: mgr, sites: 0, occ: 0, tot: 0, rent: 0, stdRentSum: 0, areaSum: 0 });
-        g.sites++; g.occ += s.occ || 0; g.tot += s.tot || 0; g.rent += s.rent || 0;
-        g.stdRentSum += s.stdRentSum || 0; g.areaSum += s.areaSum || 0;
-      }
-      const facilityGroupRows = Object.values(groupsByManager).map((g) => ({
-        manager: g.manager, sites: g.sites, occ: g.occ, tot: g.tot,
-        occPct: g.tot ? +(g.occ / g.tot * 100).toFixed(1) : 0,
-        rent: Math.round(g.rent), rate: g.areaSum ? R2(g.stdRentSum / g.areaSum * 12) : 0,
-      })).sort((a, b) => b.occPct - a.occPct);
-      const mockFacilityGroups = [
-        { manager: 'Jane Smith', sites: 6, occ: 1240, tot: 1360, occPct: 91.2, rent: 182000, rate: 28.4 },
-        { manager: 'Tom Lee', sites: 5, occ: 980, tot: 1120, occPct: 87.5, rent: 151000, rate: 26.9 },
-        { manager: 'Unassigned', sites: 18, occ: 3720, tot: 4180, occPct: 89.0, rent: 560000, rate: 27.6 },
-      ];
-      const fgRows = haveData ? facilityGroupRows : mockFacilityGroups;
-      if (haveData && fgRows.every((r) => r.manager === 'Unassigned')) debugWarn('[portal-v2] Facility Groups: no site has a manager assigned yet — run npm run set:site-manager.');
-      out.statCards.push({ title: 'Facility Groups', live: haveData, tip: 'sites.manager.\nCount of distinct manager/team groups — sites with none assigned yet count as "Unassigned".', tiles: [{ value: intFmt(fgRows.length), label: 'Groups', delta: null, dir: null }] });
-      out.chartCards.push({ title: 'Occupancy % by Facility Group', tip: 'sites.manager; OccupancyStatistics.\nOccupancy % per manager/team group.', el: <VBars items={fgRows.map((r) => ({ label: r.manager, value: r.occPct, disp: r.occPct.toFixed(1) + '%', color: thresholdColor(r.occPct) }))} opts={{ max: 100 }} /> });
-      out.tables.push({
-        title: 'Facility Groups — Comparison', live: haveData, pageSize: 20, wide: true,
-        tip: 'sites.manager; OccupancyStatistics; RentRoll.\nOne row per manager/team. Occupied % and Rate are sum-then-divide across the group, not averaged per site.',
-        columns: [
-          { key: 'manager', label: 'Manager / Team', type: 'text' },
-          { key: 'sites', label: 'Sites', type: 'int', align: 'right' },
-          { key: 'occ', label: 'Occupied Units', type: 'int', align: 'right' },
-          { key: 'tot', label: 'Total Units', type: 'int', align: 'right' },
-          { key: 'occPct', label: 'Occupied %', type: 'pct', align: 'right', color: 'threshold' },
-          { key: 'rent', label: 'Monthly Rent', type: 'money', align: 'right' },
-          { key: 'rate', label: 'Rate / ft²', type: 'money2', align: 'right' },
-        ],
-        rows: fgRows,
-      });
-
       // Cockpit Charting (task #174/#207) — day-by-day cumulative income this month vs a 3-month-
       // average pace line. See lib/pullCockpit.js/lib/cockpitData.js for why this needed a whole new
       // daily pull (a real growing time series), unlike every other District Manager widget above,
