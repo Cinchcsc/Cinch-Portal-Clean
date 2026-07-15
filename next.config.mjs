@@ -21,13 +21,18 @@
 // riskier change to make blind right before go-live. Reinstate 'unsafe-inline' now to restore the
 // app; revisit nonce-based hardening after Friday.
 const SUPABASE_ORIGIN = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+// Cloudflare Turnstile (15 Jul 2026, login CAPTCHA — see app/login/page.js): loads its own script,
+// renders its challenge inside an iframe, and makes its own XHR calls, all from
+// challenges.cloudflare.com — needs allowances in script-src, frame-src, and connect-src.
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data:",
-  `connect-src 'self'${SUPABASE_ORIGIN ? ' ' + SUPABASE_ORIGIN : ' https://*.supabase.co'}`,
+  `connect-src 'self'${SUPABASE_ORIGIN ? ' ' + SUPABASE_ORIGIN : ' https://*.supabase.co'} ${TURNSTILE_ORIGIN}`,
+  `frame-src ${TURNSTILE_ORIGIN}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
