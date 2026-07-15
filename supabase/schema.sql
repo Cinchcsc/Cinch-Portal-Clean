@@ -91,8 +91,8 @@ create table if not exists snapshot_payload (
   constraint single_row check (id = 1)
 );
 alter table snapshot_payload enable row level security;
-drop policy if exists "anon reads snapshot" on snapshot_payload;
-create policy "anon reads snapshot" on snapshot_payload for select using (true);
+-- REMOVED 15 Jul 2026 — see the big comment block below ("SECURITY FIX") for why the "anon reads
+-- snapshot" policy that used to sit here is gone rather than recreated.
 insert into snapshot_payload (id, payload) values (1, '{"sites":[],"daily":null,"weekly":null,"quarterly":null}'::jsonb)
 on conflict (id) do nothing;
 
@@ -104,11 +104,30 @@ alter table autobill_daily enable row level security;
 -- autobill_daily: RLS on, no anon policy => service-role only, same as raw_report/refresh_log —
 -- the frontend never queries it directly, only lib/buildPayload.js's averaged output.
 
-drop policy if exists "anon reads payload" on portal_payload;
-create policy "anon reads payload" on portal_payload for select using (true);
-drop policy if exists "anon reads sites" on sites;
-create policy "anon reads sites" on sites for select using (true);
--- raw_report + refresh_log: RLS on, no anon policy => service-role only.
+-- SECURITY FIX (15 Jul 2026, pentest via Michael's friend + Claude): this file used to grant the
+-- ANON role a `for select using (true)` policy on portal_payload/sites/snapshot_payload, from back
+-- when the plan was "the portal reads these tables directly with the public anon key" (see this
+-- file's original header comment). That plan changed early on — every real read today goes through
+-- our own Next.js API routes (/api/portfolio, /api/snapshot, /api/cockpit, /api/floor-occupancy),
+-- which use the SERVICE-ROLE key server-side (lib/supabaseAdmin.js) and bypass RLS entirely by
+-- design. lib/supabaseBrowser.js (the only Supabase client ever shipped to the browser, necessarily
+-- using the anon key since that's the only key safe to expose) is used ONLY for auth.* calls
+-- (sign-in, sign-out, password reset) — grep confirms no page ever calls .from(...) on it.
+-- So these SELECT-using-true policies had been leaving portal_payload/sites/snapshot_payload
+-- completely readable to ANYONE holding the anon key (which is unavoidably public — it ships in
+-- every page's client JS bundle) via Supabase's own REST API directly, with NO login required —
+-- entirely bypassing task #202's app-level auth gate (middleware.js), since that gate only sits in
+-- front of OUR Next.js routes, not Supabase's own PostgREST endpoint. Confirmed exploitable in
+-- production by the pentest. Fix: drop the anon policies outright (do NOT recreate them) — RLS
+-- stays enabled with zero matching policy for the anon/authenticated roles, same "service-role only"
+-- posture already used correctly for raw_report/refresh_log/autobill_daily/unit_floor_status/
+-- daily_financial_snapshot the whole time. Run this against production immediately:
+--   drop policy if exists "anon reads payload" on portal_payload;
+--   drop policy if exists "anon reads sites" on sites;
+--   drop policy if exists "anon reads snapshot" on snapshot_payload;
+-- (No anon INSERT/UPDATE/DELETE policy was ever defined on any table in this file, so writes should
+-- already have been blocked by RLS's default-deny — but re-test that against production after
+-- dropping the SELECT policies above, since it wasn't independently confirmed either way.)
 
 insert into portal_payload (id, payload) values (1, '{"sites":[],"reports":{},"months":[]}'::jsonb)
 on conflict (id) do nothing;
