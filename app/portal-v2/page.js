@@ -683,7 +683,7 @@ function thresholdColor(value) {
 // summed and rates/percentages are re-derived sum-then-divide by the CALLER (same rule as
 // computeTotals — never average per-site rates here). `totalsLabel` is the first-column label
 // ("Total" or "Average").
-function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip, headerExtra }) {
+function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip, headerExtra, collapsible }) {
   // REMOVED 8 Jul 2026 (Michael: "remove the scroll bar and scrolling thing on the big widgets... it
   // makes navigating annoying") — this used to cap tall tables to a fixed ~pageSize-row viewport with
   // their own internal scrollbar (6 Jul 2026 change, replacing Prev/Next pagination). In practice that
@@ -692,17 +692,38 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
   // scrolls as one normal page, no nested scroll areas.
   const ROW_H = 41; // approx rendered row height (padding 11px*2 + line height) — unused now that nothing caps to it, kept in case a max-height cap is wanted again later
   const needsScroll = false;
+  // Collapse/expand (added 15 Jul 2026, Michael: "add a button on the district manager tables to
+  // collapse, and have them default to collapsed until you open fully") — opt-in via the `collapsible`
+  // prop (only the District Manager page's tables pass it today) so every other page's tables are
+  // unaffected. Starts collapsed; the whole header row is clickable, not just the chevron, since a
+  // small target on a table this wide is easy to miss.
+  const [collapsed, setCollapsed] = useState(!!collapsible);
   return (
     <div style={{ background: '#fff', border: '1px solid #D5DAE1', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: '1px solid #F2F4F7' }}>
+      <div
+        onClick={collapsible ? () => setCollapsed((v) => !v) : undefined}
+        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: collapsible && collapsed ? 'none' : '1px solid #F2F4F7', cursor: collapsible ? 'pointer' : undefined }}
+      >
+        {collapsible && (
+          <span style={{ display: 'inline-flex', color: '#98A2B3', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform .15s ease', fontSize: '10px', width: 10 }}>▼</span>
+        )}
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.blue }} />
         <span style={{ fontSize: '12.5px', fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#475467', flex: 1 }}>{title}</span>
         <InfoTip text={tip} />
         {live && <span style={{ fontSize: '9.5px', fontWeight: 700, letterSpacing: '.08em', color: '#08875D', background: '#E7F6EF', borderRadius: '5px', padding: '2px 6px' }}>LIVE</span>}
         {/* headerExtra (14 Jul 2026): optional per-table controls, e.g. the District Manager Unit
             Groups widget's own location/type filters — additive, every other table simply omits it. */}
-        {headerExtra}
+        {headerExtra && <span onClick={(e) => e.stopPropagation()}>{headerExtra}</span>}
+        {collapsible && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCollapsed((v) => !v); }}
+            style={{ fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 600, color: '#2757E8', background: '#EFF4FF', border: 'none', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}
+          >
+            {collapsed ? 'Expand' : 'Collapse'}
+          </button>
+        )}
       </div>
+      {(!collapsible || !collapsed) && (
       <div style={{ overflowX: 'auto', overflowY: needsScroll ? 'auto' : 'visible', maxHeight: needsScroll ? (ROW_H * pageSize) + 'px' : undefined }}>
         <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13.5px', minWidth: '560px' }}>
           <thead>
@@ -771,6 +792,7 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
           )}
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -2668,7 +2690,7 @@ export default function PortalV2Page() {
       ];
       out.chartCards = [];
       out.tables = [
-        { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true,
+        { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true, collapsible: true,
           tip: 'Report: RentalActivity (fully occupied groups); RentRoll (standard rate vs actual rent).\nA unit qualifies when its group is 100% occupied and billed below its own standard rate.\nUse the filters above to narrow this down.',
           headerExtra: dmWatchFilterControls,
           // CONDENSED 15 Jul 2026 (Michael: "too much going on"): Type + Area merged into one "Unit
@@ -2683,7 +2705,7 @@ export default function PortalV2Page() {
           ],
           rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, typeArea: null, stdRate: null, rent: null, discountPct: null }],
         },
-        { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true,
+        { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true, collapsible: true,
           tip: 'Report: RentalActivity (units, occupancy, rates); RentRoll (avg stay = days since move-in).\nEffective Rate reflects concessions; Standard Rate doesn\'t. Avg Stay excludes re-lease/vacancy time (not tracked by SiteLink).\nUse the filters above to narrow this down.',
           headerExtra: dmGroupFilterControls,
           // CONDENSED 15 Jul 2026: same Type+Area merge as the Watchdog table above.
@@ -2747,7 +2769,7 @@ export default function PortalV2Page() {
         { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card.\nCount of sites with at least one 30+ day delinquent account.', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
       );
       out.tables.push(
-        { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, wide: true,
+        { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, wide: true, collapsible: true,
           tip: 'sites.occPC, current vs prior month.\nSorted worst decline first; a positive Change means occupancy improved, not worsened.',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
@@ -2757,7 +2779,7 @@ export default function PortalV2Page() {
           ],
           rows: occDeclineFinal.length ? occDeclineFinal : [{ store: '(no prior-month data available yet — run npm run pull again next month)', curPct: null, prevPct: null, change: null }],
         },
-        { title: 'Watchdog — Delinquency by Site', live: haveData, pageSize: 20, wide: true,
+        { title: 'Watchdog — Delinquency by Site', live: haveData, pageSize: 20, wide: true, collapsible: true,
           tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card, broken out per site.\nSorted worst Rent Roll % first.',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
@@ -3270,7 +3292,7 @@ export default function PortalV2Page() {
                 {tables.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     {tables.map((t, ti) => (
-                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} headerExtra={t.headerExtra} />
+                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} headerExtra={t.headerExtra} collapsible={t.collapsible} />
                     ))}
                   </div>
                 )}
