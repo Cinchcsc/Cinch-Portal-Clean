@@ -820,10 +820,12 @@ export default function PortalV2Page() {
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Easter egg (15 Jul 2026, Michael: "add an easter egg... goes to a secret page that shows this
-  // image") — a 3-step key SEQUENCE (not a held chord): Cmd+Shift+Tab, then 1, then Space, each
-  // pressed and released in order. secretStep tracks progress (0 = nothing yet, 1 = got the
-  // Cmd+Shift+Tab step, 2 = also got the "1"); secretOpen shows the full-screen overlay once all
-  // three land in order. See the keydown handler in the effect below for the actual matching logic.
+  // image"). CHANGED same day: the original Cmd+Shift+Tab->1->Space chord got intercepted by browser/
+  // OS tab-switching before the page ever saw it in some browsers ("command shift tab opens other
+  // things"). Replaced with a plain-letter typed word ("benson", Michael's choice) — no modifier keys
+  // involved, so nothing for the browser/OS to grab, and typing that exact word by accident while
+  // using the portal is effectively impossible. secretOpen shows the full-screen overlay once the
+  // whole word is typed in order; see the keydown handler in the effect below for the matching logic.
   const [secretOpen, setSecretOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState({});
@@ -904,7 +906,7 @@ export default function PortalV2Page() {
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
-  const secretStep = useRef(0);   // Easter egg sequence progress — a ref (not state) since the keydown handler below needs the latest value synchronously between keystrokes, not on next render
+  const secretIdx = useRef(0);   // Easter egg: how many letters of SECRET_WORD typed correctly so far, in order — a ref (not state) since the keydown handler below needs the latest value synchronously between keystrokes, not on next render
   const secretResetTimer = useRef(null);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
 
@@ -1146,32 +1148,30 @@ export default function PortalV2Page() {
     };
     document.addEventListener('click', onDocClick, true);
 
-    // Easter egg key SEQUENCE: Cmd+Shift+Tab, then 1, then Space, each its own keydown in order
-    // (confirmed with Michael — not a held chord). Any other key, or more than 2s between steps,
-    // resets progress back to step 0 rather than silently getting stuck partway. Cmd+Shift+Tab is
-    // also a browser/OS tab-switch shortcut in some browsers, which can swallow the event before
-    // this ever fires — preventDefault() below is a best effort, not a guarantee, on every browser.
+    // Easter egg key SEQUENCE (CHANGED 15 Jul 2026, Michael: "command shift tab opens other things" —
+    // the original chord got intercepted by browser/OS tab-switching before this ever saw it). Now a
+    // plain typed word, no modifier keys at all, so there's nothing for the browser/OS to grab and
+    // nothing anyone would type by accident during normal use. Classic Konami-code-style matching:
+    // secretIdx tracks how many letters of SECRET_WORD have been typed correctly IN ORDER so far; a
+    // wrong letter resets to 0 UNLESS that wrong letter happens to be the word's own first letter (so
+    // "bebenson" still works — it doesn't just die because of one restart). Skips entirely while
+    // focus is in a real input/textarea/select so normal typing elsewhere on the page can't interfere.
+    const SECRET_WORD = 'benson';
     const onSecretKeydown = (e) => {
-      const resetSoon = () => {
-        clearTimeout(secretResetTimer.current);
-        secretResetTimer.current = setTimeout(() => { secretStep.current = 0; }, 2000);
-      };
-      if (secretStep.current === 0 && e.metaKey && e.shiftKey && e.key === 'Tab') {
-        e.preventDefault();
-        secretStep.current = 1;
-        resetSoon();
-      } else if (secretStep.current === 1 && e.key === '1') {
-        secretStep.current = 2;
-        resetSoon();
-      } else if (secretStep.current === 2 && e.key === ' ') {
-        e.preventDefault();
-        clearTimeout(secretResetTimer.current);
-        secretStep.current = 0;
-        setSecretOpen(true);
-      } else if (!(e.metaKey || e.shiftKey || e.key === 'Meta' || e.key === 'Shift')) {
-        // A plain unrelated keystroke breaks the sequence; modifier-only keydowns (holding Cmd/Shift
-        // on the way to the chord) are ignored so they don't reset progress before Tab even lands.
-        secretStep.current = 0;
+      const tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      clearTimeout(secretResetTimer.current);
+      secretResetTimer.current = setTimeout(() => { secretIdx.current = 0; }, 2000);
+      if (key === SECRET_WORD[secretIdx.current]) {
+        secretIdx.current++;
+        if (secretIdx.current === SECRET_WORD.length) {
+          secretIdx.current = 0;
+          clearTimeout(secretResetTimer.current);
+          setSecretOpen(true);
+        }
+      } else {
+        secretIdx.current = key === SECRET_WORD[0] ? 1 : 0;
       }
     };
     document.addEventListener('keydown', onSecretKeydown);
