@@ -26,7 +26,7 @@ for (const r of data) {
   console.log(
     `${String(r.id).padEnd(6)} ${(r.kind || '?').padEnd(10)} ${(r.status || '?').padEnd(10)} ${r.started_at.padEnd(25)} ${(r.finished_at || '').padEnd(25)} ${dur}`
   );
-  if (r.detail) console.log(`       detail: ${r.detail.slice(0, 140)}`);
+  if (r.detail) console.log(`       detail: ${r.detail.slice(0, 400)}`);
 }
 
 const today = new Date().toISOString().slice(0, 10);
