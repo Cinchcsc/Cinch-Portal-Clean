@@ -3485,7 +3485,9 @@ export default function PortalV2Page() {
         {secretOpen && (
           <div onClick={() => setSecretOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,20,.92)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', cursor: 'pointer' }}>
             <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', maxWidth: '640px', width: '100%' }}>
+              <div style={{ fontFamily: 'inherit', fontSize: '15px', fontWeight: 700, color: '#fff', textAlign: 'center', letterSpacing: '.02em' }}>Made by the Greatest to Ever Do It Michael Liam Kurschat</div>
               <img src="/og-fallback.jpg" alt="" style={{ width: '100%', borderRadius: '14px', boxShadow: '0 24px 64px rgba(0,0,0,.5)' }} />
+              <div style={{ fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, color: 'rgba(255,255,255,.85)', textAlign: 'center' }}>Jesus is Truly Loves You</div>
               <button onClick={() => setSecretOpen(false)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, color: '#fff', background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.25)', borderRadius: '10px', padding: '9px 18px', cursor: 'pointer' }}>Close</button>
             </div>
           </div>
