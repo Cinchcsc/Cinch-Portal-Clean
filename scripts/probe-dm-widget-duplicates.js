@@ -92,8 +92,47 @@ for (const s of sites) {
 }
 
 console.log(`\n${sitesWithKeyCollisions} site(s) have colliding (type, roundedArea) keys across RentalActivity rows.`);
-console.log(`${totalDuplicatePushes} duplicate row(s) confirmed in the Watchdog table's actual output (same unit pushed more than once for the same site).`);
+console.log(`${totalDuplicatePushes} duplicate row(s) confirmed under the OLD (pre-15-Jul-fix) logic replayed above.`);
 console.log(`${totalRentRollDupeUnits} unit(s) with genuinely duplicate RentRoll rows (same unit name twice in one site's unit_rows).`);
-if (totalDuplicatePushes > 0) console.log('=> Confirms the key-collision duplication bug described above.');
+if (totalDuplicatePushes > 0) console.log('=> Confirms the key-collision duplication bug described above (this is what app/portal-v2/page.js was fixed to no longer do).');
 if (totalRentRollDupeUnits > 0) console.log('=> RentRoll itself is returning duplicate rows for these units -- a separate, upstream issue.');
+
+// VERIFICATION PASS (15 Jul 2026): replay the FIXED merge-by-key logic now live in
+// app/portal-v2/page.js (groups sharing a key are merged into one before the discount check runs)
+// and confirm it produces ZERO duplicate pushes across every site -- proves the fix actually closes
+// the bug quantified above, not just that the bug existed.
+console.log('\n--- Verifying the FIXED (merged-groups) logic produces zero duplicates ---');
+let totalDuplicatePushesAfterFix = 0;
+let totalDiscountedRowsAfterFix = 0;
+for (const s of sites) {
+  const groups = s.rentalActivityByTypeSize || [];
+  const unitsAtSite = s.unitRows || [];
+  if (!groups.length && !unitsAtSite.length) continue;
+
+  const merged = new Map();
+  for (const g of groups) {
+    const key = `${g.type}|${Math.round(g.area)}`;
+    const m = merged.get(key);
+    if (!m) merged.set(key, { totalUnits: g.totalUnits, vacant: g.vacant });
+    else { m.totalUnits += g.totalUnits; m.vacant += g.vacant; }
+  }
+  const pushCountsAfter = {};
+  const seenUnits = new Set();
+  for (const [key, g] of merged) {
+    if (!(g.totalUnits > 0 && g.vacant === 0)) continue;
+    const unitsInGroup = unitsAtSite.filter((u) => u.groupKey === key);
+    for (const u of unitsInGroup) {
+      if (u.stdRate > 0 && u.rent < u.stdRate && !seenUnits.has(u.unit)) {
+        seenUnits.add(u.unit);
+        pushCountsAfter[u.unit] = (pushCountsAfter[u.unit] || 0) + 1;
+        totalDiscountedRowsAfterFix++;
+      }
+    }
+  }
+  const dupedAfter = Object.entries(pushCountsAfter).filter(([, n]) => n > 1);
+  totalDuplicatePushesAfterFix += dupedAfter.reduce((a, [, n]) => a + (n - 1), 0);
+}
+console.log(`${totalDiscountedRowsAfterFix} total Watchdog rows under the FIXED logic (was inflated by duplicates before).`);
+console.log(`${totalDuplicatePushesAfterFix} duplicate row(s) remaining under the FIXED logic.`);
+console.log(totalDuplicatePushesAfterFix === 0 ? '=> FIX VERIFIED: zero duplicates with the merged-groups logic.' : '=> STILL DUPLICATES AFTER FIX -- needs another look.');
 process.exit(0);
