@@ -5,12 +5,25 @@
 // browser). style-src needs 'unsafe-inline' because this app renders inline style={{...}} on
 // nearly every element plus one literal <style> tag with @keyframes — locking that down further
 // would need a nonce wired through every render, not worth the risk of breaking styling right
-// before go-live. script-src does NOT need 'unsafe-inline'/'unsafe-eval' — Next's production
-// hydration bundles are same-origin external <script src> files.
+// before go-live.
+// FIXED 15 Jul 2026 (broke production — Michael: "portal wont show anything anymore, it shows a
+// basic loading phase"): script-src originally shipped WITHOUT 'unsafe-inline', on the wrong
+// assumption that Next's App Router only needs external same-origin <script src> files. It
+// actually also emits inline <script>self.__next_f.push(...)</script> tags carrying the React
+// Server Components streaming/hydration payload — confirmed by fetching the live page's own HTML
+// and finding 4 of these per load, no nonce, no src attribute. With script-src blocking inline
+// scripts, that payload never executes, so the app never finishes hydrating: the static shell
+// paints but every client-side useEffect (including the one that fetches /api/portfolio) never
+// runs — exactly the "stuck on the loading skeleton forever, no console errors, zero /api/*
+// requests ever fired" symptom Michael hit. 'unsafe-inline' for script-src is a real, meaningful
+// reduction in what CSP protects against (unlike style-src's version) — the correct long-term fix
+// is a per-request nonce threaded through middleware.js + this inline script, but that's a bigger,
+// riskier change to make blind right before go-live. Reinstate 'unsafe-inline' now to restore the
+// app; revisit nonce-based hardening after Friday.
 const SUPABASE_ORIGIN = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const csp = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data:",
