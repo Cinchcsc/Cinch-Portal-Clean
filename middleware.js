@@ -28,12 +28,21 @@ export async function middleware(request) {
   if (CRON_PATHS.some((p) => pathname.startsWith(p))) return NextResponse.next();
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return NextResponse.next();
 
-  // Auth not configured yet (NEXT_PUBLIC_SUPABASE_ANON_KEY missing) — fail OPEN rather than lock
-  // everyone out (including Michael) before the env var has been added in Vercel. Logged loudly so
-  // this doesn't go unnoticed.
+  // CHANGED 16 Jul 2026 (Michael's pentest ask, "penetrate it, i need to test security" — second,
+  // independent pentest pass via Claude): this used to fail OPEN here (`return NextResponse.next()`),
+  // meaning if NEXT_PUBLIC_SUPABASE_ANON_KEY/URL were ever missing or accidentally removed from
+  // Vercel's env vars, the ENTIRE portal — every page, every /api/* route — would silently become
+  // unauthenticated-readable to anyone, with only a server-side console.warn (which nobody watches
+  // in real time) as the sole signal. Live-tested this same day: hitting /portal-v2 and /api/*
+  // with no session cookie correctly redirects to /login / returns 401, which confirms these env
+  // vars ARE present in production right now — so this change has ZERO effect on today's behavior.
+  // It only changes what happens in the future if that config is ever lost: now it fails CLOSED
+  // (blocks everything, same as "no valid user") instead of open (allows everything). A
+  // misconfigured portal should go down, not go public.
   if (!url || !anonKey) {
-    console.warn('[middleware] NEXT_PUBLIC_SUPABASE_ANON_KEY not set — auth gate is DISABLED, portal is currently unprotected.');
-    return NextResponse.next();
+    console.error('[middleware] NEXT_PUBLIC_SUPABASE_ANON_KEY/URL not set — auth gate cannot run, failing CLOSED (blocking all access) rather than exposing the portal unauthenticated.');
+    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Portal temporarily unavailable (auth misconfigured)' }, { status: 503 });
   }
 
   let supabaseResponse = NextResponse.next({ request });

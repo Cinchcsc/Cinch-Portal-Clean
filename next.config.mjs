@@ -44,6 +44,14 @@ const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  // ADDED 16 Jul 2026 (Michael's pentest ask, "penetrate it, i need to test security" — second,
+  // independent pentest pass via Claude): fetched this app's own live response headers directly
+  // and found no Strict-Transport-Security header at all. Vercel serves everything over HTTPS and
+  // redirects bare HTTP, but without HSTS a browser that's never visited yet has no standing
+  // instruction to refuse a future plaintext connection — a classic SSL-stripping/downgrade gap.
+  // 2 years + subdomains + preload is the standard "serious about it" HSTS value; safe to add any
+  // time since this app has no non-HTTPS use case to break.
+  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
 ];
 
 /** @type {import('next').NextConfig} */
