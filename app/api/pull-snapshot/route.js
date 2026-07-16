@@ -13,8 +13,11 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function GET(request) {
+  // CHANGED 16 Jul 2026 (pentest follow-up — see app/api/pull/route.js for the full explanation):
+  // fail CLOSED instead of open if CRON_SECRET is ever missing. Confirmed CRON_SECRET is set in
+  // Vercel and this route already correctly 401s with no auth header, so no behavior change today.
   const secret = process.env.CRON_SECRET;
-  if (secret && request.headers.get('authorization') !== `Bearer ${secret}`)
+  if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`)
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
     return NextResponse.json(await runSnapshotPull());

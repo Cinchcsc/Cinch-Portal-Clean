@@ -23,8 +23,15 @@ export const maxDuration = 300;
 const LIGHT = ['occupancy', 'rent_roll'];
 
 export async function GET(request) {
+  // CHANGED 16 Jul 2026 (pentest follow-up): `if (secret && mismatch)` failed OPEN — skipped the
+  // check entirely, letting anyone trigger a real SiteLink pull — if CRON_SECRET were ever unset.
+  // Michael confirmed CRON_SECRET IS set in Vercel, and live-testing this route with no auth header
+  // today correctly returned 401 (no pull triggered) — so this changes nothing about today's
+  // behavior. `!secret` now means "treat as unauthorized" instead of "skip the check": a
+  // misconfigured/missing secret blocks everyone (including the real cron, which would show up
+  // loudly as a failing cron run in Vercel) instead of quietly opening the route to the world.
   const secret = process.env.CRON_SECRET;
-  if (secret && request.headers.get('authorization') !== `Bearer ${secret}`)
+  if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`)
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
     const sp = new URL(request.url).searchParams;
