@@ -2891,7 +2891,15 @@ export default function PortalV2Page() {
       const cockpitCurve = cockpitOk ? liveCockpit.curve : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
       const cockpitAvgRate = cockpitOk ? liveCockpit.avgDailyRate : 3400;
       const cockpitActual = cockpitCurve.map((c) => c.total_charge);
-      const cockpitPace = cockpitCurve.map((_, i) => Math.round(cockpitAvgRate * (i + 1)));
+      // FIXED 16 Jul 2026 (deep re-audit #4): was `cockpitAvgRate * (i + 1)` -- i is this row's
+      // POSITION in cockpitCurve, not the real day-of-month. daily_financial_snapshot doesn't
+      // necessarily get a row every single calendar day (confirmed live via
+      // probe-cockpit-pace-coverage.js: the underlying 3-month avgDailyRate was correct at £47,161/
+      // day, but the widget showed a pace of £94,322 at day 15 -- exactly 47,161 × 2, meaning the
+      // curve only had 2 rows so far this month, not 15). The label line right below this already
+      // derives the true day-of-month from c.date for the same reason -- reuse that here instead of
+      // the array index so a sparse curve doesn't understate the pace line.
+      const cockpitPace = cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? new Date(c.date).getDate() : (i + 1))));
       const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
       const cockpitToDate = cockpitActual[cockpitActual.length - 1] || 0;
       const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
