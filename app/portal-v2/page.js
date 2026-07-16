@@ -2202,7 +2202,13 @@ export default function PortalV2Page() {
         // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
         // up has it, this one never did, so this card never showed the green LIVE badge even while
         // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
-        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        // FIXED 16 Jul 2026 (deep re-audit, self-match bug): reservationConversions used to inflate
+        // itself — a reservation created this period would match against "reservation emails this
+        // period" and trivially match its own row. Fixed at the source (lib/reportMap.js), which
+        // dropped the live rate from 19.6% to ~3%. That's honest but likely still an undercount —
+        // most phone/walk-in leads never have a usable email to match on — so tooltip now says so
+        // instead of implying an exact match against legacy's own figure.
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100.\nMatched by email between enquiry and reservation records — many leads (especially phone/walk-in) have no usable email, so this likely understates the true rate. Treat as a lower bound, not an exact match to legacy.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -2267,7 +2273,7 @@ export default function PortalV2Page() {
           ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nTotal inquiries per month. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100, per month. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100, per month. Solid = trailing 12 months; dashed = same 12 months a year earlier.\nMatched by email — likely a lower bound, not an exact match to legacy (see the Enquiry → Reservation stat card).', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
@@ -2309,7 +2315,7 @@ export default function PortalV2Page() {
       } : null;
       out.tables.push({
         title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nInquiry counts by channel per site; Conversion % = reservation conversions ÷ inquiries × 100. Totals row is sum-then-divide.',
+        tip: 'Report: InquiryTracking.\nInquiry counts by channel per site; Conversion % = reservation conversions ÷ inquiries × 100. Totals row is sum-then-divide.\nMatched by email — likely a lower bound, not an exact match to legacy.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
