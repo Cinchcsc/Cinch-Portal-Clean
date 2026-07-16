@@ -1579,7 +1579,7 @@ export default function PortalV2Page() {
         // global date-range picker is set to a past month, by design (there's no historical concept of
         // "how many reservations were open on a past date" — SiteLink doesn't track that).
         liveSites
-          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts row count. Live snapshot only — always today\'s pipeline, not the selected period.', tiles: [
+          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList); dSchedOut (ScheduledMoveOuts).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts rows with dSchedOut not yet passed (excludes stale past-dated rows SiteLink never clears from this report). Live snapshot only — always today\'s pipeline, not the selected period.', tiles: [
               { value: intFmt(liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0)), label: 'Reservations', delta: null, dir: null },
               { value: intFmt(liveSites.reduce((a, s) => a + (s.scheduledOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
               { value: (() => { const n = liveSites.reduce((a, s) => a + (s.activeReservations || 0) - (s.scheduledOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
@@ -1682,13 +1682,9 @@ export default function PortalV2Page() {
           : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '£18.40', label: 'Avg per new move-in (n=11)', delta: null, dir: null }] },
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
-        // Autobill Conversion: live-wired from /api/portfolio's totals. Renamed from "Autobill" (2
-        // Jul 2026, widget name review) to match the Ancillaries page's identical metric/tile —
-        // both now compute "new autobilled customers / total new customers" per the legacy tooltip,
-        // not the old whole-book autobill rate (kept as kpiT.autobillPC_allTenants if ever needed).
-        kpiT
-          ? { title: 'Autobill Conversion', live: true, tiles: [{ value: (kpiT.autobillPC ?? 0).toFixed(1) + '%', label: 'Autobill conversion', ...deltaTick(kpiT.autobillPC, kpiPrevT && kpiPrevT.autobillPC, 'pct') }], hasViz: true, el: <Donut pct={kpiT.autobillPC ?? 0} color={C.blue} /> }
-          : { title: 'Autobill Conversion', tiles: [{ value: '86%', label: 'Autobill conversion', delta: '3%', dir: 'down' }], hasViz: true, el: <Donut pct={86} color={C.blue} /> },
+        // Autobill Conversion — REMOVED from the KPI page 16 Jul 2026 (Michael's manual audit).
+        // Still lives on the Ancillaries page (same metric/tile, kpiT.autobillPC) — this was a
+        // straight duplicate between the two pages, not a data bug.
         // Customer Churn: legacy formula is trailing-12-month move-outs / average occupancy over the
         // same 12 months (confirmed 2 Jul 2026). Live-wired (3 Jul 2026) against `liveHistory`
         // (portfolio history, one point per stored month — see lib/buildPayload.js) once at least 12
@@ -1908,33 +1904,26 @@ export default function PortalV2Page() {
         columns: officeSSColumns, rows: ssRows, totalsLabel: 'Total',
         totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate),
       });
-      // Occupied Area by % of CLA: live-wired from /api/portfolio's per-site array. area <- occA,
-      // cla <- claA (Current Lettable Area, from lib/reportMap.js's occupancy parser), claPct <- areaPC
-      // (same occA/claA-with-occA/totA-fallback rule used everywhere else, e.g. recordFor() in
-      // lib/buildPayload.js). Same "no region field on live data" gap as the other live tables.
+      // Occupied Area by % of CLA — by Store: CONVERTED from a table to a StoreBarChart 16 Jul 2026
+      // (Michael's manual audit) — same per-store comparison pattern as its sibling "Occupied Area
+      // (% of MLA) by Store" above. area <- occA, cla <- claA (Current Lettable Area, from
+      // lib/reportMap.js's occupancy parser), claPct <- areaPC (same occA/claA-with-occA/totA-
+      // fallback rule used everywhere else, e.g. recordFor() in lib/buildPayload.js).
       const liveClaRows = liveSites ? liveSites.map((s) => ({
         name: s.name, area: s.occA || 0, cla: s.claA || 0, claPct: s.areaPC || 0,
       })) : null;
-      if (!liveClaRows) debugWarn('[portal-v2] Occupied Area by % of CLA table rendering with mock RAW_STORES data (no live sites available).');
+      if (!liveClaRows) debugWarn('[portal-v2] Occupied Area by % of CLA chart rendering with mock RAW_STORES data (no live sites available).');
       const claRowsAll = liveClaRows || fs.map((s) => ({ name: s.name, region: s.region, area: s.area, cla: Math.round(s.area / (s.claPct / 100)), claPct: s.claPct }));
-      // Totals row: area sums; % of CLA re-derived from the sums (kpiT.claPC on the live path).
+      // Average bar: % of CLA re-derived from the sums (kpiT.claPC on the live path) — same
+      // sum-then-divide convention as every other portfolio average on this page.
       const claTotals = (() => {
         const area = claRowsAll.reduce((a, r) => a + (r.area || 0), 0), cla = claRowsAll.reduce((a, r) => a + (r.cla || 0), 0);
         return { area, cla, claPct: kpiT ? (kpiT.claPC ?? 0) : (cla ? +(area / cla * 100).toFixed(1) : 0) };
       })();
-      out.tables.push({
-        title: 'Occupied Area by % of CLA — by Store', live: !!liveClaRows, pageSize: 10, wide: true, totals: claTotals, totalsLabel: 'Total',
-        tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100 per site; totals row is sum-then-divide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.',
-        columns: liveClaRows ? [
-          { key: 'name', label: 'Location', type: 'text' },
-          { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' }, { key: 'cla', label: 'CLA (ft²)', type: 'ft', align: 'right' },
-          { key: 'claPct', label: '% of CLA', type: 'pct', align: 'right', color: 'threshold' },
-        ] : [
-          { key: 'name', label: 'Location', type: 'text' }, { key: 'region', label: 'Region', type: 'text' },
-          { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' }, { key: 'cla', label: 'CLA (ft²)', type: 'ft', align: 'right' },
-          { key: 'claPct', label: '% of CLA', type: 'pct', align: 'right', color: 'threshold' },
-        ],
-        rows: claRowsAll,
+      out.chartCards.push({
+        title: 'Occupied Area by % of CLA — by Store',
+        tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100 per site. Average bar = portfolio-weighted (sum-then-divide).\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.',
+        el: <StoreBarChart items={claRowsAll.map((s) => ({ label: s.name, disp: (s.claPct || 0).toFixed(1) + '%', value: s.claPct || 0, color: (s.claPct || 0) >= 85 ? C.green : (s.claPct || 0) >= 75 ? C.amber : C.red }))} opts={{ zero: false, average: { value: claTotals.claPct, disp: claTotals.claPct.toFixed(1) + '%' } }} />,
       });
     }
 
