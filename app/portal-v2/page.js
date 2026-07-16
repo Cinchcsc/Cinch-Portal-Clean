@@ -1740,12 +1740,26 @@ export default function PortalV2Page() {
         // VarFromStdRate table — every currently-occupied unit at the site, bucketed by how far its
         // rent sits from standard rate). A live snapshot regardless of month, same "as of now, not
         // true history" caveat as RentRoll/OccupancyStatistics elsewhere in this app.
+        // FIXED 16 Jul 2026 (Michael, external verification against real SiteLink exports): this used
+        // to silently fall back to hardcoded sample numbers (145/74/61/33/1) whenever a past month was
+        // selected, with no on-screen indication they were fake — confirmed live to have fooled a
+        // separate verification pass into treating them as real June figures. Root cause: VarFromStdRate
+        // extraction was only added to the parser 9 Jul 2026, so any month locked in before then (every
+        // month through June 2026) genuinely has no stored data for this field — not a bug to fix, a
+        // permanent gap (SiteLink has no historical "as of" mode and raw_response wasn't retained early
+        // enough to reparse). Now shows an honest "not available" state instead of invented numbers.
         (() => {
           const buckets = kpiT?.varFromStdRate;
-          const mockBuckets = [{ bucket: '< 0%', count: 145 }, { bucket: '0 - 15%', count: 74 }, { bucket: '15 - 30%', count: 61 }, { bucket: '30 - 50%', count: 33 }, { bucket: '> 50%', count: 1 }];
-          const data = (buckets && buckets.length ? buckets : mockBuckets).map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue }));
-          if (!buckets || !buckets.length) debugWarn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
-          return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', tip: 'Report: ManagementSummary (hidden VarFromStdRate table).\nFields: sVarFromStdRateCat, VarFromStdRateCount.\nCalculation: Count of currently-occupied units per bucket of (rent − standard rate) ÷ standard rate. Live snapshot, not scoped to the selected period.', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
+          const hasData = !!(buckets && buckets.length);
+          if (!hasData) debugWarn('[portal-v2] Move-in Variance (whole-book): no varFromStdRate stored for the selected period (only captured for months locked since 9 Jul 2026).');
+          const data = hasData ? buckets.map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue })) : [];
+          return {
+            title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)',
+            tip: 'Report: ManagementSummary (hidden VarFromStdRate table).\nFields: sVarFromStdRateCat, VarFromStdRateCount.\nCalculation: Count of currently-occupied units per bucket of (rent − standard rate) ÷ standard rate. Live snapshot, not scoped to the selected period.\nNote: not available for months locked before 9 Jul 2026 — this field didn\'t exist in the pipeline yet, not a data error.',
+            el: hasData
+              ? <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} />
+              : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not available for this period — only captured for months locked since 9 Jul 2026.</div>,
+          };
         })(),
         // Occupancy by Floor (10 Jul 2026, roadmap #132/#139 — previously blocked: UnitStatus, the
         // SiteLink report carrying floor data, isn't a callable SOAP method, confirmed against the
@@ -2678,6 +2692,13 @@ export default function PortalV2Page() {
       // Occupancy Decline vs Last Month" and "Watchdog — Delinquency by Site", two NEW per-site
       // watchlists built from data already pulled (livePrevSites + s.debtors) — see below.
       const dmSites = liveSites || [];
+      // FIXED 16 Jul 2026 (Michael, external verification against real SiteLink exports: "Discounted
+      // Units in Fully Occupied Groups reads 0 in month views") — unitRows (RentRoll's per-unit array
+      // this table is built from) was only added to the pipeline 14 Jul 2026, so any month locked in
+      // before then (every month through June 2026) has no stored unitRows at all — discountedRows
+      // below can only ever be empty for those months, not because there's genuinely nothing to show.
+      // Distinguishes that from a real "0 matches" so the table doesn't imply a false all-clear.
+      const hasUnitRowData = dmSites.some((s) => (s.unitRows || []).length > 0);
       const discountedRows = [];
       const groupRows = [];
       for (const s of dmSites) {
@@ -2812,7 +2833,7 @@ export default function PortalV2Page() {
       out.chartCards = [];
       out.tables = [
         { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true, collapsible: true,
-          tip: 'Report: RentalActivity (group occupancy); RentRoll (per-unit rate).\nFields: TotalUnits, Vacant (RentalActivity, group-level); dcStdRate, dcRent, sUnit (RentRoll, per unit).\nCalculation: A unit qualifies when its (type, size) group has Vacant = 0 and its own dcRent < dcStdRate. Discount % = (dcStdRate − dcRent) ÷ dcStdRate × 100. Use the filters above to narrow this down.',
+          tip: 'Report: RentalActivity (group occupancy); RentRoll (per-unit rate).\nFields: TotalUnits, Vacant (RentalActivity, group-level); dcStdRate, dcRent, sUnit (RentRoll, per unit).\nCalculation: A unit qualifies when its (type, size) group has Vacant = 0 and its own dcRent < dcStdRate. Discount % = (dcStdRate − dcRent) ÷ dcStdRate × 100. Use the filters above to narrow this down.\nNote: needs RentRoll\'s per-unit detail, only captured for months locked since 14 Jul 2026 — earlier months will show as empty, not zero.',
           headerExtra: dmWatchFilterControls,
           // CONDENSED 15 Jul 2026 (Michael: "too much going on"): Type + Area merged into one "Unit
           // Type" column (e.g. "Self Storage · 50 ft²") — same information, one less column to scan.
@@ -2824,7 +2845,7 @@ export default function PortalV2Page() {
             { key: 'rent', label: 'Actual Rent', type: 'money2', align: 'right' },
             { key: 'discountPct', label: 'Discount %', type: 'pct', align: 'right' },
           ],
-          rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, typeArea: null, stdRate: null, rent: null, discountPct: null }],
+          rows: dRowsFiltered.length ? dRowsFiltered : [{ store: hasUnitRowData ? '(no discounted units match this filter)' : '(unit-level detail not available for this period — only captured for months locked since 14 Jul 2026)', unit: null, typeArea: null, stdRate: null, rent: null, discountPct: null }],
         },
         { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true, collapsible: true,
           tip: 'Report: RentalActivity (units, occupancy, rates); RentRoll (Avg Stay).\nFields: TotalUnits, Occupied, StandardRate, OccupiedDollarPerArea (RentalActivity); dLeaseDate (RentRoll, per unit).\nCalculation: Occupied % = Occupied ÷ TotalUnits × 100. Standard Rate = StandardRate (list rate, no concessions). Effective Rate = OccupiedDollarPerArea (reflects concessions). Avg Stay = mean(today − dLeaseDate) across the group\'s units, in days — excludes re-lease/vacancy time (not tracked by SiteLink). Use the filters above to narrow this down.',
