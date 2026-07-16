@@ -2452,7 +2452,16 @@ export default function PortalV2Page() {
           occupiedRent: R2(o.occupiedRent), grossPotential: R2(o.grossPotential),
         })).sort((a, b) => b.totalUnits - a.totalUnits);
       };
-      const rows = groupByType(byTypeSize);
+      // FIXED 16 Jul 2026 (deep re-audit #3): Parking and Mailbox units are conventionally priced
+      // per space/box, not per square foot — confirmed live via this exact page: Parking showed
+      // £3,531.71/ft²/yr actual (£5,697.67 list) and Mailbox £248.39/ft²/yr, versus every genuinely
+      // area-priced type sitting in a sane £13-38/ft²/yr range. SiteLink's own recorded Area for
+      // these types isn't a meaningful square-footage figure (they're not sized/sold by ft² at all),
+      // so dividing rent by it produces a nonsensical number rather than a real rate. Blanking the
+      // £/ft² fields for these types only — unit counts, occupancy %, Avg List Rate (£/mo), Gross
+      // Potential and Actual Revenue are all real £/mo or count figures and stay as-is.
+      const NOT_AREA_PRICED_TYPES = new Set(['Parking', 'Mailbox']);
+      const rows = groupByType(byTypeSize).map((r) => NOT_AREA_PRICED_TYPES.has(r.type) ? { ...r, totalDollarPerArea: null, occupiedDollarPerArea: null } : r);
       // "vs last month" totals-row deltas (task #121, 10 Jul 2026) — same computeTotals(livePrevSites)
       // pattern used elsewhere, run through the SAME groupByType() so the comparison is apples-to-apples.
       const umTPrev = livePrevSites ? computeTotals(livePrevSites) : null;
@@ -2473,7 +2482,7 @@ export default function PortalV2Page() {
 
       // 3. Rate Realization Gap — list vs actual achieved £/ft², both already annualised, so this
       // compares cleanly at ANY grain (type-level here) without needing a single unit's raw area.
-      const gapRows = rows.map((r) => ({ ...r, gapPct: r.totalDollarPerArea ? R2((r.occupiedDollarPerArea - r.totalDollarPerArea) / r.totalDollarPerArea * 100) : 0 }));
+      const gapRows = rows.map((r) => ({ ...r, gapPct: r.totalDollarPerArea == null ? null : (r.totalDollarPerArea ? R2((r.occupiedDollarPerArea - r.totalDollarPerArea) / r.totalDollarPerArea * 100) : 0) }));
       const gapCols = [
         { key: 'type', label: 'Type', type: 'text' },
         { key: 'totalDollarPerArea', label: 'List £/ft²/yr', type: 'money2', align: 'right' },
@@ -2503,8 +2512,8 @@ export default function PortalV2Page() {
       out.statCards = [];
       out.chartCards = [];
       out.tables = [
-        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity, grouped by unit type.\nOccupancy % = occupied ÷ total × 100. Actual £/ft² = occupied rent ÷ occupied area × 12.', columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
-        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nGap % = (actual rate − list rate) ÷ list rate × 100, per unit type.', columns: gapCols, rows: gapRows },
+        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity, grouped by unit type.\nOccupancy % = occupied ÷ total × 100. Actual £/ft² = occupied rent ÷ occupied area × 12.\nBlank £/ft² for Parking/Mailbox — those are priced per space/box, not per ft².', columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
+        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nGap % = (actual rate − list rate) ÷ list rate × 100, per unit type.\nParking/Mailbox excluded — priced per space/box, not per ft², so a £/ft² comparison isn\'t meaningful.', columns: gapCols, rows: gapRows },
         { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nMove-ins, move-outs and transfers per unit type. Type-level detail — the KPI page card is portfolio-wide only.', columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
         { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nCapture % = actual revenue ÷ gross potential (list rate on all units) × 100.', columns: captureCols, rows: captureRows },
       ];
