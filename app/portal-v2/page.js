@@ -1115,10 +1115,23 @@ export default function PortalV2Page() {
   // skeleton cleared early and exposed whatever liveSitesRaw held at that instant (stale/partial)
   // until the real response landed a moment later and replaced it. Now waits for the fetch's own
   // completion callback; the timer is only a safety net so the skeleton can't get stuck forever.
+  // FIXED 16 Jul 2026 (deep re-audit: caught a brief flash of fabricated RAW_STORES site names —
+  // Reading, Guildford, Basildon, etc. — on the Dashboard's Portfolio Occupancy / Rates per ft²
+  // tables). Root cause: this is the SAME bug class as the two fixes already documented above (a
+  // fixed timer racing a variable-latency network fetch), but in the safety net itself rather than
+  // the main path — the 4000ms safety timer was tight enough that a slow round trip (a Vercel
+  // serverless cold start on the first hit after idle, plus this function's own sequential
+  // unscoped-then-ranged /api/portfolio fetch chain) could still exceed it. When that happens the
+  // timer fires setLoading(false) BEFORE fetchLiveTotals's own completion callback, so the skeleton
+  // clears while liveSitesRaw is still null — exposing exactly one render's worth of the mock
+  // RAW_STORES fallback until the real fetch lands a moment later and replaces it. Bumped from
+  // 4000ms to 15000ms so the safety net only fires for a genuinely hung/failed fetch, not a slow-
+  // but-still-completing one; the real completion callback (which always fires first in the normal
+  // case) is unaffected.
   const reload = () => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
-    reloadTimer.current = setTimeout(() => setLoading(false), 4000);
+    reloadTimer.current = setTimeout(() => setLoading(false), 15000);
     fetchLiveTotals(() => { clearTimeout(reloadTimer.current); setLoading(false); });
   };
 
@@ -1133,7 +1146,13 @@ export default function PortalV2Page() {
     // visually identical to the old bug even though the mechanism is completely different. Fix: hide
     // the skeleton when the real fetch chain actually finishes; this timer is now only a safety net so
     // the skeleton can't get stuck forever if a fetch hangs.
-    const safety = setTimeout(() => setLoading(false), 4000);
+    // BUMPED 16 Jul 2026 (deep re-audit, mock-data-flash bug): 4000ms was still tight enough that a
+    // slow round trip (Vercel cold start + this function's sequential unscoped-then-ranged fetch
+    // chain) could exceed it, firing this "safety" timer BEFORE the real completion callback and
+    // clearing the skeleton onto one render's worth of RAW_STORES mock data (fabricated site names)
+    // until the real fetch landed a moment later. See reload()'s matching fix above for the full
+    // writeup — same bug class, same fix (generous timer, only a true last resort now).
+    const safety = setTimeout(() => setLoading(false), 15000);
     if (!initialFetchStarted.current) {
       initialFetchStarted.current = true;
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
