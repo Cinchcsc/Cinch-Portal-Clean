@@ -1327,13 +1327,13 @@ export default function PortalV2Page() {
         // whole dashboard. If you see 0s here, re-run `npm run pull` to refresh portal_payload.
         const claPC = t.claPC ?? 0;
         out.kpiRow = [
-          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\n% of CLA (Current Lettable Area) = occupied area ÷ area excluding unrentable units × 100.' },
-          { label: 'Occupied Units', value: intFmt(t.occ ?? 0), delta: null, dir: null, sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nOccupied units out of total units.' },
+          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ(Area × Occupied) ÷ Σ(Area × (TotalUnits − Unrentable)) × 100.' },
+          { label: 'Occupied Units', value: intFmt(t.occ ?? 0), delta: null, dir: null, sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: Σ Occupied units of Σ TotalUnits, summed across all stores.' },
           // ADDED 16 Jul 2026 (Michael: "total occupancy in sqft, it is a column in the occupancy
           // statistics excel"). t.occA already existed — computeTotals() sums each site's occA
           // (occupied area) — and was already used internally for the "Rented Area by Store" chart's
           // average bar; this just surfaces that same portfolio total as its own headline tile.
-          { label: 'Total Occupancy (sqft)', value: intFmt(t.occA ?? 0) + ' ft²', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nTotal occupied area (Area × Occupied), summed across all stores.' },
+          { label: 'Total Occupancy (sqft)', value: intFmt(t.occA ?? 0) + ' ft²', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied.\nCalculation: Σ(Area × Occupied), summed across all stores.' },
         ];
       } else {
         out.kpiRow = [
@@ -1368,7 +1368,7 @@ export default function PortalV2Page() {
         : null;
       out.tables = [{
         title: 'Portfolio Occupancy', live: !!liveOccRows, pageSize: 12, wide: true, totals: occTotals, totalsPrev: occTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: OccupancyStatistics (Occupied, Total, % of CLA); RentRoll (Rent Roll).\nOccupancy % = occupied ÷ total units × 100. Rent Roll = total rent on occupied units.',
+        tip: 'Reports: OccupancyStatistics (Occupied, Total, % of CLA); RentRoll (Rent Roll).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, bRented (RentRoll).\nCalculation: Occupancy % = Occupied ÷ TotalUnits × 100. % of CLA = occupied area ÷ CLA area × 100. Rent Roll = Σ dcRent on occupied (bRented) units.',
         columns: liveOccRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' }, { key: 'total', label: 'Total', type: 'int', align: 'right' },
@@ -1409,7 +1409,7 @@ export default function PortalV2Page() {
         : null;
       out.tables.push({
         title: 'Rates per ft² (All Stores)', live: !!liveRateRows, pageSize: 12, wide: true, totals: rateTotals, totalsPrev: rateTotalsPrev, totalsLabel: 'Average',
-        tip: 'Report: RentRoll (standard Rate); True Revenue report (Real Rate); OccupancyStatistics (Occupied Area).\nRate = standard rate ÷ area × 12. Real Rate = actual billed revenue ÷ total area × 12 (falls back to rent if True Revenue wasn\'t pulled).\nNote: Real Rate is a known open accuracy item.',
+        tip: 'Reports: RentRoll (Rate, and Real Rate fallback); True Revenue custom report (Real Rate); OccupancyStatistics (Occupied Area).\nFields: dcStdRate, dcRent, Area/Area1, bRented (RentRoll); TruePeriod (True Revenue); Area, Occupied (OccupancyStatistics).\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12. Real Rate = Σ TruePeriod ÷ Σ total area × annualization factor (falls back to Σ dcRent ÷ Σ area × 12 if True Revenue wasn\'t pulled).\nNote: Real Rate is a known open accuracy item.',
         columns: liveRateRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'selfRate', label: 'Self Storage Rate', type: 'money2', align: 'right' }, { key: 'totalRate', label: 'Total Rate', type: 'money2', align: 'right' },
@@ -1429,7 +1429,7 @@ export default function PortalV2Page() {
           // sourced from ManagementSummary) across all live sites — same live-data pattern as Enquiries.
           if (liveSites) {
             const sum = (k) => liveSites.reduce((a, s) => a + (s[k] || 0), 0);
-            return { title: 'Move-ins & Move-outs', tip: 'Move-ins/Move-outs — Report: ManagementSummary.\nNet ft² — Report: MoveInsAndMoveOuts, sqft moved in minus sqft moved out.', tiles: [
+            return { title: 'Move-ins & Move-outs', tip: 'Reports: ManagementSummary (Move-ins, Move-outs); MoveInsAndMoveOuts (Net ft²).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Move-ins/Move-outs = this month\'s counts. Net ft² = Σ MovedInArea − Σ MovedOutArea, summed across all stores.', tiles: [
               { value: intFmt(sum('moveIns')), label: 'Move-ins', delta: null, dir: null },
               { value: intFmt(sum('moveOuts')), label: 'Move-outs', delta: null, dir: null },
               { value: intFmt(sum('netArea')) + ' ft²', label: 'Net ft²', delta: null, dir: null },
@@ -1446,7 +1446,7 @@ export default function PortalV2Page() {
           // ALL live sites — same "no region filter on live data" caveat as the rate table/charts.
           if (liveSites) {
             const sum = (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0);
-            return { title: 'Enquiries', tip: 'Report: InquiryTracking, filtered by date placed.\nPhone/Walk-ins/Web counts by inquiry type; Total = sum of all channels.', tiles: [
+            return { title: 'Enquiries', tip: 'Report: InquiryTracking.\nFields: sInquiryType (Phone/WalkIn/Web/EMail), dPlaced.\nCalculation: Phone/Walk-ins/Web = counts where sInquiryType matches and dPlaced falls in the selected period (Web tile includes EMail). Total = sum of all four channels.', tiles: [
               { value: intFmt(sum('phone')), label: 'Phone', delta: null, dir: null },
               { value: intFmt(sum('walkin')), label: 'Walk-ins', delta: null, dir: null },
               { value: intFmt(sum('web')), label: 'Web', delta: null, dir: null },
@@ -1481,9 +1481,9 @@ export default function PortalV2Page() {
       const avgSSRate = (liveRateBars && t) ? (t.ssRate ?? 0) : (fs.length ? fs.reduce((a, s) => a + s.rate, 0) / fs.length : 0);
       const avgCla = (liveClaBars && t) ? (t.claPC ?? 0) : (fs.length ? fs.reduce((a, s) => a + s.claPct, 0) / fs.length : 0);
       out.chartCards = [
-        { title: 'Rented Area by Store', tip: 'Report: OccupancyStatistics.\nOccupied area (Area × Occupied) per store. Average bar = mean across shown stores.', el: <StoreBarChart items={liveAreaBars || fs.map((s) => ({ label: s.name, value: s.area, disp: intFmt(s.area) + ' ft²', color: C.blue }))} opts={{ average: { value: avgArea, disp: intFmt(avgArea) + ' ft²' } }} /> },
-        { title: 'Self Storage Rate per ft² by Store', tip: 'Report: RentRoll.\nStandard rate per ft² per store, occupied self storage units. Average bar = portfolio-weighted, not a simple mean.', el: <StoreBarChart items={liveRateBars || fs.map((s) => ({ label: s.name, value: s.rate, disp: '£' + s.rate.toFixed(2), color: C.teal }))} opts={{ average: { value: avgSSRate, disp: '£' + avgSSRate.toFixed(2) } }} /> },
-        { title: 'Occupied Area % of CLA by Store', tip: 'Report: OccupancyStatistics.\n% of CLA per store. Average bar = portfolio-weighted.', el: <StoreBarChart items={liveClaBars || fs.map((s) => ({ label: s.name, value: s.claPct, disp: s.claPct.toFixed(1) + '%', color: thresholdColorFor(s.claPct) }))} opts={{ zero: false, average: { value: avgCla, disp: avgCla.toFixed(1) + '%' } }} /> },
+        { title: 'Rented Area by Store', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied.\nCalculation: Occupied area = Σ(Area × Occupied) per store. Average bar = mean across shown stores.', el: <StoreBarChart items={liveAreaBars || fs.map((s) => ({ label: s.name, value: s.area, disp: intFmt(s.area) + ' ft²', color: C.blue }))} opts={{ average: { value: avgArea, disp: intFmt(avgArea) + ' ft²' } }} /> },
+        { title: 'Self Storage Rate per ft² by Store', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bRented, sTypeName ("Indoor Self Storage").\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, occupied self storage units only, per store. Average bar = portfolio-weighted, not a simple mean.', el: <StoreBarChart items={liveRateBars || fs.map((s) => ({ label: s.name, value: s.rate, disp: '£' + s.rate.toFixed(2), color: C.teal }))} opts={{ average: { value: avgSSRate, disp: '£' + avgSSRate.toFixed(2) } }} /> },
+        { title: 'Occupied Area % of CLA by Store', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, TotalUnits, Unrentable.\nCalculation: % of CLA = occupied area ÷ CLA area × 100, per store. Average bar = portfolio-weighted.', el: <StoreBarChart items={liveClaBars || fs.map((s) => ({ label: s.name, value: s.claPct, disp: s.claPct.toFixed(1) + '%', color: thresholdColorFor(s.claPct) }))} opts={{ zero: false, average: { value: avgCla, disp: avgCla.toFixed(1) + '%' } }} /> },
       ];
       customWidgets.forEach((w) => {
         // Custom widgets: use live per-site records when a live pull is loaded (evalWidget's `live`
@@ -1526,15 +1526,15 @@ export default function PortalV2Page() {
         // 8 Jul 2026 alongside DataTable's totals-row deltas, so "vs last month" works the same way
         // as every other tile on this card.
         kpiT
-          ? { title: 'Total Store Occupancy', live: true, tip: 'Report: OccupancyStatistics (Occupancy, Occupied Area); RentRoll (Rate per ft²).\nOccupancy = occupied ÷ total units × 100. Rate = standard rate ÷ area × 12.', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }, { value: intFmt(kpiT.occA ?? 0) + ' ft²', label: 'Total Occupancy (sqft)', ...deltaTick(kpiT.occA, kpiPrevT && kpiPrevT.occA, 'ft') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
+          ? { title: 'Total Store Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy, Total Occupancy sqft); RentRoll (Rate per ft²).\nFields: Occupied, TotalUnits, Area (OccupancyStatistics); dcStdRate, Area/Area1, bRented (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Total Occupancy (sqft) = Σ(Area × Occupied).', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }, { value: intFmt(kpiT.occA ?? 0) + ' ft²', label: 'Total Occupancy (sqft)', ...deltaTick(kpiT.occA, kpiPrevT && kpiPrevT.occA, 'ft') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
           : { title: 'Total Store Occupancy', tiles: [{ value: occPct.toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£28.46', label: 'Rate per ft²', delta: '£0.22', dir: 'up' }, { value: intFmt(agg.area) + ' ft²', label: 'Total Occupancy (sqft)', delta: '820', dir: 'up' }], note: intFmt(agg.occupied) + ' / ' + intFmt(agg.total) + ' units occupied' },
         kpiT
           // Renamed 8 Jul 2026 (Michael: KPI page widget name, "Indoor Self Storage" -> "Self Storage")
           // -- display label only, no key/logic reads this string (grep-confirmed).
-          ? { title: 'Self Storage', live: true, tip: 'Report: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nSame formulas as Total, scoped to self storage.', tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
+          ? { title: 'Self Storage', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Same formulas as Total Store Occupancy, scoped to self storage units only.', tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
           : { title: 'Self Storage', tiles: [{ value: (occPct + 1.1).toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£29.74', label: 'Rate per ft²', delta: '£0.20', dir: 'up' }] },
         kpiT
-          ? { title: 'Offices Occupancy', live: true, tip: 'Report: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — offices only.\nNote: uses actual rent, not standard rate, unlike Total/Self Storage.', tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') }] }
+          ? { title: 'Offices Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (rent, Area) — offices only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate, unlike Total/Self Storage).', tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') }] }
           : { title: 'Offices Occupancy', tiles: [{ value: '78.0%', label: 'Occupancy', delta: '3%', dir: 'up' }, { value: '£61.90', label: 'Rate per ft²', delta: null, dir: null }] },
         // Reservations vs Move-outs: REBUILT 6 Jul 2026 (Michael's idea). The old ReservationList/
         // ScheduledMoveOuts-based version was confirmed structurally live-only on BOTH sides —
@@ -1579,7 +1579,7 @@ export default function PortalV2Page() {
         // global date-range picker is set to a past month, by design (there's no historical concept of
         // "how many reservations were open on a past date" — SiteLink doesn't track that).
         liveSites
-          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Report: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nLive snapshot only — always today\'s pipeline, not the selected period.', tiles: [
+          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts row count. Live snapshot only — always today\'s pipeline, not the selected period.', tiles: [
               { value: intFmt(liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0)), label: 'Reservations', delta: null, dir: null },
               { value: intFmt(liveSites.reduce((a, s) => a + (s.scheduledOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
               { value: (() => { const n = liveSites.reduce((a, s) => a + (s.activeReservations || 0) - (s.scheduledOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
@@ -1606,7 +1606,7 @@ export default function PortalV2Page() {
         (() => {
           if (liveSites && liveSites.length) {
             const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
-            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Report: ReservationList × RentRoll (avg area per unit type).\nEstimate only — reservations have no area field, so this uses each type\'s average unit size.', tiles: [{ value: intFmt(sqft) + ' ft²', label: 'Reserved', delta: null, dir: null }] };
+            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Σ active reservations per UnitTypeID × that type\'s average unit area across the site. Estimate only — ReservationList has no area field of its own.', tiles: [{ value: intFmt(sqft) + ' ft²', label: 'Reserved', delta: null, dir: null }] };
           }
           return { title: 'Reserved Scheduled Sqft', tiles: [{ value: intFmt(2600 * f) + ' ft²', label: 'Reserved', delta: '140', dir: 'up' }] };
         })(),
@@ -1617,7 +1617,7 @@ export default function PortalV2Page() {
         // the source "ManagementSummary", but the fields actually live in PastDueBalances/
         // OccupancyStatistics in this pipeline). Total = raw £ overdue, summed across sites.
         kpiT
-          ? { title: 'Debtor Levels', live: true, tip: 'Report: PastDueBalances (overdue units/£); OccupancyStatistics (occupied units/rent).\n% Tenants = overdue units ÷ occupied units × 100. % Rent Roll = overdue £ ÷ occupied rent × 100.\nLower is better.', tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', ...deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct', true) }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', ...deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct', true) }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole', true) }] }
+          ? { title: 'Debtor Levels', live: true, tip: 'Reports: PastDueBalances (overdue units/£, 30+ days); OccupancyStatistics (occupied units/rent).\nFields: ChargeBalance (or RentBal+LateFeeBal+POSBal+OtherChargesBal+TaxesBal), DaysLate (PastDueBalances); Occupied, ActualOccupied (OccupancyStatistics).\nCalculation: % Tenants = overdue (30+ day) accounts ÷ occupied units × 100. % Rent Roll = overdue (30+ day) £ ÷ occupied rent × 100. Lower is better.', tiles: [{ value: (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%', label: '% Tenants', ...deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct', true) }, { value: (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% Rent Roll', ...deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct', true) }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole', true) }] }
           : { title: 'Debtor Levels', tiles: [{ value: '1.8%', label: '% Tenants', delta: '0%', dir: null }, { value: '0.6%', label: '% Rent Roll', delta: '0%', dir: null }, { value: money(2790 * f), label: 'Total', delta: '£93', dir: 'up' }] },
         // Move-ins & Move-outs: was present on the legacy portal's KPIs page (missed when this page
         // was first built — it only existed on the Dashboard page here) — same live-data pattern as
@@ -1646,7 +1646,7 @@ export default function PortalV2Page() {
           const prevNetArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.netArea || 0), 0) : null;
           const prevMoveInArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0) : null;
           const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
-          return { title: 'Move-ins & Move-outs', live: true, tip: 'Report: ManagementSummary (counts); MoveInsAndMoveOuts (sqft).\nNet ft² = sqft in minus sqft out (out shown negative).', tiles: [
+          return { title: 'Move-ins & Move-outs', live: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count', true) },
               { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'ft') },
@@ -1664,7 +1664,7 @@ export default function PortalV2Page() {
           const moveInRate = (sites) => { const area = sites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0); return area ? R2(sites.reduce((a, s) => a + (s.moveInRateSum || 0), 0) / area * 12) : 0; };
           const rate = moveInRate(liveSites);
           const prevRate = livePrevSites ? moveInRate(livePrevSites) : null;
-          return { title: 'Move-In Rental Rate', live: true, tip: 'Report: MoveInsAndMoveOuts.\nRate achieved on this month\'s new move-ins only, not the whole portfolio.', tiles: [{ value: '£' + rate.toFixed(2), label: 'Per ft² (this month’s move-ins)', ...deltaTick(rate, prevRate, 'money') }] };
+          return { title: 'Move-In Rental Rate', live: true, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInRentalRate, MovedInArea.\nCalculation: Σ MovedInRentalRate ÷ Σ MovedInArea × 12. Rate achieved on this month\'s new move-ins only, not the whole portfolio.', tiles: [{ value: '£' + rate.toFixed(2), label: 'Per ft² (this month’s move-ins)', ...deltaTick(rate, prevRate, 'money') }] };
         })(),
         // Move-in Variance vs Standard Rate — this-period half (ADDED 9 Jul 2026, Michael's "build
         // both" decision, after the "verify you have everything" check confirmed exact source fields
@@ -1678,7 +1678,7 @@ export default function PortalV2Page() {
         // concept) or Customer Churn (genuinely blocked on 12+ months of history), there was no data
         // reason this one was skipped. Now wired the same way as every sibling card on this page.
         kpiT
-          ? { title: 'Move-in Variance vs Standard Rate', live: true, tip: 'Report: Discounts, new move-ins this period (deduplicated per unit).\nAverage £ discount vs. standard rate on new move-ins.', tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, ...deltaTick(kpiT.moveInVarianceAvg, kpiPrevT && kpiPrevT.moveInVarianceAvg, 'money') }] }
+          ? { title: 'Move-in Variance vs Standard Rate', live: true, tip: 'Report: Discounts.\nFields: sChgDesc ("Rent" rows only), dMovedIn, dcVariance, sUnitName.\nCalculation: Average dcVariance for units where dMovedIn falls in the selected period, deduplicated by unit (a billing cycle can post 2 rows/month).', tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, ...deltaTick(kpiT.moveInVarianceAvg, kpiPrevT && kpiPrevT.moveInVarianceAvg, 'money') }] }
           : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '£18.40', label: 'Avg per new move-in (n=11)', delta: null, dir: null }] },
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
@@ -1731,10 +1731,10 @@ export default function PortalV2Page() {
         ? liveRateIncBars.reduce((a, b) => a + b.value, 0)
         : fs.reduce((a, s) => a + Math.round((38 * f) / fs.length) + (s.occupied % 5), 0);
       out.chartCards = [
-        { title: 'Occupied Area (% of MLA) by Store', tip: 'Report: RentRoll.\nOccupied area ÷ total area × 100 (Maximum Lettable Area basis — different from the CLA-based % on the Dashboard).', el: <StoreBarChart items={liveMlaBars || fs.map((s) => ({ label: s.name, value: s.occPct, disp: s.occPct.toFixed(1) + '%', color: s.occPct >= 85 ? C.green : s.occPct >= 75 ? C.amber : C.red }))} opts={{ zero: false, average: { value: avgMla, disp: avgMla.toFixed(1) + '%' } }} /> },
-        { title: 'Units by Customer Type', tip: 'Report: RentRoll.\nShare of occupied units classified Business vs Personal.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }] : [{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
-        { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nStandard rate per ft² for Business vs Personal occupied units.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }] : [{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
-        { title: 'Rate Increases by Store (Current Month)', tip: 'Report: TenantRentChangeHistory.\nCount of rent increases posted this month, per site. Live current-month snapshot.', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
+        { title: 'Occupied Area (% of MLA) by Store', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, TotalUnits.\nCalculation: % of MLA = Σ(Area × Occupied) ÷ Σ(Area × TotalUnits) × 100, per store (Maximum Lettable Area basis — includes unrentable units, unlike the CLA-based % on the Dashboard).\nNote: corrected 16 Jul 2026 — this previously said "Report: RentRoll", but areaPCmla is actually sourced from OccupancyStatistics (lib/reportMap.js\'s area_pc_mla field).', el: <StoreBarChart items={liveMlaBars || fs.map((s) => ({ label: s.name, value: s.occPct, disp: s.occPct.toFixed(1) + '%', color: s.occPct >= 85 ? C.green : s.occPct >= 75 ? C.amber : C.red }))} opts={{ zero: false, average: { value: avgMla, disp: avgMla.toFixed(1) + '%' } }} /> },
+        { title: 'Units by Customer Type', tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany.\nCalculation: A unit is "Business" if bCorporate or bCommercial is set, or sCompany is non-blank; otherwise "Personal". Share = each segment\'s occupied units ÷ total occupied units × 100.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }] : [{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
+        { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bCorporate, bCommercial, sCompany.\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, computed separately for the Business and Personal segments.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }] : [{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
+        { title: 'Rate Increases by Store (Current Month)', tip: 'Report: TenantRentChangeHistory.\nFields: dcOldRate, dcNewRate.\nCalculation: Count of rows where dcNewRate > dcOldRate, posted this month, per site.', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
         // Move-in Variance vs Standard Rate — whole-book half (ADDED 9 Jul 2026, Michael's "build
         // both" decision). Live-wired from kpiT.varFromStdRate (ManagementSummary's hidden
         // VarFromStdRate table — every currently-occupied unit at the site, bucketed by how far its
@@ -1745,7 +1745,7 @@ export default function PortalV2Page() {
           const mockBuckets = [{ bucket: '< 0%', count: 145 }, { bucket: '0 - 15%', count: 74 }, { bucket: '15 - 30%', count: 61 }, { bucket: '30 - 50%', count: 33 }, { bucket: '> 50%', count: 1 }];
           const data = (buckets && buckets.length ? buckets : mockBuckets).map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue }));
           if (!buckets || !buckets.length) debugWarn('[portal-v2] Move-in Variance (whole-book) chart rendering with mock data (no live varFromStdRate available).');
-          return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', tip: 'Report: ManagementSummary.\nCurrently-occupied units bucketed by how far below standard rate they\'re billed. Live snapshot, not scoped to the selected period.', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
+          return { title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)', tip: 'Report: ManagementSummary (hidden VarFromStdRate table).\nFields: sVarFromStdRateCat, VarFromStdRateCount.\nCalculation: Count of currently-occupied units per bucket of (rent − standard rate) ÷ standard rate. Live snapshot, not scoped to the selected period.', el: <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} /> };
         })(),
         // Occupancy by Floor (10 Jul 2026, roadmap #132/#139 — previously blocked: UnitStatus, the
         // SiteLink report carrying floor data, isn't a callable SOAP method, confirmed against the
@@ -1766,7 +1766,7 @@ export default function PortalV2Page() {
           if (!floors || !floors.length) debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — run `npm run import:unit-status <file>` for at least one site.');
           const siteCount = liveFloorOcc?.sites?.length || 0;
           const title = siteCount ? `Occupancy by Floor (${siteCount} site${siteCount === 1 ? '' : 's'} imported: ${liveFloorOcc.sites.join(', ')})` : 'Occupancy by Floor (%)';
-          return { title, tip: 'Report: UnitStatus (manually imported export).\nOccupied ÷ total units by floor. Covers only sites imported so far.', el: <VBars items={rows} opts={{ max: 100 }} /> };
+          return { title, tip: 'Report: UnitStatus (manually imported export, not a live SiteLink API call).\nFields: floor, occupied, rentable.\nCalculation: Occupied ÷ total rentable units, grouped by floor. Covers only sites imported so far.', el: <VBars items={rows} opts={{ max: 100 }} /> };
         })(),
       ];
       const unitDefs = [['9 ft²', 'Locker', 4, 36], ['15 ft²', 'Locker', 16, 240], ['25 ft²', 'Small', 31, 775], ['35 ft²', 'Small', 78, 2730], ['50 ft²', 'Medium', 88, 4400], ['75 ft²', 'Medium', 40, 3000], ['100 ft²', 'Large', 13, 1300], ['125 ft²', 'Large', 10, 1250], ['150 ft²', 'Large', 9, 1350], ['180 ft²', 'Drive Up', 2, 360], ['200 ft²', 'Drive Up', 3, 600], ['250 ft²', 'Enterprise', 2, 500]];
@@ -1802,7 +1802,7 @@ export default function PortalV2Page() {
       })();
       out.tables.push({
         title: 'Unit Mix Occupancy (All Stores)', live: !!(liveUnitMixRows && liveUnitMixRows.length), pageSize: 12, wide: true, totals: unitMixTotals, totalsLabel: 'Total',
-        tip: 'Report: OccupancyStatistics (Indoor Self Storage rows).\nTotals per unit-size bucket across all sites; Occupancy % is sum-then-divide, not a per-site average.',
+        tip: 'Report: OccupancyStatistics (Indoor Self Storage rows only).\nFields: Area, Occupied, TotalUnits.\nCalculation: Grouped by rounded per-unit Area; Occupancy % = Σ Occupied ÷ Σ TotalUnits × 100 per size bucket (sum-then-divide, not a per-site average).',
         columns: (liveUnitMixRows && liveUnitMixRows.length) ? [
           { key: 'size', label: 'Unit Size', type: 'text' },
           { key: 'total', label: 'Total Units', type: 'int', align: 'right' }, { key: 'occupied', label: 'Occupied', type: 'int', align: 'right' },
@@ -1842,7 +1842,7 @@ export default function PortalV2Page() {
       })();
       out.tables.push({
         title: 'Units by Customer Type — by Store', live: !!liveCustTypeRows, pageSize: 10, wide: true, totals: custTypeTotals, totalsLabel: 'Total',
-        tip: 'Report: RentRoll.\nPersonal/Business occupied unit counts and rate (standard rate ÷ area × 12) per site.',
+        tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany, dcStdRate, Area/Area1.\nCalculation: Personal/Business occupied unit counts per site; Rate = Σ dcStdRate ÷ Σ area × 12 (same portfolio Total Rate shown on the Rates per ft² table).',
         columns: liveCustTypeRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'personal', label: 'Personal Units', type: 'int', align: 'right' }, { key: 'business', label: 'Business Units', type: 'int', align: 'right' },
@@ -1884,13 +1884,13 @@ export default function PortalV2Page() {
       const ssRows = liveSSRows || fs.map((s) => ({ name: s.name, occupied: s.occupied, total: s.total, rate: s.rate }));
       out.tables.push({
         title: 'Offices Occupancy — by Store', live: !!liveOfficesRows, pageSize: 10, wide: true,
-        tip: 'Report: OccupancyStatistics (Offices); RentRoll (rent, Area).\nRate = rent ÷ area × 12. Sites with no Offices show 0/£0.00.',
+        tip: 'Reports: OccupancyStatistics (Offices unit type); RentRoll (rent, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate). Sites with no Offices unit type show 0/£0.00.',
         columns: officeSSColumns, rows: officesRows, totalsLabel: 'Total',
         totals: occRateTotals(officesRows, kpiT?.officesOcc, kpiT?.officesTot, kpiT?.officesRate),
       });
       out.tables.push({
         title: 'Indoor Self Storage Occupancy — by Store', live: !!liveSSRows, pageSize: 10, wide: true,
-        tip: 'Report: OccupancyStatistics (Self Storage); RentRoll (standard rate, Area).\nRate = standard rate ÷ area × 12.',
+        tip: 'Reports: OccupancyStatistics (Indoor Self Storage unit type); RentRoll (standard rate, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12.',
         columns: officeSSColumns, rows: ssRows, totalsLabel: 'Total',
         totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate),
       });
@@ -1910,7 +1910,7 @@ export default function PortalV2Page() {
       })();
       out.tables.push({
         title: 'Occupied Area by % of CLA — by Store', live: !!liveClaRows, pageSize: 10, wide: true, totals: claTotals, totalsLabel: 'Total',
-        tip: 'Report: OccupancyStatistics.\n% of CLA = occupied area ÷ CLA × 100 per site; totals row is sum-then-divide.',
+        tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ(Area × Occupied) ÷ Σ(Area × (TotalUnits − Unrentable)) × 100 per site; totals row is sum-then-divide.',
         columns: liveClaRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'area', label: 'Occupied Area', type: 'ft', align: 'right' }, { key: 'cla', label: 'CLA (ft²)', type: 'ft', align: 'right' },
@@ -1941,7 +1941,7 @@ export default function PortalV2Page() {
         const stayWeighted = liveSites.reduce((a, s) => a + (s.avgStayDays || 0) * (s.occ || 0), 0);
         const avgStay = finT.occ ? Math.round(stayWeighted / finT.occ) : 0;
         const avgCustValue = finT.occ ? R2((finT.rent / finT.occ) * (avgStay / 30.43)) : 0;
-        custInsights = { title: 'Customer Insights', live: true, tip: 'Report: ManagementSummary (days occupied); RentRoll (rent, units).\nAvg Stay = total days occupied ÷ occupied units. Avg Customer Value = monthly rent × (avg stay ÷ 30.43) — a lifetime value, not just monthly rent.', tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] };
+        custInsights = { title: 'Customer Insights', live: true, tip: 'Report: RentRoll.\nFields: dLeaseDate, dcRent, bRented.\nCalculation: Avg Stay = Σ(today − dLeaseDate) ÷ occupied units. Avg Customer Value = (Σ dcRent ÷ occupied units) × (Avg Stay ÷ 30.43) — a lifetime value estimate, not just monthly rent.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary (days occupied)", but avg length of stay is actually sourced from RentRoll\'s dLeaseDate (lib/reportMap.js\'s rent_roll parser).', tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] };
       } else {
         debugWarn('[portal-v2] Financials Customer Insights rendering with mock data (no live totals available).');
         custInsights = { title: 'Customer Insights', tiles: [{ value: money(3921), label: 'Avg customer value', delta: '£38', dir: 'down' }, { value: '721 days', label: 'Avg length of stay', delta: '2 days', dir: 'down' }] };
@@ -1952,7 +1952,7 @@ export default function PortalV2Page() {
       // 30-days-overdue figure, not every positive balance — the same distinction that was a
       // confirmed bug on the Debtor Levels widget (see lib/buildPayload.js's `debtors` comment).
       const pastDue = finT
-        ? { title: 'Past Due Balances', live: true, tip: 'Report: PastDueBalances (30+ days); OccupancyStatistics (rent).\nTotal overdue = 30+ day balances. % of rent roll = overdue ÷ occupied rent × 100.', tiles: [{ value: money(finT.debtorTotal ?? 0), label: 'Total overdue (30+ days)', delta: null, dir: null }, { value: (finT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% of rent roll', delta: null, dir: null }] }
+        ? { title: 'Past Due Balances', live: true, tip: 'Reports: PastDueBalances (overdue, 30+ days); OccupancyStatistics (occupied rent).\nFields: ChargeBalance (or RentBal+LateFeeBal+POSBal+OtherChargesBal+TaxesBal), DaysLate (PastDueBalances); ActualOccupied (OccupancyStatistics).\nCalculation: Total overdue = Σ balances where DaysLate > 30. % of rent roll = overdue (30+ day) £ ÷ Σ ActualOccupied × 100.', tiles: [{ value: money(finT.debtorTotal ?? 0), label: 'Total overdue (30+ days)', delta: null, dir: null }, { value: (finT.debtorRentRollPct ?? 0).toFixed(1) + '%', label: '% of rent roll', delta: null, dir: null }] }
         : { title: 'Past Due Balances', tiles: [{ value: money(2790 * f), label: 'Total overdue (30+ days)', delta: '£93', dir: 'up' }, { value: '0.6%', label: '% of rent roll', delta: '0%', dir: null }] };
       out.statCards = [custInsights, pastDue];
       // True Revenue — now live via CustomReportByReportID(781861) ("Financial \ True Revenue
@@ -2008,8 +2008,8 @@ export default function PortalV2Page() {
         // "DriveUp" / "Drive up" into separate rows (fixed in lib/reportMap.js's groupBy). Bumped
         // pageSize so the (now-deduped, ~10-14 row) Unit Types table fits on one page, and the
         // ChargeDesc table shows more before needing Next.
-        { title: 'True Revenue', live: !!finT?.trueRevenueByDesc?.length, pageSize: 25, wide: true, tip: 'Report: True Revenue custom report, grouped by charge type (Rent, StoreProtect, fees, etc.).\nTax Adj is derived: Tax Invoiced minus Net Tax.', columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
-        { title: 'True Revenue — Unit Types', live: !!finT?.trueRevenueByType?.length, pageSize: 20, wide: true, tip: 'Report: True Revenue custom report, same data grouped by unit type instead of charge type.\nTax Adj is derived: Tax Invoiced minus Net Tax.', columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue', live: !!finT?.trueRevenueByDesc?.length, pageSize: 25, wide: true, tip: 'Report: True Revenue custom report (ReportID 781861, "Daily Prorate"), Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, ChargeDesc.\nCalculation: Grouped by ChargeDesc (Rent, StoreProtect, fees, etc.), summed. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod (Tax Invoiced − Net Tax), not a raw column.', columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue — Unit Types', live: !!finT?.trueRevenueByType?.length, pageSize: 20, wide: true, tip: 'Report: True Revenue custom report (ReportID 781861, "Daily Prorate"), Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, UnitType.\nCalculation: Same data as the "True Revenue" table, grouped by UnitType instead of ChargeDesc. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod, not a raw column.', columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
       ];
     }
 
@@ -2070,7 +2070,7 @@ export default function PortalV2Page() {
         // Dashboard/KPIs copy of this identical metric (line ~1119) — same source field
         // (totals.autobillPC, already rounded to 1dp in computeTotals()), just displayed with one
         // fewer decimal, so the same underlying number showed as e.g. "86%" here vs "86.4%" there.
-        ? { title: 'Autobill Conversion', live: true, tip: 'Report: RentRoll.\nShare of occupied units on autobill.', tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
+        ? { title: 'Autobill Conversion', live: true, tip: 'Reports: MoveInsAndMoveOuts (this month\'s move-ins); RentRoll (autobill status).\nFields: TenantID (MoveInsAndMoveOuts); TenantID, iAutoBillType (RentRoll).\nCalculation: New autobilled customers ÷ total new move-ins this month, sampled daily across the month and averaged (autobill_daily table) rather than a single point-in-time read.', tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
         : { title: 'Autobill Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '16%', dir: 'down' }], hasViz: true, el: <Donut pct={57} color={C.blue} /> };
       // Insurance Conversion: new insured customers (insNewCount above) ÷ new move-ins for the month —
       // the standard "did the new customer take out insurance" conversion rate. CORRECTED 6 Jul 2026:
@@ -2097,10 +2097,10 @@ export default function PortalV2Page() {
       // to stay internally consistent with each other, not with moveInsSum.
       const insConvPct = liveSites && moveInsSum ? Math.min(100, +(insNewCount / moveInsSum * 100).toFixed(0)) : null;
       const insuranceConvCard = insConvPct != null
-        ? { title: 'Insurance Conversion', live: true, tip: 'Report: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nInsured new customers ÷ new move-ins × 100, capped at 100%.\nNote: the two reports define "new" independently, so this can occasionally read high before capping.', tiles: [{ value: insConvPct + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={insConvPct} /> }
+        ? { title: 'Insurance Conversion', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nFields: iActive, dMovedIn (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Insured new customers (active policies where dMovedIn falls in the period) ÷ new move-ins × 100, capped at 100%.\nNote: the two reports define "new" independently, so this can occasionally read high before capping.', tiles: [{ value: insConvPct + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={insConvPct} /> }
         : { title: 'Insurance Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '7%', dir: 'up' }], hasViz: true, el: <Gauge pct={57} /> };
       const insuranceRollCard = ancT
-        ? { title: 'Insurance Roll', live: true, tip: 'Report: InsuranceRoll.\nPremiums = Σ premium. % Rent Roll = premiums ÷ rent roll × 100. % Insured = insured ÷ occupied units × 100.', tiles: [{ value: money(ancT.insurancePremium ?? 0), label: 'Premiums', delta: null, dir: null }, { value: (ancT.insurancePctRoll ?? 0).toFixed(1) + '%', label: '% Rent Roll', delta: null, dir: null }, { value: (ancT.insurancePctInsured ?? 0).toFixed(1) + '%', label: '% Insured', delta: null, dir: null }] }
+        ? { title: 'Insurance Roll', live: true, tip: 'Reports: InsuranceRoll (premiums, insured); RentRoll (rent roll); OccupancyStatistics (occupied units).\nFields: dcPremium, iActive (InsuranceRoll); dcRent, bRented (RentRoll); Occupied, TotalUnits (OccupancyStatistics).\nCalculation: Premiums = Σ dcPremium (active policies). % Rent Roll = premiums ÷ rent roll × 100. % Insured = insured units ÷ occupied units × 100.', tiles: [{ value: money(ancT.insurancePremium ?? 0), label: 'Premiums', delta: null, dir: null }, { value: (ancT.insurancePctRoll ?? 0).toFixed(1) + '%', label: '% Rent Roll', delta: null, dir: null }, { value: (ancT.insurancePctInsured ?? 0).toFixed(1) + '%', label: '% Insured', delta: null, dir: null }] }
         // FIXED 7 Jul 2026 (exhaustive bug audit): this mock/fallback branch had `live: true` —
         // almost certainly copy-pasted from the live branch directly above — which made the app
         // show the green "LIVE" badge on fabricated placeholder numbers whenever ancT was
@@ -2122,7 +2122,7 @@ export default function PortalV2Page() {
       // Insurance Conversion.)
       const avgNewPremiumPerMoveIn = moveInsSum ? insNewPremium / moveInsSum : 0;
       const insPremNewCard = (liveSites && insNewCount)
-        ? { title: 'Insurance Premiums (New Customers)', live: true, tip: 'Report: InsuranceRoll (new insured, matched to this month\'s move-ins); MoveInsAndMoveOuts.\nContents avg = avg coverage per new insured customer. Premiums weekly = weekly premium on new move-ins ÷ all move-ins.', tiles: [{ value: money(insNewCoverage / insNewCount), label: 'Contents avg', delta: null, dir: null }, { value: '£' + (avgNewPremiumPerMoveIn / 4).toFixed(2), label: 'Premiums weekly', delta: null, dir: null }] }
+        ? { title: 'Insurance Premiums (New Customers)', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (move-ins).\nFields: iActive, dMovedIn, dcCoverage, dcPremium (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Contents avg = Σ dcCoverage ÷ count of new insured customers (active policies with dMovedIn in the period). Premiums weekly = (Σ dcPremium on new insured customers ÷ all move-ins this period) ÷ 4.', tiles: [{ value: money(insNewCoverage / insNewCount), label: 'Contents avg', delta: null, dir: null }, { value: '£' + (avgNewPremiumPerMoveIn / 4).toFixed(2), label: 'Premiums weekly', delta: null, dir: null }] }
         // FIXED 10 Jul 2026 (audit): "Contents avg" is a per-new-customer AVERAGE (insNewCoverage /
         // insNewCount on the live path, never scaled by store count), not a portfolio total — was
         // incorrectly scaled by the store-filter factor `f` here, unlike its own sibling tile
@@ -2148,10 +2148,10 @@ export default function PortalV2Page() {
       // the safer interim fix. Renamed the widget honestly since it's no longer claiming to be
       // "new customer"-scoped. Revisit if legacy's actual formula is ever confirmed (e.g. via R6
       // Digital, who built the legacy portal per its own footer credit).
-      const merchPerNewCust = (liveSites && ancT && ancT.occ) ? { title: 'Merchandise Income per Occupied Unit', live: true, tip: 'Report: FinancialSummary (POS charges); Occupancy Statistics.\nMerchandise charge ÷ total occupied units this period.\nNote: legacy\'s equivalent widget reads meaningfully lower (~£1.12 vs ours ~£0.5) and has no visible tooltip/formula to match against — treat as an approximation, not a confirmed like-for-like.', tiles: [{ value: '£' + (merchSalesSum / ancT.occ).toFixed(2), label: 'Income per occupied unit', delta: null, dir: null }] }
+      const merchPerNewCust = (liveSites && ancT && ancT.occ) ? { title: 'Merchandise Income per Occupied Unit', live: true, tip: 'Reports: FinancialSummary (POS charges); OccupancyStatistics (occupied units).\nFields: Charge, sChgCategory="POS" (FinancialSummary); Occupied (OccupancyStatistics).\nCalculation: Σ Charge (POS category) ÷ Σ Occupied units this period.\nNote: legacy\'s equivalent widget reads meaningfully lower (~£1.12 vs ours ~£0.5) and has no visible tooltip/formula to match against — treat as an approximation, not a confirmed like-for-like.', tiles: [{ value: '£' + (merchSalesSum / ancT.occ).toFixed(2), label: 'Income per occupied unit', delta: null, dir: null }] }
         : { title: 'Merchandise Income per Occupied Unit', tiles: [{ value: '£0.52', label: 'Income per occupied unit', delta: '£0.06', dir: 'down' }] };
       const merchSalesCard = liveSites
-        ? { title: 'Merchandise Sales', live: true, tip: 'Report: FinancialSummary (POS charges).\nTotal merchandise charge across all sites for the selected period.', tiles: [{ value: money(merchSalesSum), label: monthTag, delta: null, dir: null }] }
+        ? { title: 'Merchandise Sales', live: true, tip: 'Report: FinancialSummary.\nFields: Charge, sChgCategory="POS".\nCalculation: Σ Charge where sChgCategory = "POS", across all sites for the selected period.', tiles: [{ value: money(merchSalesSum), label: monthTag, delta: null, dir: null }] }
         : { title: 'Merchandise Sales', tiles: [{ value: money(209 * f), label: 'May 2026', delta: '£21', dir: 'up' }] };
       out.statCards = [autobillCard, insuranceConvCard, insuranceRollCard, insPremNewCard, merchPerNewCust, merchSalesCard];
       // Insurance Roll by Store: live-wired per-site comparison bars (same portfolio-comparison
@@ -2163,7 +2163,7 @@ export default function PortalV2Page() {
       const insBarItems = liveInsBars || fs.map((s) => ({ label: s.name, value: +(68 + (s.occupied % 22)).toFixed(1), disp: (+(68 + (s.occupied % 22)).toFixed(1)) + '%', color: C.blue }));
       const avgInsured = ancT ? (ancT.insurancePctInsured ?? 0) : (insBarItems.length ? insBarItems.reduce((a, b) => a + b.value, 0) / insBarItems.length : 0);
       out.chartCards = [
-        { title: 'Insurance % Insured by Store', tip: 'Report: InsuranceRoll.\nInsured ÷ occupied units × 100 per store. Average bar = portfolio-wide sum-then-divide.', el: <StoreBarChart items={insBarItems} opts={{ average: { value: avgInsured, disp: avgInsured.toFixed(1) + '%' } }} /> },
+        { title: 'Insurance % Insured by Store', tip: 'Reports: InsuranceRoll (insured); OccupancyStatistics (occupied units).\nFields: iActive (InsuranceRoll); Occupied (OccupancyStatistics).\nCalculation: Insured units ÷ occupied units × 100 per store. Average bar = portfolio-wide sum-then-divide.', el: <StoreBarChart items={insBarItems} opts={{ average: { value: avgInsured, disp: avgInsured.toFixed(1) + '%' } }} /> },
       ];
       // Insurance Roll (All Stores) table: live-wired from s.insurance (premium/insured/penetration)
       // and s.rent (already computed elsewhere) for the % Rent Roll column.
@@ -2199,7 +2199,7 @@ export default function PortalV2Page() {
       } : null;
       out.tables.push({
         title: 'Insurance Roll (All Stores)', live: !!liveInsRows, pageSize: 12, wide: true, totals: insTotals, totalsPrev: insTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InsuranceRoll (premium, insured); RentRoll (rent).\n% Rent Roll = premiums ÷ rent × 100. % Insured = insured ÷ occupied units × 100. Totals row is sum-then-divide.',
+        tip: 'Reports: InsuranceRoll (premium, insured); RentRoll (rent); OccupancyStatistics (occupied units).\nFields: dcPremium, iActive (InsuranceRoll); dcRent, bRented (RentRoll); Occupied (OccupancyStatistics).\nCalculation: % Rent Roll = premiums ÷ rent × 100. % Insured = insured ÷ occupied units × 100. Totals row is sum-then-divide.',
         columns: liveInsRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'premiums', label: 'Premiums', type: 'money', align: 'right' }, { key: 'pctRoll', label: '% Rent Roll', type: 'pct', align: 'right' },
@@ -2220,7 +2220,7 @@ export default function PortalV2Page() {
       const enqSum = liveSites ? (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
       let enquiriesByChannel, enquiryToReservation;
       if (enqSum) {
-        enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tip: 'Report: InquiryTracking.\nInquiry counts by channel (Phone/Walk-ins/Web), summed across sites.', tiles: [
+        enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Counts where sInquiryType matches and dPlaced falls in the selected period, summed across sites (Web tile includes EMail).', tiles: [
           { value: intFmt(enqSum('phone')), label: 'Phone', delta: null, dir: null },
           { value: intFmt(enqSum('walkin')), label: 'Walk-ins', delta: null, dir: null },
           { value: intFmt(enqSum('web')), label: 'Web', delta: null, dir: null },
@@ -2239,7 +2239,7 @@ export default function PortalV2Page() {
         // dropped the live rate from 19.6% to ~3%. That's honest but likely still an undercount —
         // most phone/walk-in leads never have a usable email to match on — so tooltip now says so
         // instead of implying an exact match against legacy's own figure.
-        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100.\nMatched by email between enquiry and reservation records — many leads (especially phone/walk-in) have no usable email, so this likely understates the true rate. Treat as a lower bound, not an exact match to legacy.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sEmail, sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation conversions (enquiry emails later seen on a Reservation-stage row, excluding same-row self-matches) ÷ total inquiries × 100. Matched by email — many leads (especially phone/walk-in) have no usable email, so this likely understates the true rate. Treat as a lower bound, not an exact match to legacy.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -2264,7 +2264,7 @@ export default function PortalV2Page() {
       if (!resVsMoveIns) debugWarn('[portal-v2] Reservations vs Move-ins chart rendering with mock data (no live sites available).');
       out.chartCards = [
         resVsMoveIns
-          ? { title: 'Reservations vs Move-ins', tip: 'Report: ReservationList (live); ManagementSummary (move-ins this period).\nA pipeline snapshot, not a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
+          ? { title: 'Reservations vs Move-ins', tip: 'Reports: ReservationList (Reservations); ManagementSummary (Move-ins).\nFields: QTRentalTypeID, dCancelled, dNeeded (ReservationList); sDesc rows matching "Move In", iMCount (ManagementSummary).\nCalculation: Reservations = active waiting-list rows (QTRentalTypeID = 2, not cancelled), live snapshot. Move-ins = this period\'s count. A pipeline snapshot, not a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
           : { title: 'Reservations vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: 52 * f, disp: intFmt(52 * f), color: C.blue }, { label: 'Move-ins', value: 112 * f, disp: intFmt(112 * f), color: C.teal }]} opts={{ max: 130 * f }} /> },
       ];
       // Marketing Year-on-Year (task #130/#136, 13 Jul 2026 — Michael picked "YoY trend chart" via
@@ -2301,10 +2301,10 @@ export default function PortalV2Page() {
       if (!yoySeries) debugWarn('[portal-v2] Marketing YoY charts rendering with mock data (need >=13 months of stored history with a same-month-last-year match — run npm run backfill if this persists).');
       out.chartCards.push(
         yoySeries
-          ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nTotal inquiries per month. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
+          ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total enquiries per stored month (sum of Phone/Walk-in/Web/Email counts). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nReservation conversions ÷ total inquiries × 100, per month. Solid = trailing 12 months; dashed = same 12 months a year earlier.\nMatched by email — likely a lower bound, not an exact match to legacy (see the Enquiry → Reservation stat card).', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sEmail, sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation conversions ÷ total inquiries × 100, per stored month. Solid = trailing 12 months; dashed = same 12 months a year earlier. Matched by email — likely a lower bound, not an exact match to legacy (see the Enquiry → Reservation stat card).', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
@@ -2346,7 +2346,7 @@ export default function PortalV2Page() {
       } : null;
       out.tables.push({
         title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nInquiry counts by channel per site; Conversion % = reservation conversions ÷ inquiries × 100. Totals row is sum-then-divide.\nMatched by email — likely a lower bound, not an exact match to legacy.',
+        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, sEmail, sRentalType.\nCalculation: Inquiry counts by channel per site. Conversion % = reservation conversions ÷ inquiries × 100 (matched by email — likely a lower bound, not an exact match to legacy). Totals row is sum-then-divide.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -2412,12 +2412,12 @@ export default function PortalV2Page() {
       // the underlying data/labels were already complete. Zooming is done via the date-range presets
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
-        { title: 'Revenue Collected', tip: 'Report: ManagementSummary.\nCharge minus credit, portfolio-wide, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nTotal rent across occupied units, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nTotal premium across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nTotal occupied area across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics, self storage only.\nTotal occupied area, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll, self storage only.\nStandard rate per ft², per stored month.' + momTip, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied.\nCalculation: Σ(Area × Occupied) across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ(Area × Occupied), self storage units only, per stored month.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
@@ -2543,10 +2543,10 @@ export default function PortalV2Page() {
       out.statCards = [];
       out.chartCards = [];
       out.tables = [
-        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity, grouped by unit type.\nOccupancy % = occupied ÷ total × 100. Actual £/ft² = occupied rent ÷ occupied area × 12.\nBlank £/ft² for Parking/Mailbox — those are priced per space/box, not per ft².', columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
-        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nGap % = (actual rate − list rate) ÷ list rate × 100, per unit type.\nParking/Mailbox excluded — priced per space/box, not per ft², so a £/ft² comparison isn\'t meaningful.', columns: gapCols, rows: gapRows },
-        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nMove-ins, move-outs and transfers per unit type. Type-level detail — the KPI page card is portfolio-wide only.', columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
-        { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nCapture % = actual revenue ÷ gross potential (list rate on all units) × 100.', columns: captureCols, rows: captureRows },
+        { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: Type, TotalUnits, Occupied, OccupiedRent, OccupiedArea.\nCalculation: Grouped by unit type. Occupancy % = Occupied ÷ TotalUnits × 100. Actual £/ft² = OccupiedRent ÷ OccupiedArea × 12.\nBlank £/ft² for Parking/Mailbox — those are priced per space/box, not per ft².', columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
+        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: OccupiedDollarPerArea (actual rate), TotalDollarPerArea (list rate).\nCalculation: Gap % = (OccupiedDollarPerArea − TotalDollarPerArea) ÷ TotalDollarPerArea × 100, per unit type.\nParking/Mailbox excluded — priced per space/box, not per ft², so a £/ft² comparison isn\'t meaningful.', columns: gapCols, rows: gapRows },
+        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: MovedIn, MovedOut, Transfers, NetTransferred, Net.\nCalculation: Move-ins, move-outs and transfers per unit type, for the previous complete month. Type-level detail — the KPI page card is portfolio-wide only.', columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
+        { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: GrossPotential, OccupiedRent.\nCalculation: Capture % = OccupiedRent ÷ GrossPotential (list rate on all units) × 100.', columns: captureCols, rows: captureRows },
       ];
     }
 
@@ -2575,15 +2575,15 @@ export default function PortalV2Page() {
       const totalUnits = planRows.reduce((a, r) => a + r.units, 0);
       const totalDiscount = R2(planRows.reduce((a, r) => a + r.discount, 0));
       out.statCards = [
-        { title: 'Units on a Discount Plan', live: !!dsRows, tip: 'Report: Discounts (deduplicated per unit — a billing cycle can post 2 rows/month).\nUnits with a discounted charge this month.', tiles: [{ value: intFmt(totalUnits), label: 'This month', delta: null, dir: null }] },
-        { title: 'Total £ Discount', live: !!dsRows, tip: 'Report: Discounts.\nTotal discount £ across every charge line this month.', tiles: [{ value: money(totalDiscount), label: 'This month', delta: null, dir: null }] },
+        { title: 'Units on a Discount Plan', live: !!dsRows, tip: 'Report: Discounts.\nFields: sUnitName, dcDiscount.\nCalculation: Distinct units with at least one discounted charge line this month, deduplicated by sUnitName (a billing cycle can post 2 rows/month).', tiles: [{ value: intFmt(totalUnits), label: 'This month', delta: null, dir: null }] },
+        { title: 'Total £ Discount', live: !!dsRows, tip: 'Report: Discounts.\nFields: dcDiscount.\nCalculation: Σ dcDiscount across every charge line this month (not deduplicated — every discount line genuinely happened).', tiles: [{ value: money(totalDiscount), label: 'This month', delta: null, dir: null }] },
       ];
       out.chartCards = [
-        { title: 'Units by Discount Plan', tip: 'Report: Discounts.\nUnits per discount plan this month (deduplicated).', el: <VBars items={planRows.map((r) => ({ label: r.plan.length > 22 ? r.plan.slice(0, 21) + '…' : r.plan, value: r.units, disp: intFmt(r.units), color: C.blue }))} opts={{ max: Math.max(...planRows.map((r) => r.units)) * 1.15 }} /> },
+        { title: 'Units by Discount Plan', tip: 'Report: Discounts.\nFields: sConcessionPlan, sUnitName.\nCalculation: Distinct units per sConcessionPlan this month, deduplicated by sUnitName.', el: <VBars items={planRows.map((r) => ({ label: r.plan.length > 22 ? r.plan.slice(0, 21) + '…' : r.plan, value: r.units, disp: intFmt(r.units), color: C.blue }))} opts={{ max: Math.max(...planRows.map((r) => r.units)) * 1.15 }} /> },
       ];
       out.tables = [
         { title: 'Discount Plans', live: !!dsRows, pageSize: 20, wide: true,
-          tip: 'Report: Discounts.\nPlan name, deduplicated units, and total discount £ per plan — a monthly flow, not a right-now snapshot.',
+          tip: 'Report: Discounts.\nFields: sConcessionPlan, sUnitName, dcDiscount.\nCalculation: Plan name, deduplicated unit count, and Σ dcDiscount per plan — a monthly flow, not a right-now snapshot.',
           columns: [
             { key: 'plan', label: 'Plan', type: 'text' },
             { key: 'units', label: 'Units (Customers)', type: 'int', align: 'right' },
@@ -2626,21 +2626,21 @@ export default function PortalV2Page() {
       const range = snap ? snap.range : mockSnap.range;
       const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
       out.statCards = [
-        { title: 'Enquiries', live: !!snap, tip: 'Report: InquiryTracking.\nInquiries placed within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday.', tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
-        { title: 'Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nLive reservation count for the selected window.', tiles: [{ value: intFmt(totals.reservations), label: periodLabel, delta: null, dir: null }] },
+        { title: 'Enquiries', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced.\nCalculation: Count of rows whose dPlaced date falls within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.', tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
+        { title: 'Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: sRentalType.\nCalculation: Count of rows where sRentalType = "Reservation", for the selected window (report called with that exact date range) — a historical flow count, not a live/real-time figure, summed across sites.', tiles: [{ value: intFmt(totals.reservations), label: periodLabel, delta: null, dir: null }] },
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
         // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
         // record so this can come back easily if that field is ever found.
-        { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nMove-in / move-out counts for the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
-        { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nSqft in minus sqft out for the selected window (out shown negative).', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
+        { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MoveIn, MoveOut.\nCalculation: Count of rows flagged MoveIn and rows flagged MoveOut within the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
+        { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInArea, MovedOutArea.\nCalculation: Σ MovedInArea (rows flagged MoveIn) and Σ MovedOutArea (rows flagged MoveOut) for the selected window, summed across sites; Out shown negative.', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
       ];
       const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
         .slice().sort((a, b) => a.code.localeCompare(b.code))
         .map((s) => ({ store: nameForCode(s.code), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
       out.tables = [
         { title: `Per-Store Breakdown — ${periodLabel} (${fmtRange(range)})`, live: !!snap, pageSize: 29, wide: true,
-          tip: 'Report: InquiryTracking (Enquiries, Reservations); MoveInsAndMoveOuts (Move-ins, Sqft In/Out).\nPer-site figures for the selected window, refreshed via the daily snapshot pull.',
+          tip: 'Report: InquiryTracking (Enquiries, Reservations); MoveInsAndMoveOuts (Move-ins, Sqft In/Out).\nFields: dPlaced, sRentalType (InquiryTracking); MoveIn, MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Per-site counts/sums for the selected window, refreshed via the daily snapshot pull (npm run pull:snapshot).',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'enquiries', label: 'Enquiries', type: 'int', align: 'right' },
@@ -2806,13 +2806,13 @@ export default function PortalV2Page() {
       );
 
       out.statCards = [
-        { title: 'Discounted Units in Full Groups', live: haveData, tip: 'Report: RentalActivity (fully occupied groups); RentRoll (standard rate vs actual rent).\nOccupied units billed below standard rate in a group that\'s 100% full — a discount that may no longer be needed.', tiles: [{ value: intFmt(dRows.length), label: 'Units', delta: null, dir: null }] },
-        { title: 'Groups Analyzed', live: haveData, tip: 'Report: RentalActivity.\nCount of (store, unit type, size) groups across the selected stores.', tiles: [{ value: intFmt(gRows.length), label: '(store, type, size) groups', delta: null, dir: null }] },
+        { title: 'Discounted Units in Full Groups', live: haveData, tip: 'Report: RentalActivity (group occupancy); RentRoll (per-unit rate).\nFields: TotalUnits, Vacant, StandardRate (RentalActivity, group-level); dcStdRate, dcRent (RentRoll, per unit).\nCalculation: Units in a (type, size) group where Vacant = 0 (100% full) and the unit\'s own dcRent < dcStdRate — count across selected stores.', tiles: [{ value: intFmt(dRows.length), label: 'Units', delta: null, dir: null }] },
+        { title: 'Groups Analyzed', live: haveData, tip: 'Report: RentalActivity.\nFields: Type, Area.\nCalculation: Count of distinct (store, Type, rounded Area) groups across the selected stores.', tiles: [{ value: intFmt(gRows.length), label: '(store, type, size) groups', delta: null, dir: null }] },
       ];
       out.chartCards = [];
       out.tables = [
         { title: 'Watchdog — Discounted Units in Fully Occupied Groups', live: haveData, pageSize: 20, wide: true, collapsible: true,
-          tip: 'Report: RentalActivity (fully occupied groups); RentRoll (standard rate vs actual rent).\nA unit qualifies when its group is 100% occupied and billed below its own standard rate.\nUse the filters above to narrow this down.',
+          tip: 'Report: RentalActivity (group occupancy); RentRoll (per-unit rate).\nFields: TotalUnits, Vacant (RentalActivity, group-level); dcStdRate, dcRent, sUnit (RentRoll, per unit).\nCalculation: A unit qualifies when its (type, size) group has Vacant = 0 and its own dcRent < dcStdRate. Discount % = (dcStdRate − dcRent) ÷ dcStdRate × 100. Use the filters above to narrow this down.',
           headerExtra: dmWatchFilterControls,
           // CONDENSED 15 Jul 2026 (Michael: "too much going on"): Type + Area merged into one "Unit
           // Type" column (e.g. "Self Storage · 50 ft²") — same information, one less column to scan.
@@ -2827,7 +2827,7 @@ export default function PortalV2Page() {
           rows: dRowsFiltered.length ? dRowsFiltered : [{ store: '(no discounted units match this filter)', unit: null, typeArea: null, stdRate: null, rent: null, discountPct: null }],
         },
         { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, wide: true, collapsible: true,
-          tip: 'Report: RentalActivity (units, occupancy, rates); RentRoll (avg stay = days since move-in).\nEffective Rate reflects concessions; Standard Rate doesn\'t. Avg Stay excludes re-lease/vacancy time (not tracked by SiteLink).\nUse the filters above to narrow this down.',
+          tip: 'Report: RentalActivity (units, occupancy, rates); RentRoll (Avg Stay).\nFields: TotalUnits, Occupied, StandardRate, OccupiedDollarPerArea (RentalActivity); dLeaseDate (RentRoll, per unit).\nCalculation: Occupied % = Occupied ÷ TotalUnits × 100. Standard Rate = StandardRate (list rate, no concessions). Effective Rate = OccupiedDollarPerArea (reflects concessions). Avg Stay = mean(today − dLeaseDate) across the group\'s units, in days — excludes re-lease/vacancy time (not tracked by SiteLink). Use the filters above to narrow this down.',
           headerExtra: dmGroupFilterControls,
           // CONDENSED 15 Jul 2026: same Type+Area merge as the Watchdog table above.
           columns: [
@@ -2886,12 +2886,12 @@ export default function PortalV2Page() {
       const delinquencyFinal = haveData ? delinquencyRows : mockDelinquency;
 
       out.statCards.push(
-        { title: 'Sites Losing Occupancy', live: occDeclineHave, tip: 'sites.occPC, current vs prior month (same snapshot every "vs last month" delta on this page uses).\nCount of sites whose occupancy % fell month over month.', tiles: [{ value: intFmt(sitesDecliningCount), label: 'Sites declining', delta: null, dir: null }] },
-        { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card.\nCount of sites with at least one 30+ day delinquent account.', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
+        { title: 'Sites Losing Occupancy', live: occDeclineHave, tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: occPC = Occupied ÷ TotalUnits × 100, per site, this month vs prior month (same snapshot every "vs last month" delta on this page uses). Count of sites where this month\'s occPC is lower.', tiles: [{ value: intFmt(sitesDecliningCount), label: 'Sites declining', delta: null, dir: null }] },
+        { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary ("Unpaid" ageing table), same source as the Financials page\'s Debtor Levels card.\nFields: dcDlqntTot, iDelUnits, Period.\nCalculation: Count of sites with iDelUnits > 0 summed across the 30+ day buckets (31-60 through 361+; 0-10/11-30 excluded).', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
       );
       out.tables.push(
         { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, wide: true, collapsible: true,
-          tip: 'sites.occPC, current vs prior month.\nSorted worst decline first; a positive Change means occupancy improved, not worsened.',
+          tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: occPC = Occupied ÷ TotalUnits × 100, per site, this month vs prior month. Change = this month\'s occPC − prior month\'s. Sorted worst decline first; a positive Change means occupancy improved, not worsened.',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'curPct', label: 'Occupancy % (This Month)', type: 'pct', align: 'right', color: 'threshold' },
@@ -2901,7 +2901,7 @@ export default function PortalV2Page() {
           rows: occDeclineFinal.length ? occDeclineFinal : [{ store: '(no prior-month data available yet — run npm run pull again next month)', curPct: null, prevPct: null, change: null }],
         },
         { title: 'Watchdog — Delinquency by Site', live: haveData, pageSize: 20, wide: true, collapsible: true,
-          tip: 'Report: ManagementSummary (30+ day delinquency), same source as the Financials page\'s Debtor Levels card, broken out per site.\nSorted worst Rent Roll % first.',
+          tip: 'Report: ManagementSummary ("Unpaid" ageing table), same source as the Financials page\'s Debtor Levels card, broken out per site.\nFields: dcDlqntTot, iDelUnits (30+ day buckets only).\nCalculation: % of Tenants = delinquent accounts ÷ occupied units × 100. % of Rent Roll = delinquent balance ÷ occupied rent roll × 100. Sorted worst Rent Roll % first.',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'accounts', label: 'Delinquent Accounts', type: 'int', align: 'right' },
@@ -2936,7 +2936,7 @@ export default function PortalV2Page() {
       const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
       out.statCards.push({
         title: 'Cockpit — Month to Date', live: cockpitOk,
-        tip: 'Report: FinancialSummary, pulled daily.\nMonth-to-date charge vs. a 3-month average pace line.',
+        tip: 'Report: FinancialSummary — pulled daily (Actual) and from the last 3 closed months\' monthly pull (Pace).\nFields: Charge (summed to total_charge).\nCalculation: Actual so far = today\'s cumulative Σ Charge across sites, this month. 3-month avg pace = mean(each of the last 3 closed months\' total_charge ÷ days in that month) × today\'s day-of-month.',
         tiles: [
           { value: money(cockpitToDate), label: 'Actual so far', delta: null, dir: null },
           { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
@@ -2944,7 +2944,7 @@ export default function PortalV2Page() {
       });
       out.chartCards.push({
         title: 'Cockpit — Income vs 3-Month Average Pace', wide: true,
-        tip: 'Report: FinancialSummary, pulled daily.\nActual = cumulative charge this month. Pace = 3-month average daily rate × day-of-month — a reference line, not real history.',
+        tip: 'Report: FinancialSummary — pulled daily (Actual) and from the last 3 closed months\' monthly pull (Pace).\nFields: Charge (summed to total_charge).\nCalculation: Actual = cumulative Σ Charge this month, day by day. Pace = mean(prior 3 closed months\' total_charge ÷ days in month) × day-of-month — a reference line, not real history.',
         el: <LineChart series={[{ name: 'This month (cumulative)', color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
       });
     }
