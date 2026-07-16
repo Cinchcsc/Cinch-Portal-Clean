@@ -1329,11 +1329,17 @@ export default function PortalV2Page() {
         out.kpiRow = [
           { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\n% of CLA (Current Lettable Area) = occupied area ÷ area excluding unrentable units × 100.' },
           { label: 'Occupied Units', value: intFmt(t.occ ?? 0), delta: null, dir: null, sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nOccupied units out of total units.' },
+          // ADDED 16 Jul 2026 (Michael: "total occupancy in sqft, it is a column in the occupancy
+          // statistics excel"). t.occA already existed — computeTotals() sums each site's occA
+          // (occupied area) — and was already used internally for the "Rented Area by Store" chart's
+          // average bar; this just surfaces that same portfolio total as its own headline tile.
+          { label: 'Total Occupancy (sqft)', value: intFmt(t.occA ?? 0) + ' ft²', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nTotal occupied area (Area × Occupied), summed across all stores.' },
         ];
       } else {
         out.kpiRow = [
           { label: 'Occupancy (% of CLA)', value: occPct.toFixed(1) + '%', delta: '1.4%', dir: 'up', sub: 'vs last month' },
           { label: 'Occupied Units', value: intFmt(agg.occupied), delta: '42', dir: 'up', sub: 'of ' + intFmt(agg.total) },
+          { label: 'Total Occupancy (sqft)', value: intFmt(agg.area) + ' ft²', delta: '820', dir: 'up', sub: 'vs last month' },
         ];
       }
 
@@ -1513,9 +1519,15 @@ export default function PortalV2Page() {
       // which case deltaTick() falls back to {delta: null, dir: null} and the tile shows no arrow.
       const kpiPrevT = livePrevSites ? computeTotals(livePrevSites) : null;
       out.statCards = [
+        // 3rd tile ADDED 16 Jul 2026 (Michael: "total occupancy in sqft, it is a column in the
+        // occupancy statistics excel"). kpiT.occA already existed (computeTotals() sums each site's
+        // occA) — just surfacing the same portfolio total already used elsewhere (e.g. Dashboard's
+        // "Rented Area by Store" chart average) as its own tile here too. 'ft' deltaTick kind added
+        // 8 Jul 2026 alongside DataTable's totals-row deltas, so "vs last month" works the same way
+        // as every other tile on this card.
         kpiT
-          ? { title: 'Total Store Occupancy', live: true, tip: 'Report: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²).\nOccupancy = occupied ÷ total units × 100. Rate = standard rate ÷ area × 12.', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
-          : { title: 'Total Store Occupancy', tiles: [{ value: occPct.toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£28.46', label: 'Rate per ft²', delta: '£0.22', dir: 'up' }], note: intFmt(agg.occupied) + ' / ' + intFmt(agg.total) + ' units occupied' },
+          ? { title: 'Total Store Occupancy', live: true, tip: 'Report: OccupancyStatistics (Occupancy, Occupied Area); RentRoll (Rate per ft²).\nOccupancy = occupied ÷ total units × 100. Rate = standard rate ÷ area × 12.', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }, { value: intFmt(kpiT.occA ?? 0) + ' ft²', label: 'Total Occupancy (sqft)', ...deltaTick(kpiT.occA, kpiPrevT && kpiPrevT.occA, 'ft') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
+          : { title: 'Total Store Occupancy', tiles: [{ value: occPct.toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£28.46', label: 'Rate per ft²', delta: '£0.22', dir: 'up' }, { value: intFmt(agg.area) + ' ft²', label: 'Total Occupancy (sqft)', delta: '820', dir: 'up' }], note: intFmt(agg.occupied) + ' / ' + intFmt(agg.total) + ' units occupied' },
         kpiT
           // Renamed 8 Jul 2026 (Michael: KPI page widget name, "Indoor Self Storage" -> "Self Storage")
           // -- display label only, no key/logic reads this string (grep-confirmed).
