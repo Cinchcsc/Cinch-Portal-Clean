@@ -2231,24 +2231,21 @@ export default function PortalV2Page() {
         ] };
         // CORRECTED 6 Jul 2026: was reading `conversions` (Enquiry -> Move-In, a different metric
         // entirely — see buildPayload.js) despite the "Reservation" title. Now uses
-        // `reservationConversions`, the actual email-hash-matched Enquiry -> Reservation figure.
+        // `reservationConversions`, the actual Enquiry -> Reservation figure.
         const totalEnq = enqSum('total'), convPct = totalEnq ? +(enqSum('reservationConversions') / totalEnq * 100).toFixed(1) : 0;
         // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
         // up has it, this one never did, so this card never showed the green LIVE badge even while
         // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
-        // FIXED 16 Jul 2026 (deep re-audit, self-match bug): reservationConversions used to inflate
-        // itself — a reservation created this period would match against "reservation emails this
-        // period" and trivially match its own row. Fixed at the source (lib/reportMap.js), which
-        // dropped the live rate from 19.6% to ~3%. That's honest but likely still an undercount.
-        // EXTENDED 17 Jul 2026 (task #301, Michael: "add phone and walk ins both as matching keys"):
-        // added phone as a second match key alongside email. Checked live data before assuming why the
-        // rate reads low — the "phone/walk-in leads have no email" theory doesn't hold for this
-        // account (sEmail is 90%+ populated on every channel, phone included), so the tooltip below no
-        // longer leads with that. The real remaining gap is same-month-only visibility for the current
-        // live month (no next-month data exists yet to catch late conversions) plus any genuine
-        // contact-detail mismatch between a lead's enquiry and reservation rows that neither email nor
-        // phone catches.
-        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sEmail, sPhone, sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation conversions (Reservation-stage rows matched by email OR phone to an enquiry from THIS month or LAST month, excluding same-row self-matches) ÷ this month\'s total inquiries × 100. A lead counts once even if it matches on both keys or both months. Attributed to the month the reservation happened in — an enquiry last month that reserves this month counts toward this month\'s conversions, not last month\'s. Still not an exact match to legacy, and the denominator is only this month\'s enquiries even though a few conversions may be sourced from last month\'s.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        // REBUILT 17 Jul 2026 (task #310): dropped per-lead cohort-matching entirely (email hash, then
+        // phone added task #301, then a same/previous-month lookback window added task #303 — several
+        // iterations 6-17 Jul trying to trace one lead from its enquiry row to a later reservation
+        // row). Michael pinned down legacy's real June 2026 portfolio rate at 19.8% (confirmed live on
+        // the legacy portal) — no cohort-matched version got anywhere close (low single digits to
+        // ~10%), but a plain COUNT RATIO does (reservation-stage rows this period ÷ enquiries this
+        // period). So legacy isn't tracking individual leads here at all — same "sum two aggregates,
+        // divide once" pattern as the Enquiry -> Move-In tile. Also fixes the live/in-progress month
+        // always reading artificially low, since a period-ratio needs no cross-month data to exist yet.
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation-stage rows this period ÷ this period\'s total enquiries × 100 — same period-ratio pattern as Enquiry -> Move-In, no per-lead matching.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -2313,7 +2310,7 @@ export default function PortalV2Page() {
           ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total enquiries per stored month (sum of Phone/Walk-in/Web/Email counts). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sEmail, sPhone, sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation conversions ÷ total inquiries × 100, per stored month. Solid = trailing 12 months; dashed = same 12 months a year earlier. Matched by email or phone, attributed to the month the reservation happened in (an enquiry last month that reserves this month counts toward this month) — not an exact match to legacy (see the Enquiry → Reservation stat card).', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation-stage rows ÷ total enquiries × 100, per stored month — same period-ratio pattern as the Enquiry → Reservation stat card. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
