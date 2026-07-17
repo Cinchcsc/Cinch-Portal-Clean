@@ -25,7 +25,8 @@
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",
-    "test:discounts": "node scripts/test-discounts-parser.mjs"
+    "test:discounts": "node scripts/test-discounts-parser.mjs",
+    "probe:insurance-activity": "node --env-file=.env scripts/probe-insurance-activity-window.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
