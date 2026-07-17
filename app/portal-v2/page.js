@@ -448,48 +448,166 @@ function StoreBarChart({ items, opts = {} }) {
   );
 }
 
+// LineChart — EXTENDED 17 Jul 2026 (Michael: "make it so I can put my mouse on the line and it will
+// show me the value of that point in time, and add the ability to overlay charts to compare, any
+// chart on the portal to any chart on the portal"). Two additions, both backward-compatible with
+// every existing caller (all 9 call sites across Marketing/Month-on-Month/District Manager keep
+// working unchanged — `series`/`opts.labels`/`opts.zero` behave exactly as before):
+//   1. Hover crosshair + tooltip. Hover state (`hoverFrac`) is LOCAL to this component (not lifted to
+//      the page-level component) so mousemove only re-renders this one chart, not the whole ~3000-
+//      line page component tree on every pixel of mouse movement.
+//   2. Per-series `axis: 'right'` support, for the new chart-overlay feature (see ChartComparePicker
+//      below): an overlaid series can carry wildly different units (£ vs ft² vs %) than the host
+//      chart, so right-axis series get their OWN independent min/max scaling instead of sharing the
+//      host's y-range. Per-series `xFor()` (rather than one shared `x()`) also means an overlaid
+//      series with a DIFFERENT number of points than the host (e.g. overlaying a 12-point monthly
+//      chart onto a ~17-point daily one) still stretches proportionally across the same width —
+//      aligned by RELATIVE position, not by calendar date (this is a shape/trend comparison, not a
+//      claim that point i on one line is the same moment as point i on the other) — the hover
+//      tooltip makes this explicit by showing each series' OWN label (its own `labels` array if
+//      supplied, else `opts.labels`) at whatever index that series lands on for the hovered position.
 function LineChart({ series, opts = {} }) {
   const W = 620, H = 150, pad = 8;
-  const all = series.flatMap((s) => s.values);
-  let min = Math.min(...all), max = Math.max(...all);
-  if (opts.zero) min = Math.min(min, 0);
-  if (max === min) max = min + 1;
-  const n = series[0].values.length;
-  const x = (i) => pad + (i / (n - 1)) * (W - pad * 2);
-  const y = (v) => H - pad - ((v - min) / (max - min)) * (H - pad * 2);
+  const leftSeries = series.filter((s) => s.axis !== 'right');
+  const rightSeries = series.filter((s) => s.axis === 'right');
+  const leftVals = (leftSeries.length ? leftSeries : series).flatMap((s) => s.values);
+  let leftMin = Math.min(...leftVals), leftMax = Math.max(...leftVals);
+  if (opts.zero) leftMin = Math.min(leftMin, 0);
+  if (leftMax === leftMin) leftMax = leftMin + 1;
+  const rightVals = rightSeries.flatMap((s) => s.values);
+  let rightMin = rightVals.length ? Math.min(...rightVals) : 0;
+  let rightMax = rightVals.length ? Math.max(...rightVals) : 1;
+  if (rightVals.length && opts.zero) rightMin = Math.min(rightMin, 0);
+  if (rightMax === rightMin) rightMax = rightMin + 1;
+  const xFor = (s) => { const len = s.values.length; return (i) => pad + (i / Math.max(len - 1, 1)) * (W - pad * 2); };
+  const y = (v, isRight) => {
+    const mn = isRight ? rightMin : leftMin, mx = isRight ? rightMax : leftMax;
+    return H - pad - ((v - mn) / (mx - mn)) * (H - pad * 2);
+  };
   const gid = useMemo(() => 'g' + Math.random().toString(36).slice(2, 7), []);
+  const [hoverFrac, setHoverFrac] = useState(null);
+  const svgRef = useRef(null);
+  // Generic auto-formatter for the hover tooltip — callers don't currently pass per-chart formatting
+  // (opts only ever carried labels/zero before today), so this covers £/ft²/%/count reasonably: plain
+  // integer once >=1000 (thousands separator, no decimals — matches this file's own money()/intFmt()
+  // rounding conventions elsewhere), 2dp for anything smaller and non-integer (e.g. a rate like 28.57).
+  const fmt = opts.tooltipFormat || ((v) => {
+    if (v == null || Number.isNaN(v)) return '—';
+    const abs = Math.abs(v);
+    return abs >= 1000 ? Math.round(v).toLocaleString('en-GB') : (Number.isInteger(v) ? String(v) : v.toFixed(2));
+  });
+  const idxFor = (s, frac) => Math.round(Math.max(0, Math.min(1, frac)) * Math.max(s.values.length - 1, 1));
+  const handleMove = (e) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width) return;
+    const relX = ((e.clientX - rect.left) / rect.width) * W;
+    setHoverFrac(Math.max(0, Math.min(1, (relX - pad) / (W - pad * 2))));
+  };
+  const first = series[0];
+  const firstX = xFor(first);
   return (
-    <div>
+    <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 16px', marginBottom: '6px' }}>
         {series.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#667085' }}>
             <span style={{ width: '10px', height: '3px', borderRadius: '2px', background: s.color, display: 'inline-block', opacity: s.dashed ? 0.6 : 1 }} />
-            {s.name}
+            {s.name}{s.axis === 'right' ? ' (right axis)' : ''}
           </div>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="150" preserveAspectRatio="none">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`} width="100%" height="150" preserveAspectRatio="none"
+        onMouseMove={handleMove} onMouseLeave={() => setHoverFrac(null)}
+        style={{ cursor: 'crosshair' }}
+      >
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={series[0].color} stopOpacity={0.18} />
-            <stop offset="100%" stopColor={series[0].color} stopOpacity={0} />
+            <stop offset="0%" stopColor={first.color} stopOpacity={0.18} />
+            <stop offset="100%" stopColor={first.color} stopOpacity={0} />
           </linearGradient>
         </defs>
         {[0.25, 0.5, 0.75, 1].map((f, i) => (
           <line key={i} x1={pad} x2={W - pad} y1={pad + f * (H - pad * 2)} y2={pad + f * (H - pad * 2)} stroke="#F2F4F7" strokeWidth={1} />
         ))}
-        <path d={`M ${series[0].values.map((v, i) => x(i) + ' ' + y(v)).join(' L ')} L ${x(n - 1)} ${H - pad} L ${x(0)} ${H - pad} Z`} fill={`url(#${gid})`} />
-        {series.map((s, si) => (
-          <polyline key={si} points={s.values.map((v, i) => x(i) + ',' + y(v)).join(' ')} fill="none" stroke={s.color} strokeWidth={2.4} strokeDasharray={s.dashed ? '5 4' : '0'} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        ))}
-        {series.filter((s) => !s.dashed).map((s, si) => (
-          <circle key={'c' + si} cx={x(n - 1)} cy={y(s.values[n - 1])} r={3.6} fill={s.color} stroke="#fff" strokeWidth={2} />
-        ))}
+        <path d={`M ${first.values.map((v, i) => firstX(i) + ' ' + y(v, first.axis === 'right')).join(' L ')} L ${firstX(first.values.length - 1)} ${H - pad} L ${firstX(0)} ${H - pad} Z`} fill={`url(#${gid})`} />
+        {series.map((s, si) => {
+          const sx = xFor(s);
+          return <polyline key={si} points={s.values.map((v, i) => sx(i) + ',' + y(v, s.axis === 'right')).join(' ')} fill="none" stroke={s.color} strokeWidth={2.4} strokeDasharray={s.dashed ? '5 4' : '0'} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />;
+        })}
+        {series.filter((s) => !s.dashed).map((s, si) => {
+          const sx = xFor(s);
+          return <circle key={'c' + si} cx={sx(s.values.length - 1)} cy={y(s.values[s.values.length - 1], s.axis === 'right')} r={3.6} fill={s.color} stroke="#fff" strokeWidth={2} />;
+        })}
+        {hoverFrac != null && (
+          <>
+            <line x1={pad + hoverFrac * (W - pad * 2)} x2={pad + hoverFrac * (W - pad * 2)} y1={pad} y2={H - pad} stroke="#98A2B3" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+            {series.map((s, si) => {
+              const i = idxFor(s, hoverFrac);
+              return <circle key={'h' + si} cx={pad + hoverFrac * (W - pad * 2)} cy={y(s.values[i], s.axis === 'right')} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} />;
+            })}
+          </>
+        )}
       </svg>
+      {hoverFrac != null && (
+        <div style={{
+          position: 'absolute', top: 4,
+          left: Math.min(Math.max(hoverFrac * 100, 14), 86) + '%',
+          transform: 'translateX(-50%)', background: '#0C1425', color: '#E4E7EC',
+          fontSize: '11px', lineHeight: 1.5, padding: '6px 9px', borderRadius: '6px',
+          boxShadow: '0 4px 12px rgba(16,24,40,.2)', pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 5,
+        }}>
+          {series.map((s, si) => {
+            const i = idxFor(s, hoverFrac);
+            const lbl = (s.labels || opts.labels || [])[i];
+            return (
+              <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, display: 'inline-block', flex: 'none' }} />
+                <span>{lbl ? lbl + ': ' : ''}{s.name}: {fmt(s.values[i])}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10.5px', color: '#98A2B3' }}>
         {(opts.labels || []).map((l, i) => <span key={i}>{l}</span>)}
       </div>
     </div>
+  );
+}
+
+// ChartComparePicker (17 Jul 2026, task #313, Michael: "add the ability to overlay charts to
+// compare, any chart on the portal to any chart on the portal"): a plain native <select> (matching
+// this file's no-dependency, hand-rolled-component convention — same reasoning as InfoTip/Donut/
+// Gauge) listing every OTHER LineChart on the portal, grouped by page via <optgroup>. Picking one
+// tells the page-level render loop (see the chartCards.map() below) to build a combined LineChart
+// overlaying the chosen chart's series (tagged axis:'right') onto this one. Deliberately NOT a
+// custom dropdown/portal like InfoTip's bubble — a native select needs no positioning/z-index/
+// click-outside handling at all, and every chart on the portal only has single-digit LineChart
+// counts today (9, across Marketing/Month-on-Month/District Manager), so a flat native list is
+// plenty usable without a searchable custom widget.
+function ChartComparePicker({ options, value, onChange, titles }) {
+  const val = value ? `${value.page}::${value.title}` : '';
+  const byPage = options.reduce((acc, o) => { (acc[o.page] ??= []).push(o); return acc; }, {});
+  return (
+    <select
+      value={val}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!v) { onChange(null); return; }
+        const sep = v.indexOf('::');
+        onChange({ page: v.slice(0, sep), title: v.slice(sep + 2) });
+      }}
+      title="Overlay another chart on this graph to compare"
+      style={{ fontSize: '11px', color: '#475467', border: '1px solid #D5DAE1', borderRadius: '6px', padding: '3px 6px', background: '#fff', cursor: 'pointer', maxWidth: '170px' }}
+    >
+      <option value="">+ Compare…</option>
+      {Object.entries(byPage).map(([pg, opts]) => (
+        <optgroup key={pg} label={titles[pg] || pg}>
+          {opts.map((o) => <option key={`${o.page}::${o.title}`} value={`${o.page}::${o.title}`}>{o.title}</option>)}
+        </optgroup>
+      ))}
+    </select>
   );
 }
 
@@ -839,6 +957,11 @@ export default function PortalV2Page() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportSel, setExportSel] = useState({});
   const [builderOpen, setBuilderOpen] = useState(false);
+  // chartOverlays (17 Jul 2026, task #313): which OTHER {page,title} chart, if any, is currently
+  // overlaid onto each LineChart card. Keyed by `${page}::${chart title}` of the HOST chart (not the
+  // overlay) so the same overlay choice persists correctly if the user navigates away and back to a
+  // page — cleared only by explicitly picking "+ Compare..." -> blank in ChartComparePicker.
+  const [chartOverlays, setChartOverlays] = useState({});
   // Builder now supports 2-4 columns: builderFields[i] paired with builderOps[i-1] between
   // columns i-1 and i (evaluated left-to-right — see evalWidget() above). Defaults mirror the old
   // 2-field Rent Roll ÷ Occupied Area widget.
@@ -2405,6 +2528,36 @@ export default function PortalV2Page() {
       // now lives only in the tooltip (tip), worded plainly, not shouted in the header.
       const momTip = momUsingFullHistory ? '\nShowing full history — the selected period is too narrow to plot.' : '';
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
+      // Revenue Collected — daily-within-current-month view (17 Jul 2026, task #312, Michael: "the
+      // rev collected on the mom page only shows '20-'24 [when] i have it 1m... make it show the
+      // current month only and how it changes daily"). Root cause of the '20-'24 symptom: selecting
+      // the PERIOD selector's '1M' preset scopes monthFrom===monthTo, i.e. exactly ONE stored month —
+      // below the >=2 points scopedOk requires (see momUsingFullHistory above), so it was silently
+      // falling back to liveHist's full multi-year stored history instead, and cramming 60+ month
+      // labels into one 620px-wide chart left only a handful of legible YEAR labels visible.
+      // Rather than widen that fallback, this gives '1M' something genuinely better for Revenue
+      // Collected specifically: real DAY-BY-DAY figures for the live current month, sourced from
+      // daily_financial_snapshot (the same table Cockpit Charting already accumulates one row per
+      // site per day for — see lib/pullCockpit.js/lib/cockpitData.js) instead of one point per
+      // calendar month. Scoped to ONLY this one chart because it's the only MoM metric with any
+      // daily-granularity source at all — Rent Roll/Insurance Roll/Occupied Area/SS Rate below are
+      // each pulled just once per MONTH (RentRoll/InsuranceRoll/OccupancyStatistics have no daily
+      // pull), so '1M' on those still falls back to full history exactly as before; there's no daily
+      // data to show for them.
+      // total_credit was ADDED to daily_financial_snapshot alongside this fix (see schema.sql) so the
+      // daily figure can match the SAME "Charge minus Credit" definition as the monthly version
+      // (buildPayload.js's revenue.collected) instead of just raw total_charge on its own — existing
+      // days pulled before the migration read total_credit as 0 until Michael runs it and new daily
+      // rows accumulate (no raw response is kept for this pipeline to backfill from, see schema.sql's
+      // migration comment).
+      const latestMonthIdx = liveMonths && liveMonths.length ? indexOfMonthKey(liveMonths[liveMonths.length - 1]) : null;
+      const isSingleCurrentMonth = monthFrom === monthTo && latestMonthIdx != null && monthFrom === latestMonthIdx;
+      const cockpitOk = !!(liveCockpit && liveCockpit.curve && liveCockpit.curve.length);
+      const dailyOk = isSingleCurrentMonth && cockpitOk;
+      if (isSingleCurrentMonth && !cockpitOk) debugWarn('[portal-v2] Month-on-Month: 1M selected but no daily_financial_snapshot rows yet for Revenue Collected — run npm run pull:cockpit (and again daily), showing full history meanwhile.');
+      const revCollectedCard = dailyOk
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true }} />, wide: true }
+        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
       // accurate tax/deferred-adjusted figure now lives on the Financials page's True Revenue
@@ -2418,7 +2571,7 @@ export default function PortalV2Page() {
       // the underlying data/labels were already complete. Zooming is done via the date-range presets
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
-        { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: liveHist.map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        revCollectedCard,
         { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
         { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
         { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
@@ -3096,6 +3249,42 @@ export default function PortalV2Page() {
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
   const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
 
+  // lineChartOptions (17 Jul 2026, task #313): the full portal-wide list of {page,title} for every
+  // LineChart card that exists anywhere, built by calling buildPage() for EVERY page (not just the
+  // one on screen) and keeping only cards whose `el` is a LineChart (Donut/Gauge/VBars/HBars/
+  // StoreBarChart cards aren't offered — overlaying a trend line onto a bar/gauge doesn't mean
+  // anything). This is safe to do off-screen because every live data fetch (fetchLiveTotals/
+  // fetchSnapshot/fetchFloorOccupancy/fetchCockpit) runs once on initial mount regardless of which
+  // page is currently active (see that useEffect above) — buildPage('districtManager') returns fully
+  // real data even while the user is looking at Month-on-Month, it's not gated behind actually
+  // visiting that page first. Memoized on the underlying live-data/filter state (NOT on `page` or
+  // `chartOverlays`) so this doesn't get recomputed on every render — in particular, LineChart's own
+  // hover state lives inside that component now specifically so mousemove never reaches this far up.
+  const lineChartOptions = useMemo(() => {
+    const out = [];
+    for (const p of Object.keys(titles)) {
+      try {
+        const pd = buildPage(p);
+        for (const c of (pd.chartCards || [])) {
+          if (c.el && c.el.type === LineChart) out.push({ page: p, title: c.title });
+        }
+      } catch (e) { /* a page whose off-screen data isn't ready yet -- just leave it out of the picker for now */ }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSitesRaw, livePrevSitesRaw, liveHistory, liveCockpit, liveSnapshot, monthFrom, monthTo, selected, region]);
+
+  // resolveLineChart (task #313): look up one specific OTHER chart's live series/opts by page+title,
+  // for whichever card currently has an overlay selected. Always calls buildPage(page) fresh rather
+  // than trying to reuse the already-computed `pageData` — only runs for the handful of cards that
+  // actually have an active overlay (0 in the common case), so the extra recompute is cheap, and it
+  // stays correct even when the overlay's page differs from the one currently on screen.
+  const resolveLineChart = (page, title) => {
+    const pd = buildPage(page);
+    const card = (pd.chartCards || []).find((c) => c.title === title && c.el && c.el.type === LineChart);
+    return card ? card.el.props : null;
+  };
+
   // `tip` (13 Jul 2026): carried through unchanged from whatever buildPage() set on each kpiRow tile/
   // statCard/chartCard/table object — see InfoTip's own definition above for why this is one tip per
   // widget rather than per table column.
@@ -3111,7 +3300,7 @@ export default function PortalV2Page() {
   }));
   const chartCards = pageData.chartCards.map((c) => ({
     title: c.title, dotColor: c.dotColor || C.blue, el: c.el, removable: !!c.removable, onRemove: c.onRemove,
-    wide: !!c.wide, tip: c.tip,
+    wide: !!c.wide, tip: c.tip, isLine: !!(c.el && c.el.type === LineChart),
   }));
   const tables = pageData.tables;
 
@@ -3441,22 +3630,52 @@ export default function PortalV2Page() {
 
                 {chartCards.length > 0 && (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: '16px' }}>
-                    {chartCards.map((c, ci) => (
+                    {chartCards.map((c, ci) => {
+                      // Chart overlay (task #313): keyed by the HOST chart's own page+title so the
+                      // choice survives switching pages and back. Only offered/applied for LineChart
+                      // cards — see lineChartOptions'/isLine's own comments above for why.
+                      const overlayKey = `${page}::${c.title}`;
+                      const overlay = c.isLine ? chartOverlays[overlayKey] : null;
+                      let el = c.el;
+                      if (c.isLine && overlay) {
+                        const resolved = resolveLineChart(overlay.page, overlay.title);
+                        if (resolved) {
+                          const overlaySeries = resolved.series.map((s) => ({
+                            ...s, axis: 'right', labels: (resolved.opts && resolved.opts.labels) || s.labels,
+                            name: `${s.name} — ${overlay.title}`,
+                          }));
+                          el = <LineChart series={[...c.el.props.series, ...overlaySeries]} opts={c.el.props.opts} />;
+                        }
+                      }
+                      return (
                       <div key={ci} style={{ background: '#fff', border: '1px solid #D5DAE1', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', overflow: 'hidden', gridColumn: c.wide ? '1/-1' : undefined }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: '1px solid #F2F4F7' }}>
                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: c.dotColor }} />
                           <span style={{ fontSize: '12.5px', fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#475467' }}>{c.title}</span>
                           <InfoTip text={c.tip} />
                           <span style={{ flex: 1 }} />
+                          {c.isLine && (
+                            <ChartComparePicker
+                              titles={titles}
+                              value={overlay}
+                              options={lineChartOptions.filter((o) => !(o.page === page && o.title === c.title))}
+                              onChange={(v) => setChartOverlays((prev) => {
+                                const next = { ...prev };
+                                if (v) next[overlayKey] = v; else delete next[overlayKey];
+                                return next;
+                              })}
+                            />
+                          )}
                           {c.removable && (
                             <button onClick={c.onRemove} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#98A2B3', display: 'flex', padding: '2px' }}>
                               <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="#98A2B3" strokeWidth={2} strokeLinecap="round" /></svg>
                             </button>
                           )}
                         </div>
-                        <div style={{ padding: '18px' }}>{c.el}</div>
+                        <div style={{ padding: '18px' }}>{el}</div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

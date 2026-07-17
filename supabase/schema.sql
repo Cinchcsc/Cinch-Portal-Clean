@@ -171,6 +171,7 @@ create table if not exists daily_financial_snapshot (
   snapshot_date date not null,
   total_charge numeric not null,
   total_payment numeric not null,
+  total_credit numeric not null default 0,
   categories jsonb not null default '[]'::jsonb,
   pulled_at timestamptz default now(),
   unique (site_code, snapshot_date)
@@ -179,3 +180,15 @@ create index if not exists daily_financial_snapshot_lookup on daily_financial_sn
 alter table daily_financial_snapshot enable row level security;
 -- service-role only, same as raw_report/autobill_daily -- the frontend never queries this directly,
 -- only via lib/pullCockpit.js's aggregated /api/cockpit output.
+
+-- MIGRATION 17 Jul 2026 (task #312, Michael: "make the mom page's 1-month Revenue Collected view show
+-- the current month, daily"): total_credit wasn't captured when this table was first built (only
+-- total_charge/total_payment) even though REPORTS.financial.parse() already computes it -- Revenue
+-- Collected everywhere else on the portal is Charge MINUS Credit (see buildPayload.js's
+-- revenue.collected), so a daily version of that same metric needs total_credit too, not just
+-- total_charge alone. Existing rows default to 0 (i.e. read as if no credits yet) since the raw
+-- SiteLink response isn't kept anywhere for this daily pipeline (unlike raw_report, which stores
+-- `raw_response` specifically so reparse-report.js can replay parser fixes) -- there is no way to
+-- backfill total_credit for days already captured before this column existed. Run this against
+-- production once (idempotent, safe to re-run):
+alter table daily_financial_snapshot add column if not exists total_credit numeric not null default 0;
