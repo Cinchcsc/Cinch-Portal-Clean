@@ -19,15 +19,12 @@
     "repull:month": "node --env-file=.env scripts/repull-report-month.js",
     "repull:all": "node --env-file=.env scripts/repull-report-all-months.js",
     "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
-    "backfill:delinquent30": "node --env-file=.env scripts/backfill-delinquent30.js",
     "import:unit-status": "node --env-file=.env scripts/import-unit-status.js",
     "check": "node --env-file=.env scripts/check-payload.js",
     "check:refresh-log": "node --env-file=.env scripts/check-refresh-log.js",
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",
-    "probe:dm-groupkey": "node --env-file=.env scripts/probe-dm-groupkey-mismatch.js",
-    "probe:dm-duplicates": "node --env-file=.env scripts/probe-dm-widget-duplicates.js",
     "test:discounts": "node scripts/test-discounts-parser.mjs"
   },
   "dependencies": {
