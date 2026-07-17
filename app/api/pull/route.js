@@ -38,7 +38,12 @@ export async function GET(request) {
     const full = sp.get('full') === '1';
     const custom = (sp.get('reports') || '').split(',').map(s => s.trim()).filter(Boolean);
     const reports = custom.length ? custom : (full ? undefined : LIGHT);  // undefined => all reports
-    return NextResponse.json(await runPull({ reports }));
+    // rebuildPayload:false (task #297 fix, 17 Jul 2026) — every cron hit of THIS route is time-boxed
+    // to the same 300s maxDuration as its own SiteLink calls; appending the portal_payload rebuild here
+    // too is what's been dying mid-rebuild on the day's last batch (see lib/pull.js's rebuildPayload
+    // comment). The rebuild now happens exclusively via /api/rebuild-payload's own dedicated cron, with
+    // its own untouched budget, after every report-pulling batch has had its own hour to finish.
+    return NextResponse.json(await runPull({ reports, rebuildPayload: false }));
   } catch (e) {
     return NextResponse.json({ status: 'error', message: e.message }, { status: 500 });
   }

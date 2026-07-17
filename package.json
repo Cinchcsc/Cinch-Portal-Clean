@@ -13,6 +13,7 @@
     "pull": "node --env-file=.env scripts/run-pull.js",
     "pull:snapshot": "node --env-file=.env scripts/run-pull-snapshot.js",
     "pull:cockpit": "node --env-file=.env scripts/run-pull-cockpit.js",
+    "rebuild:payload": "node --env-file=.env scripts/run-rebuild-payload.js",
     "rebuild": "node --env-file=.env scripts/rebuild.js",
     "rebuild:as-of": "node --env-file=.env scripts/rebuild-as-of.js",
     "reparse": "node --env-file=.env scripts/reparse-report.js",

@@ -6,6 +6,7 @@
     { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "0 4 * * *" },
     { "path": "/api/pull?reports=true_revenue,rental_activity,discounts", "schedule": "0 5 * * *" },
     { "path": "/api/pull-snapshot", "schedule": "0 6 * * *" },
-    { "path": "/api/pull-cockpit", "schedule": "0 7 * * *" }
+    { "path": "/api/pull-cockpit", "schedule": "0 7 * * *" },
+    { "path": "/api/rebuild-payload", "schedule": "0 8 * * *" }
   ]
 }
