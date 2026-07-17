@@ -12,7 +12,24 @@
 // per-row, so checking only the first row risks a false negative on which table actually has it.
 //
 // Run:  cd cinch-portal-clean && node --env-file=.env scripts/probe-leadfunnel-table-selection.js
+//
+// FIXED 17 Jul 2026 (first run hit "canceling statement due to statement timeout"): same bug class
+// already fixed in reparse-report.js — fetching every row's raw_response (the full untouched SOAP
+// blob) in ONE query gets heavy enough to hit Postgres's statement_timeout. Fix: fetch only
+// id/site_code/month up front (tiny, paginated query), then stream each row's raw_response one at a
+// time inside the loop below, with a short retry — many small queries instead of one big one.
 import { admin } from '../lib/supabaseAdmin.js';
+
+async function withRetry(fn, attempts = 3, delayMs = 2000) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await new Promise((res) => setTimeout(res, delayMs));
+    }
+  }
+  throw lastErr;
+}
 
 function findAllTables(raw) {
   let diff = null;
@@ -45,15 +62,36 @@ function unionKeys(rows, sample = 10) {
   return keys;
 }
 
-const { data, error } = await admin.from('raw_report').select('id,site_code,month,raw_response')
-  .eq('report', 'lead_funnel').not('raw_response', 'is', null).order('site_code').order('month');
-if (error) { console.log('Query failed:', error.message); process.exit(1); }
-console.log(`Checking ${data.length} stored lead_funnel raw_response row(s)...\n`);
+const PAGE = 500;
+let idRows = [];
+for (let from = 0; ; from += PAGE) {
+  const { data, error } = await withRetry(async () => {
+    const res = await admin.from('raw_report').select('id,site_code,month')
+      .eq('report', 'lead_funnel').not('raw_response', 'is', null).order('site_code').order('month').range(from, from + PAGE - 1);
+    if (res.error) throw new Error(res.error.message);
+    return res;
+  });
+  idRows = idRows.concat(data);
+  if (!data || data.length < PAGE) break;
+}
+console.log(`Checking ${idRows.length} stored lead_funnel raw_response row(s)...\n`);
 
 let mismatches = 0;
 const tableWinCounts = {};
-for (const row of data) {
-  const tables = findAllTables(row.raw_response);
+for (const idRow of idRows) {
+  let raw_response;
+  try {
+    raw_response = await withRetry(async () => {
+      const { data, error } = await admin.from('raw_report').select('raw_response').eq('id', idRow.id).single();
+      if (error) throw new Error(error.message);
+      return data.raw_response;
+    });
+  } catch (e) {
+    console.log(`${idRow.site_code}/${String(idRow.month).slice(0, 7)}: FAILED to fetch raw_response — ${e.message}`);
+    continue;
+  }
+  const row = { site_code: idRow.site_code, month: idRow.month };
+  const tables = findAllTables(raw_response);
   if (!tables.length) continue;
 
   let kept = tables[0];
@@ -78,6 +116,6 @@ for (const row of data) {
 console.log('\nTable win counts (which table extractRows() actually kept, across all stored site/months):');
 for (const [name, n] of Object.entries(tableWinCounts).sort((a, b) => b[1] - a[1])) console.log(`  ${name.padEnd(20)} ${n}`);
 
-console.log(`\n${mismatches} mismatch(es) found out of ${data.length} stored (site, month) pairs.`);
+console.log(`\n${mismatches} mismatch(es) found out of ${idRows.length} stored (site, month) pairs.`);
 console.log(mismatches ? 'Fix: use extractNamedTable() keyed to whichever table name reliably has dPlaced, same pattern as the insurance_activity/management/true_revenue fixes.' : 'No mismatches — extractRows() has been consistently grabbing the right table so far.');
 process.exit(0);
