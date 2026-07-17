@@ -31,6 +31,24 @@ async function withRetry(fn, attempts = 3, delayMs = 2000) {
   throw lastErr;
 }
 
+// BUG FIX (17 Jul 2026, same day this probe was first written): this originally returned each
+// table's rows RAW, un-flattened — but node-soap puts every row's real column values under a
+// nested `.attributes` object (see lib/sitelink.js's extractRows()/extractNamedTable(), which both
+// flatten `{ attributes, ...rest } → { ...attributes, ...rest }` before a caller ever sees a row).
+// Because unionKeys() below explicitly SKIPS the 'attributes' key, the first run of this probe was
+// checking each row's top-level keys only — which for an unflattened SOAP row is typically just
+// `{ attributes: {...} }` plus a couple of SOAP-internal keys — so it could almost never find
+// `dPlaced` anywhere, even on months already confirmed correct on the live portal. That produced a
+// misleading "1023 mismatches" headline conflating two very different things (see below). Fixed by
+// flattening each row the exact same way lib/sitelink.js does, so this probe checks what the real
+// parser actually sees.
+function flattenRow(r) {
+  if (r && typeof r === 'object' && r.attributes && typeof r.attributes === 'object') {
+    const { attributes, ...rest } = r; return { ...attributes, ...rest };
+  }
+  return r;
+}
+
 function findAllTables(raw) {
   let diff = null;
   (function find(node) {
@@ -47,18 +65,19 @@ function findAllTables(raw) {
     if (!node || typeof node !== 'object' || seen.has(node)) return;
     seen.add(node);
     for (const [k, v] of Object.entries(node)) {
-      if (Array.isArray(v) && v.length && typeof v[0] === 'object') tables.push({ name: k, count: v.length, rows: v });
+      if (Array.isArray(v) && v.length && typeof v[0] === 'object') tables.push({ name: k, count: v.length, rows: v.map(flattenRow) });
       else if (v && typeof v === 'object') walk(v);
     }
   })(diff || raw);
   return tables;
 }
 
-// Union of keys across up to `sample` rows, not just row 0 — a sparse/absent field on row 0 can still
-// be present on row 5.
-function unionKeys(rows, sample = 10) {
+// Union of keys across ALL rows in the table, not just a small sample — a sparse/absent field on
+// row 0 can still be present later, and these tables are small enough (tens of rows, at most a few
+// hundred) that scanning every row costs nothing and removes sample-size as a variable entirely.
+function unionKeys(rows) {
   const keys = new Set();
-  for (const r of rows.slice(0, sample)) for (const k of Object.keys(r)) if (k !== 'attributes') keys.add(k);
+  for (const r of rows) for (const k of Object.keys(r)) if (k !== 'attributes') keys.add(k);
   return keys;
 }
 
@@ -76,8 +95,18 @@ for (let from = 0; ; from += PAGE) {
 }
 console.log(`Checking ${idRows.length} stored lead_funnel raw_response row(s)...\n`);
 
-let mismatches = 0;
+// Two DIFFERENT phenomena, counted separately (the first run of this probe conflated them into one
+// "mismatches" number, which overstated the problem — see flattenRow() comment above):
+//   genuineMismatches: a table WITH dPlaced exists, but extractRows()'s size-based pick kept a
+//     DIFFERENT table instead — a real, confirmed table-selection bug (same class as
+//     insurance_activity's fix).
+//   noDPlacedAnywhere: dPlaced isn't present on ANY discovered table for that site/month — a
+//     different, separate question (could be a genuinely old/blank month, a schema difference, or
+//     something else) that does NOT by itself prove extractRows() picked wrong.
+let genuineMismatches = 0;
+let noDPlacedAnywhere = 0;
 const tableWinCounts = {};
+const noDPlacedExamples = [];
 for (const idRow of idRows) {
   let raw_response;
   try {
@@ -102,20 +131,22 @@ for (const idRow of idRows) {
   const monthStr = String(row.month).slice(0, 7);
 
   if (hasDPlaced.length === 0) {
-    console.log(`${row.site_code}/${monthStr}: NO table has dPlaced at all (checked ${tables.length} tables: ${tables.map((t) => t.name + '(' + t.count + ')').join(', ')}) — kept="${kept.name}"`);
-    mismatches++;
+    noDPlacedAnywhere++;
+    if (noDPlacedExamples.length < 15) noDPlacedExamples.push(`${row.site_code}/${monthStr}: checked ${tables.length} tables: ${tables.map((t) => t.name + '(' + t.count + ')').join(', ')} — kept="${kept.name}"`);
     continue;
   }
   const rightTable = hasDPlaced[0]; // if multiple have it, first is fine for this check
   if (kept.name !== rightTable.name) {
     console.log(`${row.site_code}/${monthStr}: *** MISMATCH *** extractRows() kept "${kept.name}" (${kept.count} rows) but dPlaced lives on "${rightTable.name}" (${rightTable.count} rows) — this site/month's lead_funnel numbers are reading the WRONG table.`);
-    mismatches++;
+    genuineMismatches++;
   }
 }
 
 console.log('\nTable win counts (which table extractRows() actually kept, across all stored site/months):');
 for (const [name, n] of Object.entries(tableWinCounts).sort((a, b) => b[1] - a[1])) console.log(`  ${name.padEnd(20)} ${n}`);
 
-console.log(`\n${mismatches} mismatch(es) found out of ${idRows.length} stored (site, month) pairs.`);
-console.log(mismatches ? 'Fix: use extractNamedTable() keyed to whichever table name reliably has dPlaced, same pattern as the insurance_activity/management/true_revenue fixes.' : 'No mismatches — extractRows() has been consistently grabbing the right table so far.');
+console.log(`\n${genuineMismatches} genuine mismatch(es) (a table HAS dPlaced, but a different table was kept) out of ${idRows.length} stored (site, month) pairs.`);
+console.log(`${noDPlacedAnywhere} site/month(s) where dPlaced was not found on ANY discovered table — separate, unresolved question, NOT counted as a mismatch. First ${noDPlacedExamples.length} example(s):`);
+for (const line of noDPlacedExamples) console.log(`  ${line}`);
+console.log(genuineMismatches ? '\nFix: use extractNamedTable() keyed to whichever table name reliably has dPlaced, same pattern as the insurance_activity/management/true_revenue fixes.' : '\nNo genuine mismatches — when a table has dPlaced, extractRows() has been consistently grabbing it.');
 process.exit(0);
