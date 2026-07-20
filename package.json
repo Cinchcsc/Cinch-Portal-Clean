@@ -38,7 +38,8 @@
     "probe:realrate-freshness": "node --env-file=.env scripts/probe-realrate-freshness.js",
     "probe:customertype-rate": "node --env-file=.env scripts/probe-customertype-rate.js",
     "probe:enquiry-reservation-gap": "node --env-file=.env scripts/probe-enquiry-reservation-gap.js",
-    "probe:conversion-field-check": "node --env-file=.env scripts/probe-conversion-field-check.js"
+    "probe:conversion-field-check": "node --env-file=.env scripts/probe-conversion-field-check.js",
+    "probe:channel-flag-reliability": "node --env-file=.env scripts/probe-channel-flag-reliability.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
