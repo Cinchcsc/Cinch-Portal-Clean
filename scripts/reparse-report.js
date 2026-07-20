@@ -17,7 +17,7 @@
 import { admin } from '../lib/supabaseAdmin.js';
 import { REPORTS } from '../lib/reportMap.js';
 import { extractRows } from '../lib/sitelink.js';
-import { buildPayload } from '../lib/buildPayload.js';
+import { runRebuildPayload } from '../lib/rebuildPayload.js';
 
 const reportKey = process.argv[2];
 const monthArg = process.argv[3]; // optional YYYY-MM
@@ -113,11 +113,20 @@ for (const r of idRows) {
 }
 console.log(`\nReparsed ${ok}/${idRows.length} row(s) (${failed} failed) — zero SiteLink calls made.`);
 
+// CHANGED 20 Jul 2026: this used to duplicate buildPayload()+the portal_payload upsert inline, with
+// no retry — a transient failure here (observed: "canceling statement due to statement timeout",
+// most likely just DB load from the 2059 back-to-back updates immediately above) meant losing the
+// rebuild even though every row above had already reparsed and saved successfully. Now calls the
+// SAME shared runRebuildPayload() the dedicated /api/rebuild-payload cron uses (task #297/#328) —
+// one rebuild path instead of two copies of the same 3 lines, and if THIS attempt also fails, the
+// already-reparsed data isn't lost: just re-run `npm run rebuild:payload` (or wait for tomorrow's
+// 8am cron) to retry the rebuild alone, without redoing any of the reparsing above.
 console.log('Rebuilding portal_payload...');
-const curStart = new Date(now.getFullYear(), now.getMonth(), 1);
-const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-const payload = await buildPayload(curStart, prevStart);
-const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
-if (ppErr) { console.error('portal_payload write failed:', ppErr.message); process.exit(1); }
-console.log('Done — portal_payload rebuilt from reparsed data.');
+const result = await runRebuildPayload();
+if (result.status !== 'ok') {
+  console.error(`portal_payload rebuild failed: ${result.message || 'unknown error'}`);
+  console.error('The reparse above already succeeded and is saved — just re-run `npm run rebuild:payload` to retry the rebuild alone.');
+  process.exit(1);
+}
+console.log(`Done — portal_payload rebuilt from reparsed data (${result.durationMs}ms).`);
 process.exit(0);
