@@ -1,9 +1,21 @@
 // Task #202 (13 Jul 2026, Michael: "password protect the site so each individual puts their own
 // unique email and password into it"). Gates every page/API route behind a real Supabase Auth
 // session, EXCEPT:
-//   - /api/pull, /api/pull-snapshot, and /api/pull-cockpit — Vercel's own cron hits these directly
-//     with no browser/cookies at all; they're already protected by their own CRON_SECRET bearer-token
-//     check (see those route.js files). Gating them here too would just break the daily auto-update.
+//   - /api/pull, /api/pull-snapshot, /api/pull-cockpit, and /api/rebuild-payload — Vercel's own cron
+//     hits these directly with no browser/cookies at all; they're already protected by their own
+//     CRON_SECRET bearer-token check (see those route.js files). Gating them here too would just
+//     break the daily auto-update.
+//   - FIXED 20 Jul 2026: /api/rebuild-payload (task #297, added 17 Jul) was never added to this list
+//     when it was created, so this middleware's catch-all matcher intercepted every cron invocation
+//     FIRST, found no Supabase session (Vercel's cron request has no browser cookies), and returned
+//     401 at line ~63 below — before the request ever reached the route's own CRON_SECRET check.
+//     That made the route's auth logic entirely unreachable: every invocation 401'd regardless of
+//     whether the correct secret was sent, which is why it looked identical to a misconfigured
+//     secret. Confirmed via a live test: the SAME secret that correctly authenticates against
+//     /api/pull-cockpit still 401'd against /api/rebuild-payload, which is only possible if something
+//     upstream of that route's own check was rejecting it first. Zero refresh_log rows with
+//     kind='rebuild' since deploy (3 days) is the direct consequence — runRebuildPayload() never got
+//     the chance to run, so it never even reached the point of writing a 'running' row.
 //   - /login and /auth/confirm — have to be reachable BEFORE a session exists (the login form itself,
 //     and the invite/reset-link landing route that's the very thing that ESTABLISHES a session).
 //     /set-password is deliberately NOT listed here: by the time a user reaches it, /auth/confirm has
@@ -20,7 +32,7 @@ import { NextResponse } from 'next/server';
 const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit'];
+const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit', '/api/rebuild-payload'];
 const PUBLIC_PATHS = ['/login', '/auth/confirm'];
 
 export async function middleware(request) {
