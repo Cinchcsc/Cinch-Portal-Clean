@@ -81,6 +81,18 @@ function unionKeys(rows) {
   return keys;
 }
 
+// CASE-INSENSITIVE check, ADDED 20 Jul 2026 — the previous run reported 995 site/months with "NO
+// table has dPlaced at all", including some recent 2026 months, which doesn't match reality (those
+// months are confirmed correct on the live portal). Same lesson as the .attributes bug above: before
+// believing "the field doesn't exist", rule out the probe itself being too strict. `Set.has('dPlaced')`
+// is an exact, case-SENSITIVE match — if SiteLink ever returns this column as `dplaced`/`DPlaced`/
+// `Dplaced` (a real possibility across years of API/schema drift), this would wrongly report it
+// missing. This checks case-insensitively and returns which exact casing was found, if any.
+function findDPlacedKey(keys) {
+  for (const k of keys) if (k.toLowerCase() === 'dplaced') return k;
+  return null;
+}
+
 const PAGE = 500;
 let idRows = [];
 for (let from = 0; ; from += PAGE) {
@@ -127,18 +139,28 @@ for (const idRow of idRows) {
   for (const t of tables) if (t.count > kept.count) kept = t;
   tableWinCounts[kept.name] = (tableWinCounts[kept.name] || 0) + 1;
 
-  const hasDPlaced = tables.filter((t) => unionKeys(t.rows).has('dPlaced'));
+  const tableKeys = tables.map((t) => ({ t, keys: unionKeys(t.rows) }));
+  const hasDPlaced = tableKeys.filter(({ keys }) => findDPlacedKey(keys));
   const monthStr = String(row.month).slice(0, 7);
 
   if (hasDPlaced.length === 0) {
     noDPlacedAnywhere++;
-    if (noDPlacedExamples.length < 15) noDPlacedExamples.push(`${row.site_code}/${monthStr}: checked ${tables.length} tables: ${tables.map((t) => t.name + '(' + t.count + ')').join(', ')} — kept="${kept.name}"`);
+    // Full column list per table now (not just name+count) — so if the real field is a near-miss
+    // spelling (DatePlaced, dtPlaced, etc.) rather than a casing difference, it's visible directly
+    // here instead of needing yet another probe revision.
+    if (noDPlacedExamples.length < 15) {
+      const detail = tableKeys.map(({ t, keys }) => `${t.name}(${t.count}): [${[...keys].sort().join(', ')}]`).join(' | ');
+      noDPlacedExamples.push(`${row.site_code}/${monthStr}: kept="${kept.name}" — ${detail}`);
+    }
     continue;
   }
-  const rightTable = hasDPlaced[0]; // if multiple have it, first is fine for this check
+  const { t: rightTable, keys: rightKeys } = hasDPlaced[0]; // if multiple have it, first is fine for this check
+  const foundKey = findDPlacedKey(rightKeys);
   if (kept.name !== rightTable.name) {
-    console.log(`${row.site_code}/${monthStr}: *** MISMATCH *** extractRows() kept "${kept.name}" (${kept.count} rows) but dPlaced lives on "${rightTable.name}" (${rightTable.count} rows) — this site/month's lead_funnel numbers are reading the WRONG table.`);
+    console.log(`${row.site_code}/${monthStr}: *** MISMATCH *** extractRows() kept "${kept.name}" (${kept.count} rows) but ${foundKey} lives on "${rightTable.name}" (${rightTable.count} rows) — this site/month's lead_funnel numbers are reading the WRONG table.`);
     genuineMismatches++;
+  } else if (foundKey !== 'dPlaced') {
+    console.log(`${row.site_code}/${monthStr}: table selection is correct, but the field is cased "${foundKey}" not "dPlaced" — confirm lib/reportMap.js's lead_funnel parser reads it correctly regardless of casing.`);
   }
 }
 
