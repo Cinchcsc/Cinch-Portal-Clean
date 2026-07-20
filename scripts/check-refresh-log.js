@@ -31,5 +31,9 @@ for (const r of data) {
 
 const today = new Date().toISOString().slice(0, 10);
 const todays = data.filter((r) => r.started_at.startsWith(today));
-console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 7 once the first full overnight cycle has run (5x pull, 1x snapshot, 1x cockpit).`);
+// UPDATED 20 Jul 2026: was "expect 7" — stale since /api/rebuild-payload's own 'rebuild'-kind cron
+// (task #297/#328, added 17 Jul) started writing its own row too. 8 daily crons total now: 5x pull
+// (hours 1-5, all kind='pull', distinguished only by started_at hour — see comment above), 1x
+// snapshot (hour 6), 1x cockpit (hour 7), 1x rebuild (hour 8).
+console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 8 once the first full overnight cycle has run (5x pull, 1x snapshot, 1x cockpit, 1x rebuild).`);
 process.exit(0);
