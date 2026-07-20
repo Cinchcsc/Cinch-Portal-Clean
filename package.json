@@ -29,7 +29,8 @@
     "test:discounts": "node scripts/test-discounts-parser.mjs",
     "probe:insurance-activity": "node --env-file=.env scripts/probe-insurance-activity-window.js",
     "probe:multitable-discards": "node --env-file=.env scripts/probe-multitable-discards.js",
-    "probe:leadfunnel-tables": "node --env-file=.env scripts/probe-leadfunnel-table-selection.js"
+    "probe:leadfunnel-tables": "node --env-file=.env scripts/probe-leadfunnel-table-selection.js",
+    "probe:billing-cycle": "node --env-file=.env scripts/probe-rentroll-billing-cycle.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
