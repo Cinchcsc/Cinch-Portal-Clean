@@ -31,7 +31,8 @@
     "probe:multitable-discards": "node --env-file=.env scripts/probe-multitable-discards.js",
     "probe:leadfunnel-tables": "node --env-file=.env scripts/probe-leadfunnel-table-selection.js",
     "probe:billing-cycle": "node --env-file=.env scripts/probe-rentroll-billing-cycle.js",
-    "probe:rawreport-growth": "node --env-file=.env scripts/probe-rawreport-growth.js"
+    "probe:rawreport-growth": "node --env-file=.env scripts/probe-rawreport-growth.js",
+    "probe:payload-write-time": "node --env-file=.env scripts/probe-payload-write-time.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
