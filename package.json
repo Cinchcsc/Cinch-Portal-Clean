@@ -33,7 +33,8 @@
     "probe:billing-cycle": "node --env-file=.env scripts/probe-rentroll-billing-cycle.js",
     "probe:rawreport-growth": "node --env-file=.env scripts/probe-rawreport-growth.js",
     "probe:payload-write-time": "node --env-file=.env scripts/probe-payload-write-time.js",
-    "export:reconciliation": "node --env-file=.env scripts/export-reconciliation-data.js"
+    "export:reconciliation": "node --env-file=.env scripts/export-reconciliation-data.js",
+    "probe:autobill-insurance": "node --env-file=.env scripts/probe-autobill-insurance-variance.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
