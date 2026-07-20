@@ -4,10 +4,13 @@
     { "path": "/api/pull?reports=management,move_ins_outs,past_due,scheduled_outs", "schedule": "0 2 * * *" },
     { "path": "/api/pull?reports=insurance_roll,insurance_activity,lead_funnel,marketing", "schedule": "0 3 * * *" },
     { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "0 4 * * *" },
-    { "path": "/api/pull?reports=true_revenue", "schedule": "0 5 * * *" },
+    { "path": "/api/pull?reports=true_revenue&shard=0&shards=4", "schedule": "0 5 * * *" },
     { "path": "/api/pull-snapshot", "schedule": "0 6 * * *" },
     { "path": "/api/pull-cockpit", "schedule": "0 7 * * *" },
     { "path": "/api/rebuild-payload", "schedule": "0 8 * * *" },
-    { "path": "/api/pull?reports=rental_activity,discounts", "schedule": "0 9 * * *" }
+    { "path": "/api/pull?reports=rental_activity,discounts", "schedule": "0 9 * * *" },
+    { "path": "/api/pull?reports=true_revenue&shard=1&shards=4", "schedule": "0 10 * * *" },
+    { "path": "/api/pull?reports=true_revenue&shard=2&shards=4", "schedule": "0 11 * * *" },
+    { "path": "/api/pull?reports=true_revenue&shard=3&shards=4", "schedule": "0 12 * * *" }
   ]
 }
