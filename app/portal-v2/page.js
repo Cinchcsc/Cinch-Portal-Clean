@@ -2895,6 +2895,24 @@ export default function PortalV2Page() {
         // record so this can come back easily if that field is ever found.
         { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MoveIn, MoveOut.\nCalculation: Count of rows flagged MoveIn and rows flagged MoveOut within the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
         { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInArea, MovedOutArea.\nCalculation: Σ MovedInArea (rows flagged MoveIn) and Σ MovedOutArea (rows flagged MoveOut) for the selected window, summed across sites; Out shown negative.', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
+        // Reserved Scheduled Sqft — ADDED 21 Jul 2026 (Rich's portal review, task #353): "Have sqft
+        // reserved as well as number of reservations." Deliberately live/current, NOT scoped to the
+        // daily/weekly/quarterly selector above (unlike every other card on this page) — ReservationList
+        // (the source, same as the KPIs page's own Reserved Scheduled Sqft card) "ignores any date-range
+        // parameter and always returns its FULL current list" (see lib/reportMap.js's `reservations`
+        // parser comment), so there's no way to give this a genuine daily/weekly/quarterly split; it's
+        // always "right now," same caveat as this page's mock-data note but for a structural reason,
+        // not a missing-data one. Reads liveSites directly (the main monthly pull's per-site data,
+        // refreshed several times a day) rather than snapshot_payload, since this field was never part
+        // of the separate snapshot pull and doesn't need to be — no new SiteLink calls required.
+        (() => {
+          if (liveSites && liveSites.length) {
+            const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
+            const count = liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0);
+            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (active reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Reservations = currently active (not cancelled/expired/already-converted) rows on the live waiting list, portfolio-wide. Sqft = Σ active reservations per UnitTypeID × that type\'s average unit area. Always "as of now" — ReservationList has no date-range parameter, so this doesn\'t change with the Daily/Weekly/Quarterly selector above like the other cards on this page.', tiles: [{ value: intFmt(count), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(sqft) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
+          }
+          return { title: 'Reserved Scheduled Sqft', tiles: [{ value: intFmt(37 * f), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(2600 * f) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
+        })(),
       ];
       const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
         .slice().sort((a, b) => a.code.localeCompare(b.code))
