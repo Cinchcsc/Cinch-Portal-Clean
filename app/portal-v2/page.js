@@ -509,8 +509,15 @@ function LineChart({ series, opts = {} }) {
   };
   const first = series[0];
   const firstX = xFor(first);
+  // Y-axis min/max labels — FIXED 21 Jul 2026 (Rich's portal review, task #355): "MoM: Y axis needs
+  // to be clear. Currently empty." This chart drew gridlines but never labeled them with an actual
+  // value, so every MoM trend looked like an unscaled shape unless you hovered for the tooltip. Adds
+  // a plain top(max)/bottom(min) label per axis, reusing the same fmt() the hover tooltip already
+  // uses (so £/ft²/% formatting stays consistent) — not a full tick-per-gridline axis, just enough
+  // to answer "what am I looking at" at a glance, same bar the tooltip already cleared.
+  const axisLabelStyle = { position: 'absolute', fontSize: '10px', color: '#98A2B3', whiteSpace: 'nowrap' };
   return (
-    <div style={{ position: 'relative' }}>
+    <div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 16px', marginBottom: '6px' }}>
         {series.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#667085' }}>
@@ -519,62 +526,76 @@ function LineChart({ series, opts = {} }) {
           </div>
         ))}
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`} width="100%" height="150" preserveAspectRatio="none"
-        onMouseMove={handleMove} onMouseLeave={() => setHoverFrac(null)}
-        style={{ cursor: 'crosshair' }}
-      >
-        <defs>
-          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={first.color} stopOpacity={0.18} />
-            <stop offset="100%" stopColor={first.color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        {[0.25, 0.5, 0.75, 1].map((f, i) => (
-          <line key={i} x1={pad} x2={W - pad} y1={pad + f * (H - pad * 2)} y2={pad + f * (H - pad * 2)} stroke="#F2F4F7" strokeWidth={1} />
-        ))}
-        <path d={`M ${first.values.map((v, i) => firstX(i) + ' ' + y(v, first.axis === 'right')).join(' L ')} L ${firstX(first.values.length - 1)} ${H - pad} L ${firstX(0)} ${H - pad} Z`} fill={`url(#${gid})`} />
-        {series.map((s, si) => {
-          const sx = xFor(s);
-          return <polyline key={si} points={s.values.map((v, i) => sx(i) + ',' + y(v, s.axis === 'right')).join(' ')} fill="none" stroke={s.color} strokeWidth={2.4} strokeDasharray={s.dashed ? '5 4' : '0'} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />;
-        })}
-        {series.filter((s) => !s.dashed).map((s, si) => {
-          const sx = xFor(s);
-          return <circle key={'c' + si} cx={sx(s.values.length - 1)} cy={y(s.values[s.values.length - 1], s.axis === 'right')} r={3.6} fill={s.color} stroke="#fff" strokeWidth={2} />;
-        })}
-        {hoverFrac != null && (
-          <>
-            <line x1={pad + hoverFrac * (W - pad * 2)} x2={pad + hoverFrac * (W - pad * 2)} y1={pad} y2={H - pad} stroke="#98A2B3" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-            {series.map((s, si) => {
-              const i = idxFor(s, hoverFrac);
-              return <circle key={'h' + si} cx={pad + hoverFrac * (W - pad * 2)} cy={y(s.values[i], s.axis === 'right')} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} />;
-            })}
-          </>
-        )}
-      </svg>
-      {hoverFrac != null && (
-        <div style={{
-          position: 'absolute', top: 4,
-          left: Math.min(Math.max(hoverFrac * 100, 14), 86) + '%',
-          transform: 'translateX(-50%)', background: '#0C1425', color: '#E4E7EC',
-          fontSize: '11px', lineHeight: 1.5, padding: '6px 9px', borderRadius: '6px',
-          boxShadow: '0 4px 12px rgba(16,24,40,.2)', pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 5,
-        }}>
-          {series.map((s, si) => {
-            const i = idxFor(s, hoverFrac);
-            const lbl = (s.labels || opts.labels || [])[i];
-            return (
-              <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, display: 'inline-block', flex: 'none' }} />
-                <span>{lbl ? lbl + ': ' : ''}{s.name}: {fmt(s.values[i])}</span>
-              </div>
-            );
-          })}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+        <div style={{ position: 'relative', width: '38px', flex: 'none', height: H + 'px' }}>
+          <span style={{ ...axisLabelStyle, top: 0, left: 0 }}>{fmt(leftMax)}</span>
+          <span style={{ ...axisLabelStyle, bottom: 0, left: 0 }}>{fmt(leftMin)}</span>
         </div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10.5px', color: '#98A2B3' }}>
-        {(opts.labels || []).map((l, i) => <span key={i}>{l}</span>)}
+        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${W} ${H}`} width="100%" height="150" preserveAspectRatio="none"
+            onMouseMove={handleMove} onMouseLeave={() => setHoverFrac(null)}
+            style={{ cursor: 'crosshair' }}
+          >
+            <defs>
+              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={first.color} stopOpacity={0.18} />
+                <stop offset="100%" stopColor={first.color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            {[0.25, 0.5, 0.75, 1].map((f, i) => (
+              <line key={i} x1={pad} x2={W - pad} y1={pad + f * (H - pad * 2)} y2={pad + f * (H - pad * 2)} stroke="#F2F4F7" strokeWidth={1} />
+            ))}
+            <path d={`M ${first.values.map((v, i) => firstX(i) + ' ' + y(v, first.axis === 'right')).join(' L ')} L ${firstX(first.values.length - 1)} ${H - pad} L ${firstX(0)} ${H - pad} Z`} fill={`url(#${gid})`} />
+            {series.map((s, si) => {
+              const sx = xFor(s);
+              return <polyline key={si} points={s.values.map((v, i) => sx(i) + ',' + y(v, s.axis === 'right')).join(' ')} fill="none" stroke={s.color} strokeWidth={2.4} strokeDasharray={s.dashed ? '5 4' : '0'} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />;
+            })}
+            {series.filter((s) => !s.dashed).map((s, si) => {
+              const sx = xFor(s);
+              return <circle key={'c' + si} cx={sx(s.values.length - 1)} cy={y(s.values[s.values.length - 1], s.axis === 'right')} r={3.6} fill={s.color} stroke="#fff" strokeWidth={2} />;
+            })}
+            {hoverFrac != null && (
+              <>
+                <line x1={pad + hoverFrac * (W - pad * 2)} x2={pad + hoverFrac * (W - pad * 2)} y1={pad} y2={H - pad} stroke="#98A2B3" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+                {series.map((s, si) => {
+                  const i = idxFor(s, hoverFrac);
+                  return <circle key={'h' + si} cx={pad + hoverFrac * (W - pad * 2)} cy={y(s.values[i], s.axis === 'right')} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} />;
+                })}
+              </>
+            )}
+          </svg>
+          {hoverFrac != null && (
+            <div style={{
+              position: 'absolute', top: 4,
+              left: Math.min(Math.max(hoverFrac * 100, 14), 86) + '%',
+              transform: 'translateX(-50%)', background: '#0C1425', color: '#E4E7EC',
+              fontSize: '11px', lineHeight: 1.5, padding: '6px 9px', borderRadius: '6px',
+              boxShadow: '0 4px 12px rgba(16,24,40,.2)', pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 5,
+            }}>
+              {series.map((s, si) => {
+                const i = idxFor(s, hoverFrac);
+                const lbl = (s.labels || opts.labels || [])[i];
+                return (
+                  <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, display: 'inline-block', flex: 'none' }} />
+                    <span>{lbl ? lbl + ': ' : ''}{s.name}: {fmt(s.values[i])}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '10.5px', color: '#98A2B3' }}>
+            {(opts.labels || []).map((l, i) => <span key={i}>{l}</span>)}
+          </div>
+        </div>
+        {rightSeries.length > 0 && (
+          <div style={{ position: 'relative', width: '38px', flex: 'none', height: H + 'px' }}>
+            <span style={{ ...axisLabelStyle, top: 0, right: 0 }}>{fmt(rightMax)}</span>
+            <span style={{ ...axisLabelStyle, bottom: 0, right: 0 }}>{fmt(rightMin)}</span>
+          </div>
+        )}
       </div>
     </div>
   );
