@@ -1157,6 +1157,8 @@ export default function PortalV2Page() {
   const seqBIdx = useRef(0);
   const seqBReset = useRef(null);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
+  const storeFilterRef = useRef(null);
+  const periodFilterRef = useRef(null);
 
   // Index <-> "YYYY-MM" key helpers (index 0 = Jan 2025; negative indices reach back into real stored
   // history, e.g. 2016). FIXED 7 Jul 2026 (Michael: "date picker only lets me see up to Jan 2025",
@@ -1419,12 +1421,11 @@ export default function PortalV2Page() {
     // on stopPropagation()/capture-order — closes on any REAL outside click, stays open for anything
     // inside either panel.
     const onDocClick = (e) => {
-      if (storePopOpen || periodPopOpen) {
-        if (!e.target.closest || !e.target.closest('[data-popover-panel]')) {
-          setStorePopOpen(false);
-          setPeriodPopOpen(false);
-        }
-      }
+      const target = e.target;
+      const insideStore = storeFilterRef.current && target instanceof Node && storeFilterRef.current.contains(target);
+      const insidePeriod = periodFilterRef.current && target instanceof Node && periodFilterRef.current.contains(target);
+      if (!insideStore) setStorePopOpen(false);
+      if (!insidePeriod) setPeriodPopOpen(false);
     };
     document.addEventListener('click', onDocClick, true);
 
@@ -4029,7 +4030,7 @@ export default function PortalV2Page() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 22px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.06em', color: '#98A2B3' }}>STORES</span>
-                <div style={{ position: 'relative' }}>
+                <div ref={storeFilterRef} style={{ position: 'relative' }}>
                   <button onClick={(e) => { e.stopPropagation(); setStorePopOpen((p) => !p); setPeriodPopOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, color: '#101828', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
                     {storeSummary}
                     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" style={{ marginLeft: '2px' }}><path d="m6 9 6 6 6-6" stroke="#667085" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -4066,7 +4067,7 @@ export default function PortalV2Page() {
                     <button key={p.label} onClick={p.onClick} style={{ fontFamily: 'inherit', fontSize: '12px', fontWeight: 600, padding: '6px 11px', borderRadius: '7px', border: 'none', cursor: 'pointer', background: p.active ? '#fff' : 'transparent', color: p.active ? '#2757E8' : '#667085', boxShadow: p.active ? '0 1px 2px rgba(16,24,40,.08)' : 'none' }}>{p.label}</button>
                   ))}
                 </div>
-                <div style={{ position: 'relative' }}>
+                <div ref={periodFilterRef} style={{ position: 'relative' }}>
                   <button onClick={(e) => { e.stopPropagation(); setPeriodPopOpen((p) => !p); setStorePopOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
                     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" style={{ marginRight: '2px' }}><rect x={3} y={5} width={18} height={16} rx={2} stroke="#667085" strokeWidth={2} /><path d="M3 9h18M8 3v4M16 3v4" stroke="#667085" strokeWidth={2} strokeLinecap="round" /></svg>
                     {rangeLabel}
