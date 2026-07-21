@@ -473,6 +473,31 @@ function StoreBarChart({ items, opts = {} }) {
 //      claim that point i on one line is the same moment as point i on the other) — the hover
 //      tooltip makes this explicit by showing each series' OWN label (its own `labels` array if
 //      supplied, else `opts.labels`) at whatever index that series lands on for the hovered position.
+// Nice-number axis helper — ADDED 21 Jul 2026 (Rich/Michael follow-up: "add units to the y axis,
+// finish a round number, and add ticks"). Same "nice numbers for graph labels" approach most charting
+// libraries use: picks a step from {1,2,5,10} x a power of ten close to (range / target tick count),
+// then floors/ceils the data bounds to that step so the axis reads in clean round increments
+// (£20,000, not £18,432) instead of hugging the exact data min/max. Always folds 0 into the range —
+// matches every chart in the legacy portal screenshot Michael shared, where every axis includes 0 even
+// for series (occupied area, rate) whose own data never goes near zero. targetCount defaults low (4)
+// rather than legacy's own ~6-9, because these charts are only 95px tall (task #354) — more ticks than
+// that starts overlapping at this height; fewer, cleaner increments read better at this size.
+function niceAxisTicks(dataMin, dataMax, targetCount = 4) {
+  let mn = Math.min(dataMin, 0), mx = Math.max(dataMax, 0);
+  if (mx === mn) mx = mn + 1;
+  const range = mx - mn;
+  const roughStep = range / Math.max(targetCount, 1);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const norm = roughStep / magnitude;
+  const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  const step = niceNorm * magnitude;
+  const min = Math.floor(mn / step) * step;
+  const max = Math.ceil(mx / step) * step;
+  const ticks = [];
+  for (let v = min; v <= max + step / 1000; v += step) ticks.push(Math.round((v + Number.EPSILON) * 1e6) / 1e6);
+  return { min, max, step, ticks };
+}
+
 function LineChart({ series, opts = {} }) {
   // opts.height — ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these
   // smaller like in the portal to see more in a single fold"). Was a hardcoded 150 for every
@@ -491,6 +516,14 @@ function LineChart({ series, opts = {} }) {
   let rightMax = rightVals.length ? Math.max(...rightVals) : 1;
   if (rightVals.length && opts.zero) rightMin = Math.min(rightMin, 0);
   if (rightMax === rightMin) rightMax = rightMin + 1;
+  // opts.niceAxis — ADDED 21 Jul 2026: opt-in nice-round bounds + real tick marks (see
+  // niceAxisTicks() above), replacing the raw data min/max used above. Opt-in, not the default, so
+  // the other 8 LineChart call sites (Marketing YoY, Cockpit Charting, District Manager) keep
+  // behaving exactly as before — this only changes charts that explicitly ask for it via opts.
+  const leftNice = opts.niceAxis ? niceAxisTicks(leftMin, leftMax) : null;
+  if (leftNice) { leftMin = leftNice.min; leftMax = leftNice.max; }
+  const rightNice = (opts.niceAxis && rightVals.length) ? niceAxisTicks(rightMin, rightMax) : null;
+  if (rightNice) { rightMin = rightNice.min; rightMax = rightNice.max; }
   const xFor = (s) => { const len = s.values.length; return (i) => pad + (i / Math.max(len - 1, 1)) * (W - pad * 2); };
   const y = (v, isRight) => {
     const mn = isRight ? rightMin : leftMin, mx = isRight ? rightMax : leftMax;
@@ -499,14 +532,26 @@ function LineChart({ series, opts = {} }) {
   const gid = useMemo(() => 'g' + Math.random().toString(36).slice(2, 7), []);
   const [hoverFrac, setHoverFrac] = useState(null);
   const svgRef = useRef(null);
-  // Generic auto-formatter for the hover tooltip — callers don't currently pass per-chart formatting
-  // (opts only ever carried labels/zero before today), so this covers £/ft²/%/count reasonably: plain
-  // integer once >=1000 (thousands separator, no decimals — matches this file's own money()/intFmt()
-  // rounding conventions elsewhere), 2dp for anything smaller and non-integer (e.g. a rate like 28.57).
+  // Generic auto-formatter for the hover tooltip AND (see axisLabelStyle below) the Y-axis tick
+  // labels — plain integer once >=1000 (thousands separator, no decimals — matches this file's own
+  // money()/intFmt() rounding conventions elsewhere), 2dp for anything smaller and non-integer (e.g. a
+  // rate like 28.57). opts.unit/opts.unitPrefix/opts.axisDecimals — ADDED 21 Jul 2026 (Michael: "add
+  // units to the y axis, finish a round number, and add ticks") — let callers get £/ft²/% shown
+  // consistently in both places, and force a fixed decimal count (e.g. rates always ".00") instead of
+  // the >=1000 auto-detection. unitPrefix puts the unit BEFORE the number with the sign kept outside
+  // it (£ style: "-£20,000", not "£-20,000"); without it, the unit is a suffix (ft²/% style:
+  // "-20,000 ft²", "45%" — no space before %). Both fully backward compatible: no caller passing these
+  // new opts fields sees any change, so the other 8 LineChart call sites are unaffected.
   const fmt = opts.tooltipFormat || ((v) => {
     if (v == null || Number.isNaN(v)) return '—';
+    const decimals = opts.axisDecimals;
     const abs = Math.abs(v);
-    return abs >= 1000 ? Math.round(v).toLocaleString('en-GB') : (Number.isInteger(v) ? String(v) : v.toFixed(2));
+    const body = decimals != null
+      ? abs.toLocaleString('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : (abs >= 1000 ? Math.round(abs).toLocaleString('en-GB') : (Number.isInteger(v) ? String(abs) : abs.toFixed(2)));
+    const signed = (v < 0 ? '-' : '') + body;
+    if (!opts.unit) return signed;
+    return opts.unitPrefix ? (v < 0 ? '-' : '') + opts.unit + body : signed + (opts.unit === '%' ? '' : ' ') + opts.unit;
   });
   const idxFor = (s, frac) => Math.round(Math.max(0, Math.min(1, frac)) * Math.max(s.values.length - 1, 1));
   const handleMove = (e) => {
@@ -517,13 +562,20 @@ function LineChart({ series, opts = {} }) {
   };
   const first = series[0];
   const firstX = xFor(first);
-  // Y-axis min/max labels — FIXED 21 Jul 2026 (Rich's portal review, task #355): "MoM: Y axis needs
-  // to be clear. Currently empty." This chart drew gridlines but never labeled them with an actual
-  // value, so every MoM trend looked like an unscaled shape unless you hovered for the tooltip. Adds
-  // a plain top(max)/bottom(min) label per axis, reusing the same fmt() the hover tooltip already
-  // uses (so £/ft²/% formatting stays consistent) — not a full tick-per-gridline axis, just enough
-  // to answer "what am I looking at" at a glance, same bar the tooltip already cleared.
+  // Y-axis labels — FIXED 21 Jul 2026 (Rich's portal review, task #355: "MoM: Y axis needs to be
+  // clear. Currently empty" — then Michael's follow-up: "add units to the y axis, finish a round
+  // number, and add ticks"). Was just a top(max)/bottom(min) label reusing fmt() with the raw data
+  // bounds; now, when opts.niceAxis is set (see niceAxisTicks() above LineChart), a full tick-per-
+  // gridline axis at nice round values instead, still via the same fmt() the hover tooltip uses so
+  // £/ft²/% stays consistent everywhere on the chart. Callers that don't pass opts.niceAxis keep the
+  // original plain min/max labels exactly as before.
   const axisLabelStyle = { position: 'absolute', fontSize: '10px', color: '#98A2B3', whiteSpace: 'nowrap' };
+  const leftGutterW = opts.niceAxis && opts.unit ? 46 : 38;
+  const rightGutterW = opts.niceAxis && opts.unit ? 46 : 38;
+  // gridFracs — top-down fractions (0 = top/max, 1 = bottom/min) for each horizontal gridline. Nice-
+  // axis charts draw one per real tick (aligned with its label below); everyone else keeps the
+  // original fixed quarter-lines, unrelated to any data value.
+  const gridFracs = leftNice ? leftNice.ticks.map((t) => fracFor(t, leftMin, leftMax)) : [0.25, 0.5, 0.75, 1];
   return (
     <div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 16px', marginBottom: '6px' }}>
@@ -535,9 +587,13 @@ function LineChart({ series, opts = {} }) {
         ))}
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-        <div style={{ position: 'relative', width: '38px', flex: 'none', height: H + 'px' }}>
-          <span style={{ ...axisLabelStyle, top: 0, left: 0 }}>{fmt(leftMax)}</span>
-          <span style={{ ...axisLabelStyle, bottom: 0, left: 0 }}>{fmt(leftMin)}</span>
+        <div style={{ position: 'relative', width: leftGutterW + 'px', flex: 'none', height: H + 'px' }}>
+          {leftNice ? leftNice.ticks.map((t, i) => (
+            <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, leftMin, leftMax) * 100) + '%', left: 0, transform: 'translateY(-50%)' }}>{fmt(t)}</span>
+          )) : (<>
+            <span style={{ ...axisLabelStyle, top: 0, left: 0 }}>{fmt(leftMax)}</span>
+            <span style={{ ...axisLabelStyle, bottom: 0, left: 0 }}>{fmt(leftMin)}</span>
+          </>)}
         </div>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
           <svg
@@ -552,7 +608,7 @@ function LineChart({ series, opts = {} }) {
                 <stop offset="100%" stopColor={first.color} stopOpacity={0} />
               </linearGradient>
             </defs>
-            {[0.25, 0.5, 0.75, 1].map((f, i) => (
+            {gridFracs.map((f, i) => (
               <line key={i} x1={pad} x2={W - pad} y1={pad + f * (H - pad * 2)} y2={pad + f * (H - pad * 2)} stroke="#F2F4F7" strokeWidth={1} />
             ))}
             <path d={`M ${first.values.map((v, i) => firstX(i) + ' ' + y(v, first.axis === 'right')).join(' L ')} L ${firstX(first.values.length - 1)} ${H - pad} L ${firstX(0)} ${H - pad} Z`} fill={`url(#${gid})`} />
@@ -599,9 +655,13 @@ function LineChart({ series, opts = {} }) {
           </div>
         </div>
         {rightSeries.length > 0 && (
-          <div style={{ position: 'relative', width: '38px', flex: 'none', height: H + 'px' }}>
-            <span style={{ ...axisLabelStyle, top: 0, right: 0 }}>{fmt(rightMax)}</span>
-            <span style={{ ...axisLabelStyle, bottom: 0, right: 0 }}>{fmt(rightMin)}</span>
+          <div style={{ position: 'relative', width: rightGutterW + 'px', flex: 'none', height: H + 'px' }}>
+            {rightNice ? rightNice.ticks.map((t, i) => (
+              <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, rightMin, rightMax) * 100) + '%', right: 0, transform: 'translateY(-50%)' }}>{fmt(t)}</span>
+            )) : (<>
+              <span style={{ ...axisLabelStyle, top: 0, right: 0 }}>{fmt(rightMax)}</span>
+              <span style={{ ...axisLabelStyle, bottom: 0, right: 0 }}>{fmt(rightMin)}</span>
+            </>)}
           </div>
         )}
       </div>
@@ -2698,34 +2758,45 @@ export default function PortalV2Page() {
         : (c.total_charge || 0) - (c.total_credit || 0);
       const dailyRevNote = momAnySel ? null : momFilterNote;
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — scoped to the selected store(s) if any are checked (region-only filtering doesn\'t reach live data).\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month, portfolio-wide regardless of filter.', note: dailyRevNote, el: <LineChart series={[{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight }} />, wide: true }
-        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true };
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — scoped to the selected store(s) if any are checked (region-only filtering doesn\'t reach live data).\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month, portfolio-wide regardless of filter.', note: dailyRevNote, el: <LineChart series={[{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
       // accurate tax/deferred-adjusted figure now lives on the Financials page's True Revenue
       // tables, sourced from the CustomReportByReportID "Daily Pro Rate" report, which is only
       // pulled for the current month (no per-month history retained yet), so it can't drive a
       // multi-month trend line until a historical backfill (Task #43) captures it going forward.
-      // All six trend charts render full-width, one per row (Michael, 7 Jul 2026: "make them all
-      // one row at a time like the top one so its easy to see all time regardless" — previously only
-      // "Revenue Collected" had wide:true, so the other five were squeezed into a ~340px grid column
-      // and their all-time labels overlapped/crowded, LOOKING like only ~1 year was shown even though
-      // the underlying data/labels were already complete. Zooming is done via the date-range presets
-      // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
+      // Chart width — NARROWED 21 Jul 2026 (Michael, with a legacy-portal screenshot attached: "make
+      // the graphs narrower, like the legacy portal as shown"), reversing the full-width choice below
+      // from 7 Jul. That original change was a real response to a real problem (all-time labels
+      // overlapping in a ~340px column); Michael's new instruction, backed by the legacy screenshot's
+      // dense 3-column grid, asks for the opposite. Removing wide:true lets these 6 cards fall into
+      // the page's existing auto-fit grid (gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))',
+      // ~line 3816) exactly like every non-MoM chart card already does — same mechanism, no new layout
+      // code needed. The original crowding concern is handled differently now instead of by brute-
+      // forcing full width: opts.niceAxis (see niceAxisTicks() above LineChart) gives each chart a
+      // small, fixed number of round ticks (~4-6) instead of raw data labels, and seeing more history
+      // is still done via the date-range presets (1M/3M/6M/12M/YTD/All) above, not by widening the
+      // chart itself.
+      // 7 Jul 2026 (superseded by the above; kept so the history is visible): "make them all one row
+      // at a time like the top one so its easy to see all time regardless" — previously only "Revenue
+      // Collected" had wide:true, so the other five were squeezed into a ~340px grid column and their
+      // all-time labels overlapped/crowded, LOOKING like only ~1 year was shown even though the
+      // underlying data/labels were already complete.
       out.chartCards = liveHist ? [
         revCollectedCard,
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
       ] : [
-        { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
-        { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
-        { title: 'Insurance Roll', el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: seq(4200 * f, 90 * f, 260 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.blue, values: seq(600000 * f, 3400 * f, 9000 * f, 12) }]} opts={{ labels: L }} />, wide: true },
-        { title: 'Self Storage Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.teal, values: seq(540000 * f, 3000 * f, 8000 * f, 12) }]} opts={{ labels: L }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', el: <LineChart series={[{ name: 'Rate', color: C.blue, values: seq(27.2, 0.22, 0.4, 12) }]} opts={{ labels: L }} />, wide: true },
+        { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Insurance Roll', el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: seq(4200 * f, 90 * f, 260 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Total Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.blue, values: seq(600000 * f, 3400 * f, 9000 * f, 12) }]} opts={{ labels: L, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.teal, values: seq(540000 * f, 3000 * f, 8000 * f, 12) }]} opts={{ labels: L, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Rate per ft²', el: <LineChart series={[{ name: 'Rate', color: C.blue, values: seq(27.2, 0.22, 0.4, 12) }]} opts={{ labels: L, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
       ];
     }
 
