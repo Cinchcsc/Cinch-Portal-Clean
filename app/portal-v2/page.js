@@ -572,6 +572,17 @@ function LineChart({ series, opts = {} }) {
   const axisLabelStyle = { position: 'absolute', fontSize: '10px', color: '#98A2B3', whiteSpace: 'nowrap' };
   const leftGutterW = opts.niceAxis && opts.unit ? 46 : 38;
   const rightGutterW = opts.niceAxis && opts.unit ? 46 : 38;
+  // fracFor — BUG FIX 21 Jul 2026 (Michael: "Application error: a client-side exception has occurred"
+  // on the MoM page). This helper converts an axis VALUE to the same top-down fraction (0 = top/max,
+  // 1 = bottom/min) the gridlines/labels below use — it was REFERENCED in three places (gridFracs
+  // just below, and both the left/right tick-label spans further down) but never actually DEFINED
+  // anywhere in this component, a plain ReferenceError as soon as any chart rendered with
+  // opts.niceAxis set — i.e. every one of the 6 MoM charts, immediately, on every load. The esbuild
+  // syntax check run after that change only validates parseable JS/JSX; it can't catch a reference to
+  // an identifier that's never declared, since that's valid syntax that only fails at runtime. Caught
+  // this time by actually reading the rendered component's full source end to end after Michael
+  // reported the crash, rather than trusting the earlier syntax-only check.
+  const fracFor = (v, mn, mx) => 1 - (v - mn) / (mx - mn);
   // gridFracs — top-down fractions (0 = top/max, 1 = bottom/min) for each horizontal gridline. Nice-
   // axis charts draw one per real tick (aligned with its label below); everyone else keeps the
   // original fixed quarter-lines, unrelated to any data value.
