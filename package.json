@@ -21,6 +21,7 @@
     "repull:all": "node --env-file=.env scripts/repull-report-all-months.js",
     "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
     "import:unit-status": "node --env-file=.env scripts/import-unit-status.js",
+    "list:wsdl-methods": "node --env-file=.env scripts/list-all-wsdl-methods.js",
     "check": "node --env-file=.env scripts/check-payload.js",
     "check:refresh-log": "node --env-file=.env scripts/check-refresh-log.js",
     "check:snapshot": "node --env-file=.env scripts/check-snapshot.js",
