@@ -2535,6 +2535,19 @@ export default function PortalV2Page() {
       // now lives only in the tooltip (tip), worded plainly, not shouted in the header.
       const momTip = momUsingFullHistory ? '\nShowing full history — the selected period is too narrow to plot.' : '';
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
+      // FIXED 21 Jul 2026 (Rich's portal review, task #352): Rich — "Month on month: Revenue collected
+      // - what is the intention here? I have selected 1 store and still see portfolio numbers in
+      // this." Root cause isn't a bug in the store filter itself — it's that `liveHistory` only ever
+      // stores ONE portfolio-wide total per month (see lib/buildPayload.js's buildHistory()); no
+      // per-site history is retained, so there's nothing for a store filter to select FROM here (same
+      // structural limitation already documented on Customer Churn above). Building true per-site
+      // history is a real schema/backfill project (new per-site-per-month table + cron changes +
+      // deciding how far back to reconstruct) — flagged to Michael as its own scoped item rather than
+      // rushed in 3 days before cutover. For now, make the limitation visible on-screen (not just in
+      // the hover tooltip, which is exactly what Rich didn't notice) whenever a store/region filter is
+      // actually selected, so it reads as "known, by design" instead of "broken."
+      const momFilterActive = region !== 'All' || Object.values(selected).some(Boolean);
+      const momFilterNote = momFilterActive ? 'Portfolio-wide — store/region filter doesn\'t apply to trend history yet (only current-month figures are split by store). Ask Michael/Claude about scoping true per-store history if this is needed.' : null;
       // Revenue Collected — daily-within-current-month view (17 Jul 2026, task #312, Michael: "the
       // rev collected on the mom page only shows '20-'24 [when] i have it 1m... make it show the
       // current month only and how it changes daily"). Root cause of the '20-'24 symptom: selecting
@@ -2563,8 +2576,8 @@ export default function PortalV2Page() {
       const dailyOk = isSingleCurrentMonth && cockpitOk;
       if (isSingleCurrentMonth && !cockpitOk) debugWarn('[portal-v2] Month-on-Month: 1M selected but no daily_financial_snapshot rows yet for Revenue Collected — run npm run pull:cockpit (and again daily), showing full history meanwhile.');
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true }} />, wide: true }
-        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true };
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true }} />, wide: true }
+        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
       // accurate tax/deferred-adjusted figure now lives on the Financials page's True Revenue
@@ -2579,11 +2592,11 @@ export default function PortalV2Page() {
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
         revCollectedCard,
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
@@ -3307,7 +3320,7 @@ export default function PortalV2Page() {
   }));
   const chartCards = pageData.chartCards.map((c) => ({
     title: c.title, dotColor: c.dotColor || C.blue, el: c.el, removable: !!c.removable, onRemove: c.onRemove,
-    wide: !!c.wide, tip: c.tip, isLine: !!(c.el && c.el.type === LineChart),
+    wide: !!c.wide, tip: c.tip, isLine: !!(c.el && c.el.type === LineChart), hasNote: !!c.note, note: c.note,
   }));
   const tables = pageData.tables;
 
@@ -3680,6 +3693,7 @@ export default function PortalV2Page() {
                           )}
                         </div>
                         <div style={{ padding: '18px' }}>{el}</div>
+                        {c.hasNote && <div style={{ padding: '0 18px 14px', fontSize: '12px', color: '#98A2B3' }}>{c.note}</div>}
                       </div>
                       );
                     })}
