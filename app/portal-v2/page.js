@@ -2503,11 +2503,11 @@ export default function PortalV2Page() {
         // "DriveUp" / "Drive up" into separate rows (fixed in lib/reportMap.js's groupBy). Bumped
         // pageSize so the (now-deduped, ~10-14 row) Unit Types table fits on one page, and the
         // ChargeDesc table shows more before needing Next.
-        // NARROWED 21 Jul 2026 (Michael: "make all the big tables narrower... put them next to
-        // eachother", no exceptions) — Financials page was missed in the first narrowing pass; pairs
-        // 2-up with True Revenue — Unit Types below.
-        { title: 'True Revenue', live: !!finT?.trueRevenueByDesc?.length, pageSize: 25, tip: 'Report: True Revenue custom report, Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, ChargeDesc (ReportID 781861, "Daily Prorate").\nCalculation: Grouped by ChargeDesc (Rent, StoreProtect, fees, etc.), summed. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod (Tax Invoiced − Net Tax), not a raw column.', columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
-        { title: 'True Revenue — Unit Types', live: !!finT?.trueRevenueByType?.length, pageSize: 20, tip: 'Report: True Revenue custom report, Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, UnitType (ReportID 781861, "Daily Prorate").\nCalculation: Same data as the "True Revenue" table, grouped by UnitType instead of ChargeDesc. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod, not a raw column.', columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
+        // KEPT WIDE 21 Jul 2026 (Michael: "financials keep wide across the entire screen") — the one
+        // explicit exception to the narrow-everything pass just above; Financials' True Revenue tables
+        // stay full width, unlike every other page's tables.
+        { title: 'True Revenue', live: !!finT?.trueRevenueByDesc?.length, pageSize: 25, wide: true, tip: 'Report: True Revenue custom report, Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, ChargeDesc (ReportID 781861, "Daily Prorate").\nCalculation: Grouped by ChargeDesc (Rent, StoreProtect, fees, etc.), summed. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod (Tax Invoiced − Net Tax), not a raw column.', columns: revCols, rows: revRows, totals: revTotals(revRows), totalsPrev: revRowsPrev && revTotals(revRowsPrev), totalsLabel: 'Total' },
+        { title: 'True Revenue — Unit Types', live: !!finT?.trueRevenueByType?.length, pageSize: 20, wide: true, tip: 'Report: True Revenue custom report, Table1.\nFields: InvoicedThisPeriod, InvoicedTax1ThisPeriod, NetTax1ThisPeriod, TruePeriod, UnitType (ReportID 781861, "Daily Prorate").\nCalculation: Same data as the "True Revenue" table, grouped by UnitType instead of ChargeDesc. Tax Adj is derived: InvoicedTax1ThisPeriod minus NetTax1ThisPeriod, not a raw column.', columns: revCols, rows: revTypeRows, totals: revTotals(revTypeRows), totalsPrev: revTypeRowsPrev && revTotals(revTypeRowsPrev), totalsLabel: 'Total' },
       ];
     }
 
