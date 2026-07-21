@@ -1760,9 +1760,16 @@ export default function PortalV2Page() {
         // Reserved Scheduled Sqft — added 6 Jul 2026 (Michael). ESTIMATE: ReservationList has no
         // area column (confirmed via probe:reservation-area); this is reservation count per
         // UnitTypeID × that type's average unit area (confirmed via probe:unittypeid-map — a
-        // UnitTypeID spans multiple sizes, so an exact figure isn't possible). Also inherits the
-        // known ~3x active-reservations overcount (Task #25) until that's fixed — treat this as
-        // directional, not exact, same caveat as Reservations vs Scheduled Move-outs.
+        // UnitTypeID spans multiple sizes, so an exact figure isn't possible).
+        // VERIFIED 21 Jul 2026 (Rich's portal review, task #359 — "Is reserved sqft working?"): this
+        // comment used to also claim it inherited the ~3x active-reservations overcount (Task #25)
+        // — that was stale/incorrect (lib/reportMap.js's per-type breakdown was always built from the
+        // same already-QTRentalTypeID-filtered rows as the main reservations count, so it was never
+        // actually 3x over). What WAS genuinely missing and has now been fixed: the smaller
+        // already-converted-to-tenant exclusion that Reserved Scheduled Sqft's sibling
+        // "activeReservations" already had (~51 rows portfolio-wide) — both now share the same
+        // occupied-tenant-ID filter (see lib/buildPayload.js). Still an ESTIMATE by construction
+        // (unit-type-average area, not each reservation's real unit size) — treat as directional.
         // CHANGED 6 Jul 2026 (Michael): dropped the old hardcoded "always show June + July side by
         // side" two-tile design — now that the global PERIOD selector actually works, this widget
         // just shows ONE tile for whatever month/range is currently selected, same as every other
