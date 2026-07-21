@@ -31,9 +31,14 @@ for (const r of data) {
 
 const today = new Date().toISOString().slice(0, 10);
 const todays = data.filter((r) => r.started_at.startsWith(today));
-// UPDATED 20 Jul 2026: was "expect 7" — stale since /api/rebuild-payload's own 'rebuild'-kind cron
-// (task #297/#328, added 17 Jul) started writing its own row too. 8 daily crons total now: 5x pull
-// (hours 1-5, all kind='pull', distinguished only by started_at hour — see comment above), 1x
-// snapshot (hour 6), 1x cockpit (hour 7), 1x rebuild (hour 8).
-console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 8 once the first full overnight cycle has run (5x pull, 1x snapshot, 1x cockpit, 1x rebuild).`);
+// UPDATED 21 Jul 2026 (cron-timeout investigation): was "expect 8" — stale again within the SAME day
+// it was written. Went 7 -> 8 on 20 Jul when /api/rebuild-payload's own 'rebuild'-kind cron (task
+// #297/#328, added 17 Jul) started writing its own row. Then, 16 minutes after that fix was commented
+// in here (see commit 22360aa, 11:31+01:00), commit 97eb685 (11:53+01:00, task #327 "fixed properly")
+// site-sharded true_revenue 4 ways across ITS OWN 3 new hourly cron slots (10/11/12), on top of the
+// one it already had (hour 5) — turning 5x pull into 9x pull. 12 daily crons total now: 9x pull
+// (hours 1,2,3,4,5,9,10,11,12 — all kind='pull', distinguished only by started_at hour — see comment
+// above), 1x snapshot (hour 6), 1x cockpit (hour 7), 1x rebuild (hour 8). Check vercel.json directly
+// if this drifts again rather than trusting this count — it's now been wrong twice in one day.
+console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 12 once the first full overnight cycle has run (9x pull, 1x snapshot, 1x cockpit, 1x rebuild).`);
 process.exit(0);
