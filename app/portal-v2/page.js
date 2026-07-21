@@ -1794,8 +1794,17 @@ export default function PortalV2Page() {
         // was first built — it only existed on the Dashboard page here) — same live-data pattern as
         // the Dashboard's copy: sum each site's moveIns/moveOuts/netArea (ManagementSummary).
         (() => {
+          // REFORMATTED 21 Jul 2026 (Rich's portal review, task #358): "Format the below so the sqft
+          // is in one line. Have net move ins where sqft in is. Then sqft below in a line." Was 5
+          // tiles in one wrapped row mixing counts (Move-ins/Move-outs) with areas (Sqft In/Sqft Out/
+          // Net ft²). Now: line 1 = counts only (Move-ins, Move-outs, Net Move-ins — a NEW count tile,
+          // moveIns − moveOuts, taking the position Sqft In used to sit in); line 2 = all three sqft
+          // figures together. The forced line break is a `rowBreak` tile (flex-basis:100% spacer, see
+          // the statCards render loop) rather than relying on the flex-wrap happening to land there.
           if (!liveSites) return { title: 'Move-ins & Move-outs', tiles: [
               { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' },
+              { value: '+' + intFmt(26 * f), label: 'Net Move-ins', delta: '11', dir: 'up' },
+              { rowBreak: true },
               { value: intFmt(1980 * f) + ' ft²', label: 'Sqft In', delta: '140', dir: 'up' }, { value: intFmt(-60 * f) + ' ft²', label: 'Sqft Out', delta: '20', dir: 'down' },
               { value: intFmt(2040 * f) + ' ft²', label: 'Net ft²', delta: '160', dir: 'up' },
             ] };
@@ -1817,9 +1826,13 @@ export default function PortalV2Page() {
           const prevNetArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.netArea || 0), 0) : null;
           const prevMoveInArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0) : null;
           const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
-          return { title: 'Move-ins & Move-outs', live: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
+          const netMoveIns = moveIns - moveOuts;
+          const prevNetMoveIns = (prevMoveIns != null && prevMoveOuts != null) ? prevMoveIns - prevMoveOuts : null;
+          return { title: 'Move-ins & Move-outs', live: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net Move-ins = Move-ins − Move-outs (unit count). Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count', true) },
+              { value: (netMoveIns >= 0 ? '+' : '') + intFmt(netMoveIns), label: 'Net Move-ins', ...deltaTick(netMoveIns, prevNetMoveIns, 'count') },
+              { rowBreak: true },
               { value: intFmt(moveInArea) + ' ft²', label: 'Sqft In', ...deltaTick(moveInArea, prevMoveInArea, 'ft') },
               { value: intFmt(-moveOutArea) + ' ft²', label: 'Sqft Out', ...deltaTick(-moveOutArea, prevMoveOutArea != null ? -prevMoveOutArea : null, 'ft') },
               { value: intFmt(netArea) + ' ft²', label: 'Net ft²', ...deltaTick(netArea, prevNetArea, 'ft') },
@@ -3408,6 +3421,10 @@ export default function PortalV2Page() {
     tiles: c.tiles.map((t) => ({
       value: t.value, label: t.label, delta: t.delta, hasDelta: t.delta != null,
       valueStyle: { fontSize: c.hasViz ? '28px' : '24px', fontWeight: 700, letterSpacing: '-.02em', color: '#0C1425', fontVariantNumeric: 'tabular-nums', lineHeight: 1 },
+      // rowBreak — ADDED 21 Jul 2026 (Rich's portal review, task #358): a tile can force a line break
+      // within a stat card's wrapped tile row (used by Move-ins & Move-outs to separate its count
+      // tiles from its sqft tiles) — see the render loop below for how this is used.
+      rowBreak: !!t.rowBreak,
       ...chip(t.delta, t.dir),
     })),
   }));
@@ -3718,11 +3735,13 @@ export default function PortalV2Page() {
                         <div style={{ padding: '18px', display: 'flex', alignItems: 'center', gap: '18px' }}>
                           <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: '20px 26px' }}>
                             {c.tiles.map((t, ti) => (
-                              <div key={ti}>
-                                <div style={t.valueStyle}>{t.value}</div>
-                                <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#98A2B3', marginTop: '5px' }}>{t.label}</div>
-                                {t.hasDelta && <span style={t.deltaStyle}>{t.deltaArrow} {t.delta}</span>}
-                              </div>
+                              t.rowBreak
+                                ? <div key={ti} style={{ flexBasis: '100%', height: 0 }} />
+                                : <div key={ti}>
+                                    <div style={t.valueStyle}>{t.value}</div>
+                                    <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#98A2B3', marginTop: '5px' }}>{t.label}</div>
+                                    {t.hasDelta && <span style={t.deltaStyle}>{t.deltaArrow} {t.delta}</span>}
+                                  </div>
                             ))}
                           </div>
                           {c.hasViz && <div style={{ flex: 'none' }}>{c.el}</div>}
