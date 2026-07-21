@@ -474,7 +474,12 @@ function StoreBarChart({ items, opts = {} }) {
 //      tooltip makes this explicit by showing each series' OWN label (its own `labels` array if
 //      supplied, else `opts.labels`) at whatever index that series lands on for the hovered position.
 function LineChart({ series, opts = {} }) {
-  const W = 620, H = 150, pad = 8;
+  // opts.height — ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these
+  // smaller like in the portal to see more in a single fold"). Was a hardcoded 150 for every
+  // LineChart everywhere; now overridable per-instance so Month-on-Month's 6 stacked trend charts can
+  // shrink without affecting every other page's charts (Marketing YoY, Cockpit Charting, etc.), none
+  // of which Rich flagged. Default unchanged for every existing caller that doesn't pass it.
+  const W = 620, H = opts.height || 150, pad = 8;
   const leftSeries = series.filter((s) => s.axis !== 'right');
   const rightSeries = series.filter((s) => s.axis === 'right');
   const leftVals = (leftSeries.length ? leftSeries : series).flatMap((s) => s.values);
@@ -537,7 +542,7 @@ function LineChart({ series, opts = {} }) {
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
           <svg
             ref={svgRef}
-            viewBox={`0 0 ${W} ${H}`} width="100%" height="150" preserveAspectRatio="none"
+            viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none"
             onMouseMove={handleMove} onMouseLeave={() => setHoverFrac(null)}
             style={{ cursor: 'crosshair' }}
           >
@@ -2663,9 +2668,14 @@ export default function PortalV2Page() {
       const cockpitOk = !!(liveCockpit && liveCockpit.curve && liveCockpit.curve.length);
       const dailyOk = isSingleCurrentMonth && cockpitOk;
       if (isSingleCurrentMonth && !cockpitOk) debugWarn('[portal-v2] Month-on-Month: 1M selected but no daily_financial_snapshot rows yet for Revenue Collected — run npm run pull:cockpit (and again daily), showing full history meanwhile.');
+      // ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these smaller like in
+      // the portal to see more in a single fold"). momChartHeight shrinks all 6 trend charts on this
+      // page specifically (via LineChart's new opts.height, default 150) — every other page's charts
+      // (Marketing YoY, Cockpit Charting, etc.) are untouched since they don't pass this option.
+      const momChartHeight = 95;
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true }} />, wide: true }
-        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true };
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight }} />, wide: true }
+        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
       // accurate tax/deferred-adjusted figure now lives on the Financials page's True Revenue
@@ -2680,11 +2690,11 @@ export default function PortalV2Page() {
       // (1M/3M/6M/12M/YTD/All) above, not by shrinking chart width.
       out.chartCards = liveHist ? [
         revCollectedCard,
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true }} />, wide: true },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels }} />, wide: true },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels }} />, wide: true },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight }} />, wide: true },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true }} />, wide: true },
