@@ -1774,8 +1774,13 @@ export default function PortalV2Page() {
         kpiT
           // Renamed 8 Jul 2026 (Michael: KPI page widget name, "Indoor Self Storage" -> "Self Storage")
           // -- display label only, no key/logic reads this string (grep-confirmed).
-          ? { title: 'Self Storage', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Same formulas as Total Store Occupancy, scoped to self storage units only.', tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
-          : { title: 'Self Storage', tiles: [{ value: (occPct + 1.1).toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£29.74', label: 'Rate per ft²', delta: '£0.20', dir: 'up' }] },
+          // Tile relabelled "Occupancy" -> "Unit Occupancy %" 21 Jul 2026 (Michael: "move the unit
+          // occupancy to the self storage widget to save space") — this tile's underlying figure
+          // (ssOccPC = Occupied ÷ TotalUnits, self storage units only) already WAS unit occupancy;
+          // it just wasn't labelled as such. Made that explicit instead of adding a duplicate tile,
+          // and dropped the Unit Occupancy % column from the Occupancy by Store table below to match.
+          ? { title: 'Self Storage', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Unit Occupancy % = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Both scoped to self storage units only.', tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Unit Occupancy %', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
+          : { title: 'Self Storage', tiles: [{ value: (occPct + 1.1).toFixed(1) + '%', label: 'Unit Occupancy %', delta: '2%', dir: 'up' }, { value: '£29.74', label: 'Rate per ft²', delta: '£0.20', dir: 'up' }] },
         kpiT
           ? { title: 'Offices Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (rent, Area) — offices only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate, unlike Total/Self Storage).', tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') }] }
           : { title: 'Offices Occupancy', tiles: [{ value: '78.0%', label: 'Occupancy', delta: '3%', dir: 'up' }, { value: '£61.90', label: 'Rate per ft²', delta: null, dir: null }] },
@@ -1880,7 +1885,17 @@ export default function PortalV2Page() {
           // moveIns − moveOuts, taking the position Sqft In used to sit in); line 2 = all three sqft
           // figures together. The forced line break is a `rowBreak` tile (flex-basis:100% spacer, see
           // the statCards render loop) rather than relying on the flex-wrap happening to land there.
-          if (!liveSites) return { title: 'Move-ins & Move-outs', tiles: [
+          // COMPACT 21 Jul 2026 (Michael, same day: "the move in move outs widget is so much longer
+          // than other widgets... find a way to condense this"). Two forced rows of tiles makes this
+          // card roughly 2x the height of its 1-row neighbours (Debtor Levels, Move-In Rental Rate) —
+          // and since the stat-card grid stretches every card in a row to match its tallest member,
+          // that height difference was showing up as empty white space INSIDE those shorter neighbour
+          // cards too, not just as this card being tall. Two changes: `compact: true` below shrinks
+          // this card's own tile text/spacing (see statCards mapping + render loop) rather than
+          // dropping any of the 6 datapoints Michael has asked for across tasks #135/#358; the stat-
+          // card grid container also switched to alignItems:'start' so cards no longer stretch to
+          // match a taller row-mate — fixes the same "ugly white space" for any other uneven row too.
+          if (!liveSites) return { title: 'Move-ins & Move-outs', compact: true, tiles: [
               { value: intFmt(112 * f), label: 'Move-ins', delta: '12', dir: 'up' }, { value: intFmt(86 * f), label: 'Move-outs', delta: '1', dir: 'up' },
               { value: '+' + intFmt(26 * f), label: 'Net Move-ins', delta: '11', dir: 'up' },
               { rowBreak: true },
@@ -1907,7 +1922,7 @@ export default function PortalV2Page() {
           const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
           const netMoveIns = moveIns - moveOuts;
           const prevNetMoveIns = (prevMoveIns != null && prevMoveOuts != null) ? prevMoveIns - prevMoveOuts : null;
-          return { title: 'Move-ins & Move-outs', live: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net Move-ins = Move-ins − Move-outs (unit count). Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
+          return { title: 'Move-ins & Move-outs', live: true, compact: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net Move-ins = Move-ins − Move-outs (unit count). Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count', true) },
               { value: (netMoveIns >= 0 ? '+' : '') + intFmt(netMoveIns), label: 'Net Move-ins', ...deltaTick(netMoveIns, prevNetMoveIns, 'count') },
@@ -2003,13 +2018,17 @@ export default function PortalV2Page() {
           ? { areaPct: kpiT.areaPC ?? avg('areaPct'), unitPct: kpiT.occPC ?? avg('unitPct'), econPct: kpiT.economicOccPct ?? avg('econPct') }
           : { areaPct: avg('areaPct'), unitPct: avg('unitPct'), econPct: avg('econPct') };
       })();
+      // Unit Occupancy % column REMOVED 21 Jul 2026 (Michael: "move the unit occupancy to the self
+      // storage widget to save space") — dropped from this table to narrow it back down to two
+      // columns; the figure now lives as its own tile on the "Self Storage" stat card above instead
+      // (relabelled "Unit Occupancy %" there — see that card's comment). Row data (unitPct) is left
+      // computed above, just no longer rendered as a column, so it's a one-line change to bring back.
       out.tables.push({
         title: 'Occupancy by Store', live: !!liveOccByStoreRows, pageSize: 12, wide: true, totals: occByStoreTotals, totalsLabel: 'Average',
-        tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea/Area/TotalUnits (Area %); Occupied/TotalUnits (Unit %); ActualOccupied/GrossPotential (Economic %).\nCalculation: Area Occupancy % = Σ OccupiedArea ÷ Σ(Area × TotalUnits) × 100 (Maximum Lettable Area basis). Unit Occupancy % = Σ Occupied ÷ Σ TotalUnits × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 — the only one of the three that reflects discounting, not just vacancy.',
+        tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea/Area/TotalUnits (Area %); ActualOccupied/GrossPotential (Economic %).\nCalculation: Area Occupancy % = Σ OccupiedArea ÷ Σ(Area × TotalUnits) × 100 (Maximum Lettable Area basis). Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 — reflects discounting as well as vacancy, unlike Area Occupancy. (Unit Occupancy % — plain Occupied ÷ Total Units — now lives on the Self Storage card above.)',
         columns: [
           { key: 'name', label: 'Store', type: 'text' },
           { key: 'areaPct', label: 'Area Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
-          { key: 'unitPct', label: 'Unit Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
           { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
         ],
         rows: occByStoreRows,
@@ -3729,9 +3748,14 @@ export default function PortalV2Page() {
   const statCards = pageData.statCards.map((c) => ({
     title: c.title, live: !!c.live, dotColor: c.dotColor || (c.live ? C.teal : C.blue), tip: c.tip,
     hasViz: !!c.hasViz, el: c.el, hasNote: !!c.note, note: c.note,
+    // compact — ADDED 21 Jul 2026 (Michael: Move-ins & Move-outs "so much longer than other widgets...
+    // find a way to condense"). Opt-in per-card flag (only Move-ins & Move-outs sets it so far) that
+    // shrinks tile text/spacing below — for a card with 2 forced tile rows (rowBreak), this claws back
+    // a meaningful chunk of the extra height a 2nd row costs, without dropping any tiles.
+    compact: !!c.compact,
     tiles: c.tiles.map((t) => ({
       value: t.value, label: t.label, delta: t.delta, hasDelta: t.delta != null,
-      valueStyle: { fontSize: c.hasViz ? '28px' : '24px', fontWeight: 700, letterSpacing: '-.02em', color: '#0C1425', fontVariantNumeric: 'tabular-nums', lineHeight: 1 },
+      valueStyle: { fontSize: c.hasViz ? '28px' : (c.compact ? '19px' : '24px'), fontWeight: 700, letterSpacing: '-.02em', color: '#0C1425', fontVariantNumeric: 'tabular-nums', lineHeight: 1 },
       // rowBreak — ADDED 21 Jul 2026 (Rich's portal review, task #358): a tile can force a line break
       // within a stat card's wrapped tile row (used by Move-ins & Move-outs to separate its count
       // tiles from its sqft tiles) — see the render loop below for how this is used.
@@ -4034,7 +4058,14 @@ export default function PortalV2Page() {
                 )}
 
                 {statCards.length > 0 && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: '16px' }}>
+                  // alignItems:'start' ADDED 21 Jul 2026 (Michael: "not so much ugly white space on
+                  // some of these widgets") — was the CSS grid default (stretch), which forces every
+                  // card in a row to match its tallest row-mate's height; a 2-row card (e.g. Move-ins &
+                  // Move-outs) next to 1-row cards (Debtor Levels, Move-In Rental Rate) was stretching
+                  // those shorter cards' white boxes down to match, showing as empty space inside them.
+                  // 'start' lets every card size to its own content instead — combined with the new
+                  // `compact` mode above for the specific card that started this.
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: '16px', alignItems: 'start' }}>
                     {statCards.map((c, ci) => (
                       <div key={ci} style={{ background: '#fff', border: '1px solid #D5DAE1', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', overflow: 'hidden' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: '1px solid #F2F4F7' }}>
@@ -4043,14 +4074,14 @@ export default function PortalV2Page() {
                           <InfoTip text={c.tip} />
                           {c.live && <span style={{ fontSize: '9.5px', fontWeight: 700, letterSpacing: '.08em', color: '#08875D', background: '#E7F6EF', borderRadius: '5px', padding: '2px 6px', marginLeft: 'auto' }}>LIVE</span>}
                         </div>
-                        <div style={{ padding: '18px', display: 'flex', alignItems: 'center', gap: '18px' }}>
-                          <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: '20px 26px' }}>
+                        <div style={{ padding: c.compact ? '14px 18px' : '18px', display: 'flex', alignItems: 'center', gap: '18px' }}>
+                          <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: c.compact ? '8px 22px' : '20px 26px' }}>
                             {c.tiles.map((t, ti) => (
                               t.rowBreak
                                 ? <div key={ti} style={{ flexBasis: '100%', height: 0 }} />
                                 : <div key={ti}>
                                     <div style={t.valueStyle}>{t.value}</div>
-                                    <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#98A2B3', marginTop: '5px' }}>{t.label}</div>
+                                    <div style={{ fontSize: c.compact ? '10px' : '11px', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#98A2B3', marginTop: c.compact ? '3px' : '5px' }}>{t.label}</div>
                                     {t.hasDelta && <span style={t.deltaStyle}>{t.deltaArrow} {t.delta}</span>}
                                   </div>
                             ))}
