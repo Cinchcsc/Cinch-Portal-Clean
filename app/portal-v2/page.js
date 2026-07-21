@@ -2673,8 +2673,29 @@ export default function PortalV2Page() {
       // page specifically (via LineChart's new opts.height, default 150) — every other page's charts
       // (Marketing YoY, Cockpit Charting, etc.) are untouched since they don't pass this option.
       const momChartHeight = 95;
+      // FIXED 21 Jul 2026 (Michael, verifying task #352 live: "Revenue collected - what is the
+      // intention here? I have selected 1 store and still see portfolio numbers in this"). The
+      // momFilterNote above says "only current-month figures are split by store" — true of the DATA
+      // (daily_financial_snapshot has always stored one row per site per day, and lib/cockpitData.js's
+      // readCockpitData() already returns a per-site sites[] breakdown alongside the portfolio total
+      // specifically "for the store filter to slice client-side", per that file's own comment) but
+      // never actually true of THIS chart's wiring — it read straight off the pre-summed portfolio
+      // total_charge/total_credit fields regardless of the store filter, so the note described a
+      // capability that existed in the data but was never connected. Fixed by summing only the
+      // selected sites' figures when the store-checkbox filter is active, matched from site NAME (what
+      // `selected` is keyed by) to site CODE (what sites[] is keyed by) via liveSites — the same
+      // shadow-filtered array every other live widget on this page already reads (see its own comment
+      // above `const liveSites = ...`). Region-only filtering still can't reach this chart (live
+      // per-site data has no region field anywhere on this page — a separate, pre-existing gap), so
+      // momFilterNote still shows whenever only a region is picked with no individual store checked.
+      const momAnySel = Object.values(selected).some(Boolean);
+      const momSelectedCodes = (momAnySel && liveSites) ? new Set(liveSites.map((s) => s.code)) : null;
+      const dailyRevenue = (c) => momSelectedCodes
+        ? (c.sites || []).filter((s) => momSelectedCodes.has(s.code)).reduce((sum, s) => sum + (s.total_charge || 0) - (s.total_credit || 0), 0)
+        : (c.total_charge || 0) - (c.total_credit || 0);
+      const dailyRevNote = momAnySel ? null : momFilterNote;
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot).\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per day, for the current month so far.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month.', note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map((c) => (c.total_charge || 0) - (c.total_credit || 0)) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight }} />, wide: true }
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — scoped to the selected store(s) if any are checked (region-only filtering doesn\'t reach live data).\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month, portfolio-wide regardless of filter.', note: dailyRevNote, el: <LineChart series={[{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight }} />, wide: true }
         : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight }} />, wide: true };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
