@@ -912,7 +912,7 @@ function thresholdColor(value) {
 // summed and rates/percentages are re-derived sum-then-divide by the CALLER (same rule as
 // computeTotals — never average per-site rates here). `totalsLabel` is the first-column label
 // ("Total" or "Average").
-function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip, headerExtra, collapsible }) {
+function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLabel, totalsPrev, tip, headerExtra, collapsible, wide }) {
   // REMOVED 8 Jul 2026 (Michael: "remove the scroll bar and scrolling thing on the big widgets... it
   // makes navigating annoying") — this used to cap tall tables to a fixed ~pageSize-row viewport with
   // their own internal scrollbar (6 Jul 2026 change, replacing Prev/Next pagination). In practice that
@@ -928,7 +928,13 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
   // small target on a table this wide is easy to miss.
   const [collapsed, setCollapsed] = useState(!!collapsible);
   return (
-    <div style={{ background: '#fff', border: '1px solid #D5DAE1', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', overflow: 'hidden' }}>
+    // gridColumn (21 Jul 2026, task #395, Michael: "narrow [tables] and put two tables next to
+    // eachother") — the tables container below is now a 2-up CSS grid (like the stat-card/chart-card
+    // grids elsewhere on this page), so any table NOT explicitly flagged `wide` sits in a single
+    // ~480px-min column instead of stretching full width. Dense/many-column tables keep `wide` (spans
+    // both columns, same full-width look as before) so nothing gets cramped into overlap or its own
+    // internal scrollbar — see the `wide` flag on each out.tables.push(...) call for which is which.
+    <div style={{ background: '#fff', border: '1px solid #D5DAE1', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', overflow: 'hidden', gridColumn: wide ? '1/-1' : undefined }}>
       <div
         onClick={collapsible ? () => setCollapsed((v) => !v) : undefined}
         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 18px', borderBottom: collapsible && collapsed ? 'none' : '1px solid #F2F4F7', cursor: collapsible ? 'pointer' : undefined }}
@@ -954,7 +960,11 @@ function DataTable({ title, columns, rows, live, pageSize = 12, totals, totalsLa
       </div>
       {(!collapsible || !collapsed) && (
       <div style={{ overflowX: 'auto', overflowY: needsScroll ? 'auto' : 'visible', maxHeight: needsScroll ? (ROW_H * pageSize) + 'px' : undefined }}>
-        <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13.5px', minWidth: '560px' }}>
+        {/* minWidth LOWERED 560->420 (task #395) — was sized for full-width-only tables; narrow (non-
+            `wide`) tables now sit in a ~480px-min grid column, and 560px would force every one of them
+            into its own horizontal scrollbar (overflowX above) even though 4-column tables read fine
+            at 420px. Wide tables ignore this floor entirely since their column is always much wider. */}
+        <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13.5px', minWidth: '420px' }}>
           <thead>
             <tr>
               {columns.map((c, ci) => (
@@ -1563,6 +1573,13 @@ export default function PortalV2Page() {
         // Fallback mock path (also used if /api/portfolio is unconfigured or errors).
         debugWarn('[portal-v2] KPI row rendering with mock RAW_STORES data (no live totals available).');
       }
+      // FIXED 21 Jul 2026 (full portal audit): all three tiles below carry a "vs last month" sub-
+      // label but hardcoded delta:null,dir:null on the live path — kpiPrevT/prevT was computed further
+      // down (for the Portfolio Occupancy table) but never wired back up to these tiles, so they never
+      // actually showed a MoM arrow despite claiming to. Moved that computation up here so both this
+      // block and the Portfolio Occupancy table below can share one `prevT` (removed the duplicate
+      // declaration that used to sit lower down).
+      const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
 
       if (useLive) {
         // Defensive fallback to 0 per-field: a stale/incomplete portal_payload row (e.g. written
@@ -1570,13 +1587,13 @@ export default function PortalV2Page() {
         // whole dashboard. If you see 0s here, re-run `npm run pull` to refresh portal_payload.
         const claPC = t.claPC ?? 0;
         out.kpiRow = [
-          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
-          { label: 'Occupied Units', value: intFmt(t.occ ?? 0), delta: null, dir: null, sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: Σ Occupied units of Σ TotalUnits, summed across all stores.' },
+          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', ...deltaTick(t.claPC, prevT && prevT.claPC), sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
+          { label: 'Occupied Units', value: intFmt(t.occ ?? 0), ...deltaTick(t.occ, prevT && prevT.occ, 'count'), sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: Σ Occupied units of Σ TotalUnits, summed across all stores.' },
           // ADDED 16 Jul 2026 (Michael: "total occupancy in sqft, it is a column in the occupancy
           // statistics excel"). t.occA already existed — computeTotals() sums each site's occA
           // (occupied area) — and was already used internally for the "Rented Area by Store" chart's
           // average bar; this just surfaces that same portfolio total as its own headline tile.
-          { label: 'Total Occupancy (sqft)', value: intFmt(t.occA ?? 0) + ' ft²', delta: null, dir: null, sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, summed across all stores.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
+          { label: 'Total Occupancy (sqft)', value: intFmt(t.occA ?? 0) + ' ft²', ...deltaTick(t.occA, prevT && prevT.occA, 'ft'), sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, summed across all stores.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
         ];
       } else {
         out.kpiRow = [
@@ -1594,12 +1611,11 @@ export default function PortalV2Page() {
         name: s.name, occupied: s.occ || 0, total: s.tot || 0, occPct: s.occPC || 0, claPct: s.areaPC || 0, rentRoll: s.rent || 0,
       })) : null;
       if (!liveOccRows) debugWarn('[portal-v2] Portfolio Occupancy table rendering with mock RAW_STORES data (no live sites available).');
-      // "vs last month" totals-row deltas (8 Jul 2026) — computeTotals() on the SAME livePrevSites
-      // snapshot already fetched for the KPI card arrows (see fetchLiveRange's prevKey fetch), scoped
-      // by the same store filter. null whenever no single-month comparison is available (matches
+      // "vs last month" totals-row deltas (8 Jul 2026) — reuses the SAME `prevT` computed above for
+      // the KPI row's own arrows (one computeTotals(livePrevSites) call shared by both, instead of a
+      // second copy here). null whenever no single-month comparison is available (matches
       // livePrevSites' own null cases: multi-month range, earliest stored month, fetch failure) — the
       // totals row then simply shows no chip, same as an individual KPI card with no arrow.
-      const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
       // Totals row (legacy parity: the legacy portal's per-store tables all end with a portfolio
       // totals row). Sums for units/rent; occupancy %s re-derived sum-then-divide (t.occPC/t.claPC
       // from computeTotals on the live path — never an average of per-site %s).
@@ -2024,7 +2040,8 @@ export default function PortalV2Page() {
       // (relabelled "Unit Occupancy %" there — see that card's comment). Row data (unitPct) is left
       // computed above, just no longer rendered as a column, so it's a one-line change to bring back.
       out.tables.push({
-        title: 'Occupancy by Store', live: !!liveOccByStoreRows, pageSize: 12, wide: true, totals: occByStoreTotals, totalsLabel: 'Average',
+        // NARROWED (task #395) — only 2 data columns, so this now sits 2-up instead of full-width.
+        title: 'Occupancy by Store', live: !!liveOccByStoreRows, pageSize: 12, totals: occByStoreTotals, totalsLabel: 'Average',
         tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea/Area/TotalUnits (Area %); ActualOccupied/GrossPotential (Economic %).\nCalculation: Area Occupancy % = Σ OccupiedArea ÷ Σ(Area × TotalUnits) × 100 (Maximum Lettable Area basis). Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 — reflects discounting as well as vacancy, unlike Area Occupancy. (Unit Occupancy % — plain Occupied ÷ Total Units — now lives on the Self Storage card above.)',
         columns: [
           { key: 'name', label: 'Store', type: 'text' },
@@ -2110,7 +2127,13 @@ export default function PortalV2Page() {
           }));
           if (!floors || !floors.length) debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — run `npm run import:unit-status <file>` for at least one site.');
           const siteCount = liveFloorOcc?.sites?.length || 0;
-          const title = siteCount ? `Occupancy by Floor (${siteCount} site${siteCount === 1 ? '' : 's'} imported: ${liveFloorOcc.sites.join(', ')})` : 'Occupancy by Floor (%)';
+          // FIXED 21 Jul 2026 (Michael: "Occupany by floor is wierd, it says l001") — liveFloorOcc.sites
+          // holds raw site CODES (unit_floor_status's own key, see /api/floor-occupancy), never mapped
+          // to names before landing in this title, unlike every other per-site display on this page.
+          // Same code->name lookup the Weekly/Daily Snapshot page already uses (nameForCode, page.js
+          // ~3211), just inlined here since liveSitesRaw is in scope but that helper isn't.
+          const siteNames = (liveFloorOcc?.sites || []).map((code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code);
+          const title = siteCount ? `Occupancy by Floor (${siteCount} site${siteCount === 1 ? '' : 's'} imported: ${siteNames.join(', ')})` : 'Occupancy by Floor (%)';
           return { title, tip: 'Report: UnitStatus.\nFields: floor, occupied, rentable (manually imported export, not a live SiteLink API call).\nCalculation: Occupied ÷ total rentable units, grouped by floor. Covers only sites imported so far.', el: <VBars items={rows} opts={{ max: 100 }} /> };
         })(),
       ];
@@ -2227,14 +2250,16 @@ export default function PortalV2Page() {
       };
       const officesRows = liveOfficesRows || fs.map((s) => ({ name: s.name, occupied: 0, total: 0, rate: 0 }));
       const ssRows = liveSSRows || fs.map((s) => ({ name: s.name, occupied: s.occupied, total: s.total, rate: s.rate }));
+      // NARROWED (task #395) — 4 columns each, and these two are natural siblings (same officeSSColumns
+      // shape), so they now sit side by side as a pair instead of each spanning the full page width.
       out.tables.push({
-        title: 'Offices Occupancy — by Store', live: !!liveOfficesRows, pageSize: 10, wide: true,
+        title: 'Offices Occupancy — by Store', live: !!liveOfficesRows, pageSize: 10,
         tip: 'Reports: OccupancyStatistics (Offices unit type); RentRoll (rent, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate). Sites with no Offices unit type show 0/£0.00.',
         columns: officeSSColumns, rows: officesRows, totalsLabel: 'Total',
         totals: occRateTotals(officesRows, kpiT?.officesOcc, kpiT?.officesTot, kpiT?.officesRate),
       });
       out.tables.push({
-        title: 'Indoor Self Storage Occupancy — by Store', live: !!liveSSRows, pageSize: 10, wide: true,
+        title: 'Indoor Self Storage Occupancy — by Store', live: !!liveSSRows, pageSize: 10,
         tip: 'Reports: OccupancyStatistics (Indoor Self Storage unit type); RentRoll (standard rate, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12.',
         columns: officeSSColumns, rows: ssRows, totalsLabel: 'Total',
         totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate),
@@ -2283,11 +2308,27 @@ export default function PortalV2Page() {
       // it renders last/at the bottom, per the same request.
       const econDetailRows = (() => {
         if (!liveSites || !liveSites.length) return null;
+        // FIXED 21 Jul 2026 (Michael: "grouped too tight... a bunch of different categories into
+        // one" — meant the OPPOSITE, one real category was splitting into several rows). Root cause:
+        // occByTypeSize's raw `type` comes straight from SiteLink's UnitType string, un-normalized —
+        // confirmed live: "Drive Up" / "Drive up" / "DriveUp" all exist across the portfolio as 3
+        // distinct raw strings for one category, so they summed into 3 separate rows with 3 different
+        // (wrong) rates. Group by a casing/whitespace-normalized key instead, and map back to one
+        // canonical display label. Deliberately NOT merging "Self Storage" with "Indoor Self Storage"
+        // — different words, not just case/spacing noise, so that stays a separate, unconfirmed merge.
+        const normType = (t) => (t || '').trim().toLowerCase().replace(/\s+/g, '');
+        const TYPE_LABELS = {
+          driveup: 'Drive Up', enterprise: 'Enterprise', indoorselfstorage: 'Indoor Self Storage',
+          mailbox: 'Mailbox', office: 'Office', parking: 'Parking', valueunit: 'Value Unit',
+          selfstorage: 'Self Storage', bulk: 'Bulk', miscellaneousst: 'Miscellaneous St',
+          locker: 'Locker', tradecounter: 'Trade Counter',
+        };
         const sumByType = (sites) => {
           const g = {};
           for (const s of sites) for (const row of (s.occByTypeSize || [])) {
-            const k = row.type;
-            const Z = (g[k] ??= { type: row.type, occArea: 0, totalArea: 0, grossPotential: 0, actualOccupied: 0 });
+            const k = normType(row.type);
+            if (!k) continue;
+            const Z = (g[k] ??= { type: TYPE_LABELS[k] || (row.type || '').trim(), occArea: 0, totalArea: 0, grossPotential: 0, actualOccupied: 0 });
             Z.occArea += row.occArea || 0; Z.totalArea += row.totalArea || 0;
             Z.grossPotential += row.grossPotential || 0; Z.actualOccupied += row.actualOccupied || 0;
           }
@@ -2778,9 +2819,15 @@ export default function PortalV2Page() {
         phone: enqSumPrev('phone'), web: enqSumPrev('web'), walkin: enqSumPrev('walkin'), total: enqSumPrev('total'),
         conv: enqSumPrev('total') ? +(enqSumPrev('reservationConversions') / enqSumPrev('total') * 100).toFixed(1) : 0,
       } : null;
+      // Tooltip FIXED 21 Jul 2026 (full portal audit) — still described the old per-lead email-
+      // matching conversion methodology, which was fully removed 17 Jul 2026 (task #310) in favor of
+      // a plain period-ratio. The sibling "Enquiry → Reservation" card's tooltip two blocks up was
+      // updated when that change landed; this table's tip was simply missed. conv (line 2776) is
+      // exactly the same enqSum('reservationConversions')/enqSum('total') period-ratio, no sEmail
+      // matching anywhere in this calculation.
       out.tables.push({
         title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, wide: true, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, sEmail, sRentalType.\nCalculation: Inquiry counts by channel per site. Conversion % = reservation conversions ÷ inquiries × 100 (matched by email — likely a lower bound, not an exact match to legacy). Totals row is sum-then-divide.',
+        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, sRentalType.\nCalculation: Inquiry counts by channel per site. Conversion % = reservation-stage rows this period ÷ this period\'s total enquiries × 100 — same period-ratio pattern as Enquiry → Reservation, no per-lead matching. Totals row is sum-then-divide.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -3113,9 +3160,11 @@ export default function PortalV2Page() {
       out.chartCards = [];
       out.tables = [
         { title: 'Unit Size Breakdown', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: Type, TotalUnits, Occupied, OccupiedRent, OccupiedArea.\nCalculation: Grouped by unit type. Occupancy % = Occupied ÷ TotalUnits × 100. Actual £/ft² = OccupiedRent ÷ OccupiedArea × 12.\nBlank £/ft² for Parking/Mailbox — those are priced per space/box, not per ft².', columns: breakdownCols, rows, totals: breakdownTotals, totalsPrev: breakdownTotalsPrev, totalsLabel: 'Total' },
-        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: OccupiedDollarPerArea (actual rate), TotalDollarPerArea (list rate).\nCalculation: Gap % = (OccupiedDollarPerArea − TotalDollarPerArea) ÷ TotalDollarPerArea × 100, per unit type.\nParking/Mailbox excluded — priced per space/box, not per ft², so a £/ft² comparison isn\'t meaningful.', columns: gapCols, rows: gapRows },
-        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: MovedIn, MovedOut, Transfers, NetTransferred, Net.\nCalculation: Move-ins, move-outs and transfers per unit type, for the previous complete month. Type-level detail — the KPI page card is portfolio-wide only.', columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
-        { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, wide: true, tip: 'Report: RentalActivity.\nFields: GrossPotential, OccupiedRent.\nCalculation: Capture % = OccupiedRent ÷ GrossPotential (list rate on all units) × 100.', columns: captureCols, rows: captureRows },
+        // NARROWED (task #395) — these 3 are all 4 columns, so they now pack 2-up (dense grid fills
+        // the gap after Unit Size Breakdown's full-width row) instead of each spanning the page.
+        { title: 'Rate Realization Gap', live: !!umRows, pageSize: 20, tip: 'Report: RentalActivity.\nFields: OccupiedDollarPerArea (actual rate), TotalDollarPerArea (list rate).\nCalculation: Gap % = (OccupiedDollarPerArea − TotalDollarPerArea) ÷ TotalDollarPerArea × 100, per unit type.\nParking/Mailbox excluded — priced per space/box, not per ft², so a £/ft² comparison isn\'t meaningful.', columns: gapCols, rows: gapRows },
+        { title: 'Turnover by Unit Size', live: !!umRows, pageSize: 20, tip: 'Report: RentalActivity.\nFields: MovedIn, MovedOut, Transfers, NetTransferred, Net.\nCalculation: Move-ins, move-outs and transfers per unit type, for the previous complete month. Type-level detail — the KPI page card is portfolio-wide only.', columns: turnoverCols, rows, totals: turnoverTotals, totalsPrev: turnoverTotalsPrev, totalsLabel: 'Total' },
+        { title: 'Gross Potential vs Actual Revenue', live: !!umRows, pageSize: 20, tip: 'Report: RentalActivity.\nFields: GrossPotential, OccupiedRent.\nCalculation: Capture % = OccupiedRent ÷ GrossPotential (list rate on all units) × 100.', columns: captureCols, rows: captureRows },
       ];
     }
 
@@ -3151,7 +3200,9 @@ export default function PortalV2Page() {
         { title: 'Units by Discount Plan', tip: 'Report: Discounts.\nFields: sConcessionPlan, sUnitName.\nCalculation: Distinct units per sConcessionPlan this month, deduplicated by sUnitName.', el: <VBars items={planRows.map((r) => ({ label: r.plan.length > 22 ? r.plan.slice(0, 21) + '…' : r.plan, value: r.units, disp: intFmt(r.units), color: C.blue }))} opts={{ max: Math.max(...planRows.map((r) => r.units)) * 1.15 }} /> },
       ];
       out.tables = [
-        { title: 'Discount Plans', live: !!dsRows, pageSize: 20, wide: true,
+        // NARROWED (task #395) — only 3 columns; the only table on this page, so it just renders
+        // narrower on a wide screen rather than stretching edge to edge.
+        { title: 'Discount Plans', live: !!dsRows, pageSize: 20,
           tip: 'Report: Discounts.\nFields: sConcessionPlan, sUnitName, dcDiscount.\nCalculation: Plan name, deduplicated unit count, and Σ dcDiscount per plan — a monthly flow, not a right-now snapshot.',
           columns: [
             { key: 'plan', label: 'Plan', type: 'text' },
@@ -3515,7 +3566,9 @@ export default function PortalV2Page() {
         { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary, same source as the Financials page\'s Debtor Levels card.\nFields: dcDlqntTot, iDelUnits, Period ("Unpaid" ageing table).\nCalculation: Count of sites with iDelUnits > 0 summed across the 30+ day buckets (31-60 through 361+; 0-10/11-30 excluded).', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
       );
       out.tables.push(
-        { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, wide: true, collapsible: true,
+        // NARROWED (task #395) — 4 columns, so this one packs 2-up (dense grid fill) instead of
+        // spanning the full page width like its wider siblings above/below.
+        { title: 'Watchdog — Occupancy Decline vs Last Month', live: occDeclineHave, pageSize: 20, collapsible: true,
           tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: occPC = Occupied ÷ TotalUnits × 100, per site, this month vs prior month. Change = this month\'s occPC − prior month\'s. Sorted worst decline first; a positive Change means occupancy improved, not worsened.',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
@@ -4098,9 +4151,29 @@ export default function PortalV2Page() {
                 )}
 
                 {tables.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  // CHANGED 21 Jul 2026 (task #395, Michael: "narrrow [the tables] and put two tables
+                  // next to eachother, do not make any data overlapping or... any scolling in the
+                  // table, the only scrolling should be on the overall site") — was a plain full-width
+                  // flex column stack. Same auto-fit grid pattern as the stat-card/chart-card grids
+                  // above/below, so 2 narrow tables sit side by side on a normal-width screen instead
+                  // of each spanning the full page. `gridAutoFlow:'dense'` lets a later narrow table
+                  // backfill the empty slot next to a lone narrow one whenever a full-width (`wide`)
+                  // table breaks the row, instead of leaving a gap. Tables with many columns keep
+                  // `wide:true` (see each out.tables.push(...) call) so they still span both columns
+                  // full-width, exactly as before — only the genuinely narrow (≤4-column) tables were
+                  // switched to share a row, which is what keeps this from causing any internal
+                  // scrollbar or column overlap. Deliberately NOT `gridAutoFlow:'dense'` — dense
+                  // packing would backfill gaps by pulling a later narrow table UP out of its normal
+                  // reading order (e.g. Offices Occupancy jumping above Unit Mix Occupancy on the KPIs
+                  // page), which trades one cosmetic half-row gap for a confusing "why did this table
+                  // move" reorder. Narrow tables were deliberately placed adjacent to their natural
+                  // pair in the data (e.g. Offices/Indoor Self Storage Occupancy) so they still line up
+                  // side by side in normal top-to-bottom order; a handful of narrow tables with no
+                  // adjacent pair just render at half width with empty space alongside, which is still
+                  // far narrower than the old full-width look.
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(480px,1fr))', gap: '16px', alignItems: 'start' }}>
                     {tables.map((t, ti) => (
-                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} headerExtra={t.headerExtra} collapsible={t.collapsible} />
+                      <DataTable key={ti} title={t.title} columns={t.columns} rows={t.rows} live={t.live} pageSize={t.pageSize || 12} totals={t.totals} totalsLabel={t.totalsLabel} totalsPrev={t.totalsPrev} tip={t.tip} headerExtra={t.headerExtra} collapsible={t.collapsible} wide={t.wide} />
                     ))}
                   </div>
                 )}
