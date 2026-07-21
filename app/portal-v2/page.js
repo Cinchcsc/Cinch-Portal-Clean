@@ -2925,7 +2925,11 @@ export default function PortalV2Page() {
       const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
       out.statCards = [
         { title: 'Enquiries', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced.\nCalculation: Count of rows whose dPlaced date falls within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.', tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
-        { title: 'Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: sRentalType.\nCalculation: Count of rows where sRentalType = "Reservation", for the selected window (report called with that exact date range) — a historical flow count, not a live/real-time figure, summed across sites.', tiles: [{ value: intFmt(totals.reservations), label: periodLabel, delta: null, dir: null }] },
+        // Reservations card REMOVED 21 Jul 2026 (Michael: "two reservation numbers/widgets, i just
+        // need the reserved sch sqft widget you can remove the reservations widget") — this was the
+        // period-scoped InquiryTracking count (new reservations MADE in the selected window), sitting
+        // right next to Reserved Scheduled Sqft's live "Reservations (as of now)" tile (the CURRENT
+        // open waiting-list count) and reading as a confusing duplicate. Only the live one stays.
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
         // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
@@ -2942,13 +2946,20 @@ export default function PortalV2Page() {
         // not a missing-data one. Reads liveSites directly (the main monthly pull's per-site data,
         // refreshed several times a day) rather than snapshot_payload, since this field was never part
         // of the separate snapshot pull and doesn't need to be — no new SiteLink calls required.
+        // NOTE ADDED 21 Jul 2026 (Michael, after the Reservations card above was removed: "shows
+        // reservation as 460, look into this number it seems high for only the day"): the count is
+        // correct for what it actually measures (portfolio-wide currently-open reservations, ~446 was
+        // legacy's own live figure days ago, so 460 is a plausible small drift, not a bug) — the
+        // confusion is that it isn't a daily figure at all, and now that it's the only reservation
+        // number on this page there's no neighboring card to contrast it against. Added an always-
+        // visible note (not just the tooltip, which is exactly what got missed) saying so directly.
         (() => {
           if (liveSites && liveSites.length) {
             const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
             const count = liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0);
-            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (active reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Reservations = currently active (not cancelled/expired/already-converted) rows on the live waiting list, portfolio-wide. Sqft = Σ active reservations per UnitTypeID × that type\'s average unit area. Always "as of now" — ReservationList has no date-range parameter, so this doesn\'t change with the Daily/Weekly/Quarterly selector above like the other cards on this page.', tiles: [{ value: intFmt(count), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(sqft) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
+            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (active reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Reservations = currently active (not cancelled/expired/already-converted) rows on the live waiting list, portfolio-wide. Sqft = Σ active reservations per UnitTypeID × that type\'s average unit area. Always "as of now" — ReservationList has no date-range parameter, so this doesn\'t change with the Daily/Weekly/Quarterly selector above like the other cards on this page.', note: 'Live total across all 29 stores right now — not scoped to Daily/Weekly/Quarterly above, and not the count of reservations made in that period.', tiles: [{ value: intFmt(count), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(sqft) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
           }
-          return { title: 'Reserved Scheduled Sqft', tiles: [{ value: intFmt(37 * f), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(2600 * f) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
+          return { title: 'Reserved Scheduled Sqft', note: 'Live total across all 29 stores right now — not scoped to Daily/Weekly/Quarterly above, and not the count of reservations made in that period.', tiles: [{ value: intFmt(37 * f), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(2600 * f) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
         })(),
       ];
       const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
