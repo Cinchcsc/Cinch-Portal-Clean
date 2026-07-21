@@ -2007,6 +2007,108 @@ export default function PortalV2Page() {
         ],
         rows: occByStoreRows,
       });
+      // Economic Occupancy Detail table — task #376/377 (Michael: "Can we add economic occupancy
+      // into this section please? Example of the table with dropdown plus instructions attached" —
+      // his Economic occupancy Tracker.xlsx). That tracker shows ONE store at a time (its own
+      // dropdown), broken down by unit type + exact unit size, 5 metrics each with a month-over-month
+      // change. Structurally different from the Occupancy by Store table just above (one row per
+      // store, one blended % each per measure) — confirmed directly with Michael this is a NEW,
+      // separate table in the same section, not a replacement.
+      // Reuses the page's EXISTING store filter (liveSites — already narrowed by the same `selected`
+      // checkboxes every other widget here respects) instead of adding a second, redundant dropdown:
+      // select one store above to match the tracker's single-store view exactly; leave none/multiple
+      // selected and every row below blends across whichever stores are in scope — same sum-first-
+      // divide-once rule as every other rate on this page, just less specific than a single store.
+      // Sourced from lib/reportMap.js's occupancy parser's new `by_type_size` field (task #376) — the
+      // SAME OccupancyStatistics report/fields (GrossPotential, ActualOccupied, TotalArea, OccupiedArea)
+      // already trusted for the Occupancy by Store table's Economic Occupancy % column above, just
+      // broken down by unit type + exact size instead of collapsed to one number per store — so this
+      // table's blended totals, if you select every store, are the SAME figures as that one, just
+      // disaggregated. MoM comparison reuses livePrevSites, the same "last month" snapshot every other
+      // "vs last month" delta on this page already uses (task #121).
+      const econDetailRows = (() => {
+        if (!liveSites || !liveSites.length) return null;
+        const sumByTypeSize = (sites) => {
+          const g = {};
+          for (const s of sites) for (const row of (s.occByTypeSize || [])) {
+            const k = row.type + '|' + row.area;
+            const Z = (g[k] ??= { type: row.type, area: row.area, occArea: 0, totalArea: 0, grossPotential: 0, actualOccupied: 0 });
+            Z.occArea += row.occArea || 0; Z.totalArea += row.totalArea || 0;
+            Z.grossPotential += row.grossPotential || 0; Z.actualOccupied += row.actualOccupied || 0;
+          }
+          return g;
+        };
+        const metricsFor = (g) => {
+          if (!g) return null;
+          // Discount MUST be derived from the full-precision rate, not the 2dp-rounded display
+          // value — verified directly against the tracker's own Source data (Sidcup/Indoor Self
+          // Storage/size 25): rounding askingPSF/inPlacePSF to 2dp BEFORE computing the ratio drifted
+          // the discount to -4.2% vs the tracker's own -4.1% (K9's formula divides G9/C9 directly,
+          // and Excel cells hold full precision regardless of displayed decimals). Round only for
+          // display, after the ratio is computed from the raw numbers.
+          const askingRaw = g.totalArea ? (g.grossPotential / g.totalArea * 12) : 0;
+          const inPlaceRaw = g.occArea ? (g.actualOccupied / g.occArea * 12) : 0;
+          const discountPct = askingRaw ? +((inPlaceRaw - askingRaw) / askingRaw * 100).toFixed(1) : 0;
+          const occPct = g.totalArea ? +(g.occArea / g.totalArea * 100).toFixed(1) : 0;
+          const econPct = g.grossPotential ? +(g.actualOccupied / g.grossPotential * 100).toFixed(1) : 0;
+          return { askingPSF: R2(askingRaw), inPlacePSF: R2(inPlaceRaw), discountPct, occPct, econPct };
+        };
+        // Plain arrow + magnitude, same convention as the tracker's own F9 formula
+        // (=IF(E9>0,"↑",IF(E9<0,"↓","-"))) — money deltas to 2dp (£), point deltas to 1dp ("pt").
+        const momStr = (cur, prev, isMoney) => {
+          if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return '–';
+          const diff = cur - prev;
+          if (Math.abs(diff) < (isMoney ? 0.005 : 0.05)) return '–';
+          const arrow = diff > 0 ? '↑' : '↓';
+          return arrow + Math.abs(diff).toFixed(isMoney ? 2 : 1) + (isMoney ? '' : 'pt');
+        };
+        const cur = sumByTypeSize(liveSites);
+        const prev = livePrevSites ? sumByTypeSize(livePrevSites) : {};
+        return Object.keys(cur)
+          .sort((a, b) => {
+            const [ta, aa] = a.split('|'), [tb, ab] = b.split('|');
+            return ta === tb ? (+aa - +ab) : ta.localeCompare(tb);
+          })
+          .map((k) => {
+            const m = metricsFor(cur[k]), p = metricsFor(prev[k]);
+            return {
+              type: cur[k].type, area: cur[k].area,
+              askingPSF: m.askingPSF, askingMoM: p ? momStr(m.askingPSF, p.askingPSF, true) : '–',
+              inPlacePSF: m.inPlacePSF, inPlaceMoM: p ? momStr(m.inPlacePSF, p.inPlacePSF, true) : '–',
+              discountPct: m.discountPct, discountMoM: p ? momStr(m.discountPct, p.discountPct, false) : '–',
+              occPct: m.occPct, occMoM: p ? momStr(m.occPct, p.occPct, false) : '–',
+              econPct: m.econPct, econMoM: p ? momStr(m.econPct, p.econPct, false) : '–',
+            };
+          });
+      })();
+      if (!econDetailRows) debugWarn('[portal-v2] Economic Occupancy Detail table rendering with no data (no live sites available).');
+      const econDetailScope = (() => {
+        if (!liveSites) return 'no data';
+        const anySel = Object.values(selected).some(Boolean);
+        if (!anySel) return 'All stores, blended';
+        return liveSites.length === 1 ? liveSites[0].name : liveSites.length + ' stores, blended';
+      })();
+      if (econDetailRows && econDetailRows.length) {
+        out.tables.push({
+          title: 'Economic Occupancy Detail — ' + econDetailScope, live: true, pageSize: 30, wide: true,
+          tip: 'Report: OccupancyStatistics.\nFields: Area, TotalArea, OccupiedArea (falls back to Area × Occupied), GrossPotential, ActualOccupied — grouped by unit Type + exact unit size, same grain as Michael\'s Economic occupancy Tracker.xlsx (its own Source data is this same report).\nCalculation: Asking Rent PSF = Σ GrossPotential ÷ Σ TotalArea × 12. In-Place Rent PSF = Σ ActualOccupied ÷ Σ OccupiedArea × 12. In-Place Discount = (In-Place − Asking) ÷ Asking × 100. Occupancy % = Σ OccupiedArea ÷ Σ TotalArea × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 (same formula as the Economic Occupancy % column above, just broken down by type + size instead of collapsed to one figure per store).\nMoM columns compare against last month\'s snapshot for the same store selection. Select exactly one store above (not a region) to match the tracker\'s single-store view; leave none/multiple selected to see a blended breakdown across those stores.',
+          columns: [
+            { key: 'type', label: 'Unit Type', type: 'text' },
+            { key: 'area', label: 'Size (ft²)', type: 'int', align: 'right' },
+            { key: 'askingPSF', label: 'Asking Rent PSF', type: 'money2', align: 'right' },
+            { key: 'askingMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'inPlacePSF', label: 'In-Place Rent PSF', type: 'money2', align: 'right' },
+            { key: 'inPlaceMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'discountPct', label: 'In-Place Discount', type: 'pct', align: 'right' },
+            { key: 'discountMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'occPct', label: 'Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'occMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'econMoM', label: 'MoM', type: 'text', align: 'right' },
+          ],
+          rows: econDetailRows,
+        });
+      }
       // Units / Rate per ft² by Customer Type: live-wired from totals.customerType (lib/buildPayload.js
       // sums RentRoll's per-site business/residential units, area and rent first, then divides once).
       const custT = kpiT?.customerType;
