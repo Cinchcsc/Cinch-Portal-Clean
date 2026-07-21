@@ -1030,14 +1030,14 @@ export default function PortalV2Page() {
   const [liveHistory, setLiveHistory] = useState(null); // portfolio.history (one point per stored month, portfolio-wide) — powers Month-on-Month, unaffected by the PERIOD selector below
   const [viewLive, setViewLive] = useState(true);       // false once a specific month/range has been picked and successfully loaded (vs. the default live-current-month view)
   // Weekly/Daily Snapshot page (9 Jul 2026) — deliberately independent of the liveTotals/liveSitesRaw
-  // chain above: it's a different period concept entirely (today / last 7 days / quarter-to-date,
+  // chain above: it's a different period concept entirely (yesterday / last 7 days / quarter-to-date,
   // not the global month/range selector), backed by its own snapshot_payload row and its own lean
   // pull (lib/pullSnapshot.js / npm run pull:snapshot), refreshed on its own schedule. Fetched once on
   // mount, same as the unscoped /api/portfolio call — the store filter still applies client-side via
   // computeSnapshotTotals() below, same pattern as computeTotals().
-  // CHANGED 21 Jul 2026 (Michael: "its the daily snapshot so it needs to be enquiries and reservations
-  // today") — all three periods run through TODAY now, not yesterday; see lib/pullSnapshot.js's
-  // header comment for the reasoning and the once-a-day refresh caveat that comes with it.
+  // 21 Jul 2026: briefly tried anchoring all three periods on TODAY instead of yesterday (Michael),
+  // reverted the same day once "today" turned out to mean "frozen at whatever this morning's one
+  // pull saw" rather than anything live — see lib/pullSnapshot.js's header comment.
   const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly } or null if unavailable/unconfigured
   const [snapshotPeriod, setSnapshotPeriod] = useState('daily'); // 'daily' | 'weekly' | 'quarterly' — which liveSnapshot period the Snapshot page currently shows
   // Occupancy by Floor (10 Jul 2026, roadmap #132/#139) — same independent-fetch pattern as
@@ -2897,20 +2897,18 @@ export default function PortalV2Page() {
     else if (page === 'snapshot') {
       // Weekly/Daily Snapshot — new page (9 Jul 2026, Michael: "add page 'Weekly/Daily snapshot under
       // overview", "check original brief on timings of API"). Michael's decision (3rd AskUserQuestion,
-      // 9 Jul 2026): a live-style period query (today / last 7 days / quarter-to-date), not a
+      // 9 Jul 2026): a live-style period query (yesterday / last 7 days / quarter-to-date), not a
       // day-by-day accumulating trend chart. Backed by its own snapshot_payload row, refreshed by
       // `npm run pull:snapshot` (or GET /api/pull-snapshot), independent of the main monthly pull.
       // Reservation Backlog ("forward move-ins", Michael's pick) card REMOVED 14 Jul 2026 (Michael) —
       // was a "Coming soon" placeholder pending confirmation of a usable target-move-in-date field on
       // InquiryTracking, which still doesn't exist. See the tables[] block below for the removal note.
-      // CHANGED 21 Jul 2026 (Michael: "its the daily snapshot so it needs to be enquiries and
-      // reservations today") — was yesterday-anchored (daily = yesterday, weekly/quarterly ending
-      // yesterday); all three now run through today instead, matching lib/pullSnapshot.js's
-      // periodWindows(). Still only refreshed once/day (0 6 * * *) — see that file's header comment
-      // for the resulting "today so far, as of this morning" caveat.
+      // 21 Jul 2026: briefly switched all three periods to run through TODAY (Michael), reverted the
+      // same day (Michael: "no today needs to show yesterday") once "today" turned out to mean
+      // "frozen at whatever this morning's one-a-day pull saw" — see lib/pullSnapshot.js's header.
       const snap = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
       if (!snap) debugWarn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
-      const periodLabel = { daily: 'Today', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
+      const periodLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
       const fmtRange = (r) => {
         if (!r) return '';
         const f = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -2918,7 +2916,7 @@ export default function PortalV2Page() {
       };
       const mockSnap = {
         range: (() => {
-          const y = new Date();
+          const y = new Date(); y.setDate(y.getDate() - 1);
           const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
           if (snapshotPeriod === 'daily') return { start: ymdLocal(y), end: ymdLocal(y) };
           if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: ymdLocal(s), end: ymdLocal(y) }; }
@@ -2932,12 +2930,16 @@ export default function PortalV2Page() {
       const range = snap ? snap.range : mockSnap.range;
       const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
       out.statCards = [
-        { title: 'Enquiries', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced.\nCalculation: Count of rows whose dPlaced date falls within the selected window (' + periodLabel.toLowerCase() + '), summed across sites.\nNote: refreshed once a day (early morning) — today\'s figure is "as of that refresh," not updated live through the day.', tiles: [{ value: intFmt(totals.enquiries), label: periodLabel, delta: null, dir: null }] },
-        // Reservations card REMOVED 21 Jul 2026 (Michael: "two reservation numbers/widgets, i just
-        // need the reserved sch sqft widget you can remove the reservations widget") — this was the
-        // period-scoped InquiryTracking count (new reservations MADE in the selected window), sitting
-        // right next to Reserved Scheduled Sqft's live "Reservations (as of now)" tile (the CURRENT
-        // open waiting-list count) and reading as a confusing duplicate. Only the live one stays.
+        // Enquiries & Reservations — MERGED 21 Jul 2026 (Michael). Was two separate cards; removed the
+        // standalone "Reservations" one earlier the same day because it sat right next to Reserved
+        // Scheduled Sqft's live "Reservations (as of now)" tile and read as an accidental duplicate.
+        // Then Michael asked for "the number of enquiries and reservations from the prior day"
+        // specifically — a real, different metric (NEW reservations MADE yesterday, from
+        // InquiryTracking/lead_funnel's reservation_stage_count) from Reserved Scheduled Sqft's live
+        // OPEN waiting-list count below (a stock, not a flow — structurally can't be day-scoped, see
+        // that card's own note). Keeps both concepts, but as two tiles on ONE card instead of two
+        // separate cards, so it reads as "yesterday's flow" rather than "two reservation numbers."
+        { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nNote: different from Reserved Scheduled Sqft\'s live "as of now" reservation count below — that\'s today\'s currently-open waiting list (a running total), not new reservations made yesterday (a daily flow).', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }] },
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
         // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
