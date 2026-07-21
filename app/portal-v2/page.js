@@ -73,8 +73,11 @@ function computeTotals(sites) {
   const sum = (k) => sites.reduce((a, s) => a + (s[k] || 0), 0);
   const occA = sum('occA'), claA = sum('claA'), totA = sum('totA'), occ = sum('occ'), tot = sum('tot'), rent = sum('rent');
   const t = {
-    n: sites.length, occ, tot, occA, claA, totA, rent, gpot: sum('gpot'), grossOcc: sum('grossOcc'),
+    n: sites.length, occ, tot, occA, claA, totA, rent, gpot: sum('gpot'), grossOcc: sum('grossOcc'), occActualRent: sum('occActualRent'),
     occPC: tot ? +(occ / tot * 100).toFixed(1) : 0, areaPC: totA ? +(occA / totA * 100).toFixed(1) : 0,
+    // Economic Occupancy (task #356) — mirrors lib/buildPayload.js's aggregateTotals() exactly, same
+    // sum-then-divide-once rule as every other rollup here.
+    economicOccPct: sum('gpot') ? +(sum('occActualRent') / sum('gpot') * 100).toFixed(1) : 0,
     claPC: claA ? +(occA / claA * 100).toFixed(1) : (totA ? +(occA / totA * 100).toFixed(1) : 0),
     // Rate: dcStandardRate-based, unchanged. Real Rate: REPLACED 8 Jul 2026 to mirror
     // lib/buildPayload.js's aggregateTotals() exactly — True Revenue-based (Σ(TruePeriod−adj)),
@@ -1863,11 +1866,48 @@ export default function PortalV2Page() {
           return { title: 'Customer Churn', tiles: [{ value: '78.88%', label: 'Rolling 12-month', delta: '1%', dir: 'down' }], hasViz: true, el: <Donut pct={78.88} color={C.teal} /> };
         })(),
       ];
-      // Occupied Area (% of MLA): live-wired per-store from areaPCmla (occA/totA — Maximum Lettable
-      // Area, distinct from the CLA-based areaPC used elsewhere). Converted from HBars (horizontal,
-      // top-8 only) to StoreBarChart per Michael (2 Jul 2026) — same vertical, all-stores,
-      // sortable comparison pattern used on the dashboard, not a truncated top-N horizontal list.
-      const liveMlaBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.areaPCmla || 0, disp: (s.areaPCmla || 0).toFixed(1) + '%', color: (s.areaPCmla || 0) >= 85 ? C.green : (s.areaPCmla || 0) >= 75 ? C.amber : C.red })) : null;
+      // Occupancy by Store table — REBUILT 21 Jul 2026 (Rich's portal review, tasks #356/#357).
+      // Previously two separate widgets covered overlapping ground: this "Occupied Area (% of MLA) by
+      // Store" bar chart (area-based occupancy only), and the "Unit Mix Occupancy" table elsewhere on
+      // this page (unit-based, grouped by SIZE not by store). Rich: "Can we add economic occupancy
+      // into this section please... I would include [unit occupancy] here to save space and then mark
+      // clearly what is area and what is unit occupancy. I would also title it differently after
+      // that." Consolidated into ONE per-store table with all three clearly-labeled occupancy
+      // measures, replacing the chart entirely (still sortable/all-stores like the chart it replaces):
+      //   - Area Occupancy % (areaPCmla = occA/totA, Maximum Lettable Area basis) — physical sqft.
+      //   - Unit Occupancy % (occPC = occ/tot) — physical unit count, ignores unit size entirely.
+      //   - Economic Occupancy % (task #356) = Σ ActualOccupied ÷ Σ GrossPotential × 100, per Rich's
+      //     supplied Economic occupancy Tracker.xlsx — blends vacancy loss AND rate/discount loss into
+      //     one number (a fully-occupied site discounting heavily still shows well below 100% here,
+      //     unlike Area/Unit Occupancy which only see empty vs full). Sourced from fields already
+      //     pulled for other widgets (OccupancyStatistics' ActualOccupied/GrossPotential — see
+      //     lib/buildPayload.js's recordFor()/aggregateTotals() comments) — no new report pull.
+      const liveOccByStoreRows = liveSites ? liveSites.map((s) => ({
+        name: s.name, areaPct: s.areaPCmla || 0, unitPct: s.occPct || 0, econPct: s.economicOccPct || 0,
+      })) : null;
+      if (!liveOccByStoreRows) debugWarn('[portal-v2] Occupancy by Store table rendering with mock data (no live sites available).');
+      const occByStoreRows = liveOccByStoreRows || fs.map((s) => ({
+        name: s.name, areaPct: s.occPct, unitPct: s.occPct, econPct: Math.max(0, s.occPct - 6 - (s.occupied % 5)),
+      }));
+      const occByStoreTotals = (() => {
+        const avg = (k) => occByStoreRows.length ? +(occByStoreRows.reduce((a, r) => a + (r[k] || 0), 0) / occByStoreRows.length).toFixed(1) : 0;
+        // Area/Unit occupancy totals mirror the portfolio-level sum-then-divide figures (kpiT.areaPC/
+        // occPC) when live, rather than a plain average-of-per-store-%s; economicOccPct likewise.
+        return liveOccByStoreRows && kpiT
+          ? { areaPct: kpiT.areaPC ?? avg('areaPct'), unitPct: kpiT.occPC ?? avg('unitPct'), econPct: kpiT.economicOccPct ?? avg('econPct') }
+          : { areaPct: avg('areaPct'), unitPct: avg('unitPct'), econPct: avg('econPct') };
+      })();
+      out.tables.push({
+        title: 'Occupancy by Store', live: !!liveOccByStoreRows, pageSize: 12, wide: true, totals: occByStoreTotals, totalsLabel: 'Average',
+        tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea/Area/TotalUnits (Area %); Occupied/TotalUnits (Unit %); ActualOccupied/GrossPotential (Economic %).\nCalculation: Area Occupancy % = Σ OccupiedArea ÷ Σ(Area × TotalUnits) × 100 (Maximum Lettable Area basis). Unit Occupancy % = Σ Occupied ÷ Σ TotalUnits × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 — the only one of the three that reflects discounting, not just vacancy.',
+        columns: [
+          { key: 'name', label: 'Store', type: 'text' },
+          { key: 'areaPct', label: 'Area Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+          { key: 'unitPct', label: 'Unit Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+          { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+        ],
+        rows: occByStoreRows,
+      });
       // Units / Rate per ft² by Customer Type: live-wired from totals.customerType (lib/buildPayload.js
       // sums RentRoll's per-site business/residential units, area and rent first, then divides once).
       const custT = kpiT?.customerType;
@@ -1877,16 +1917,17 @@ export default function PortalV2Page() {
       // all, and fits the same "which store is the outlier" comparison philosophy as every other
       // dashboard/KPI chart.
       const liveRateIncBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: (s.rateChanges && s.rateChanges.increases) || 0, disp: intFmt((s.rateChanges && s.rateChanges.increases) || 0), color: C.blue })) : null;
-      if (!liveMlaBars || !custT || !liveRateIncBars) debugWarn('[portal-v2] KPIs chart cards rendering with mock data (no live totals/customerType available).');
-      // Pinned summary bars (legacy parity): % of MLA ends with a portfolio "Average" bar
-      // (kpiT.areaPC = Σ occA ÷ Σ totA — MLA-based, sum-then-divide), Rate Increases with a
-      // "Total" bar (legacy labels that chart's summary bar "Total", not "Average").
-      const avgMla = (liveMlaBars && kpiT) ? (kpiT.areaPC ?? 0) : (fs.length ? fs.reduce((a, s) => a + s.occPct, 0) / fs.length : 0);
+      if (!custT || !liveRateIncBars) debugWarn('[portal-v2] KPIs chart cards rendering with mock data (no live totals/customerType available).');
+      // Pinned summary bar (legacy parity): Rate Increases ends with a "Total" bar (legacy labels
+      // that chart's summary bar "Total", not "Average"). The equivalent %-of-MLA summary now lives
+      // in the Occupancy by Store table's totals row (occByStoreTotals.areaPct) above.
       const rateIncTotal = liveRateIncBars
         ? liveRateIncBars.reduce((a, b) => a + b.value, 0)
         : fs.reduce((a, s) => a + Math.round((38 * f) / fs.length) + (s.occupied % 5), 0);
       out.chartCards = [
-        { title: 'Occupied Area (% of MLA) by Store', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), Area, TotalUnits.\nCalculation: % of MLA = Σ OccupiedArea ÷ Σ(Area × TotalUnits) × 100, per store (Maximum Lettable Area basis — includes unrentable units, unlike the CLA-based % on the Dashboard).\nNote: corrected 16 Jul 2026 — this previously said "Report: RentRoll", but areaPCmla is actually sourced from OccupancyStatistics (lib/reportMap.js\'s area_pc_mla field). OccupiedArea itself is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.', el: <StoreBarChart items={liveMlaBars || fs.map((s) => ({ label: s.name, value: s.occPct, disp: s.occPct.toFixed(1) + '%', color: s.occPct >= 85 ? C.green : s.occPct >= 75 ? C.amber : C.red }))} opts={{ zero: false, average: { value: avgMla, disp: avgMla.toFixed(1) + '%' } }} /> },
+        // 'Occupied Area (% of MLA) by Store' chart REMOVED 21 Jul 2026 (tasks #356/#357) — replaced
+        // by the 'Occupancy by Store' table above, which shows this same Area Occupancy % alongside
+        // Unit Occupancy % and the new Economic Occupancy %, per Rich's consolidation request.
         { title: 'Units by Customer Type', tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany.\nCalculation: A unit is "Business" if bCorporate or bCommercial is set, or sCompany is non-blank; otherwise "Personal". Share = each segment\'s occupied units ÷ total occupied units × 100.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }] : [{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
         { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bCorporate, bCommercial, sCompany.\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, computed separately for the Business and Personal segments.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }] : [{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
         { title: 'Rate Increases by Store (Current Month)', tip: 'Report: TenantRentChangeHistory.\nFields: dcOldRate, dcNewRate.\nCalculation: Count of rows where dcNewRate > dcOldRate, posted this month, per site.', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
