@@ -174,6 +174,11 @@ function computeTotals(sites) {
     return Object.values(g).map((o) => ({ ...o, discount: R2(o.discount) })).sort((a, b) => b.units - a.units);
   })();
   t.discountPlans = discountPlans;
+  // FIXED 21 Jul 2026 (task #396, mirrors lib/buildPayload.js's aggregateTotals() exactly) — true
+  // distinct-unit count across every plan, straight-summed from each site's own already-deduped
+  // discountUnitsTotal (safe cross-site, a unit belongs to exactly one site). NOT a sum of
+  // discountPlans' per-plan units above — that double-counts any unit on more than one plan.
+  t.discountUnitsOnPlan = sites.reduce((a, s) => a + (s.discountUnitsTotal || 0), 0);
   t.moveInVarianceCount = sum('moveInVarianceCount');
   const moveInVarianceSumTotal = sum('moveInVarianceSum');
   const moveInStdRateSumTotal = sum('moveInStdRateSum');
@@ -3190,10 +3195,24 @@ export default function PortalV2Page() {
         { plan: '10% OFF 12 Months.', units: 4, discount: 39.13 },
       ];
       const planRows = dsRows || mockDS;
-      const totalUnits = planRows.reduce((a, r) => a + r.units, 0);
+      // FIXED 21 Jul 2026 (task #396, portal audit — "Discount Summary potential double-counting
+      // across plans"): this used to be planRows.reduce((a,r)=>a+r.units,0) — summing EACH plan's own
+      // already-per-plan-deduped unit count. That's correct for each plan's own row (a unit really is
+      // on both plans if it switched mid-month), but double-counts any unit that carries discounted
+      // charge lines under MORE than one plan in the same month when rolled up into this portfolio-
+      // wide total, despite this tile's tooltip claiming "deduplicated by sUnitName". dsT.
+      // discountUnitsOnPlan is a genuine cross-plan Set built in lib/reportMap.js's discounts.parse(),
+      // summed across sites in computeTotals()/aggregateTotals() — the real distinct-unit count.
+      // Mock path (no live data) keeps the old sum-of-plan-rows approximation — the 4 mock plan rows
+      // don't model any unit belonging to 2 plans at once, so there's nothing to double-count there.
+      // Gated on dsRows (not just dsT) to match this tile's own `live: !!dsRows` flag below — dsRows
+      // is null whenever live discountPlans came back empty, in which case the whole page (including
+      // this number) falls back to mock, same as before; only actually-live months use the real
+      // cross-plan total.
+      const totalUnits = dsRows ? (dsT.discountUnitsOnPlan ?? 0) : planRows.reduce((a, r) => a + r.units, 0);
       const totalDiscount = R2(planRows.reduce((a, r) => a + r.discount, 0));
       out.statCards = [
-        { title: 'Units on a Discount Plan', live: !!dsRows, tip: 'Report: Discounts.\nFields: sUnitName, dcDiscount.\nCalculation: Distinct units with at least one discounted charge line this month, deduplicated by sUnitName (a billing cycle can post 2 rows/month).', tiles: [{ value: intFmt(totalUnits), label: 'This month', delta: null, dir: null }] },
+        { title: 'Units on a Discount Plan', live: !!dsRows, tip: 'Report: Discounts.\nFields: sUnitName, dcDiscount.\nCalculation: Distinct units with at least one discounted charge line this month, deduplicated by sUnitName across every plan (a unit on 2 plans at once counts once here, not twice — a billing cycle can also post 2 rows/month for the same plan, also deduplicated).', tiles: [{ value: intFmt(totalUnits), label: 'This month', delta: null, dir: null }] },
         { title: 'Total £ Discount', live: !!dsRows, tip: 'Report: Discounts.\nFields: dcDiscount.\nCalculation: Σ dcDiscount across every charge line this month (not deduplicated — every discount line genuinely happened).', tiles: [{ value: money(totalDiscount), label: 'This month', delta: null, dir: null }] },
       ];
       out.chartCards = [
