@@ -1981,8 +1981,15 @@ export default function PortalV2Page() {
       //     unlike Area/Unit Occupancy which only see empty vs full). Sourced from fields already
       //     pulled for other widgets (OccupancyStatistics' ActualOccupied/GrossPotential — see
       //     lib/buildPayload.js's recordFor()/aggregateTotals() comments) — no new report pull.
+      // FIXED 21 Jul 2026 (live spot-check while re-verifying Rich's portal review, task #379): every
+      // row was showing Unit Occupancy % = 0.0% — this read s.occPct, a field that doesn't exist on
+      // the site record (the real per-site field is occPC, see recordFor() in lib/buildPayload.js line
+      // 129 and the comment right above this block). s.occPct was always undefined, so `|| 0` silently
+      // masked it. occPct only ever exists as a LOCAL/destination variable name elsewhere in this file
+      // (e.g. line 1594's `occPct: s.occPC || 0` on the Portfolio Occupancy table) — never as a field
+      // ON s itself. Copy-paste mixed up the two naming conventions.
       const liveOccByStoreRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, areaPct: s.areaPCmla || 0, unitPct: s.occPct || 0, econPct: s.economicOccPct || 0,
+        name: s.name, areaPct: s.areaPCmla || 0, unitPct: s.occPC || 0, econPct: s.economicOccPct || 0,
       })) : null;
       if (!liveOccByStoreRows) debugWarn('[portal-v2] Occupancy by Store table rendering with mock data (no live sites available).');
       const occByStoreRows = liveOccByStoreRows || fs.map((s) => ({
