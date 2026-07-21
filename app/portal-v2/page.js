@@ -173,7 +173,11 @@ function computeTotals(sites) {
   t.discountPlans = discountPlans;
   t.moveInVarianceCount = sum('moveInVarianceCount');
   const moveInVarianceSumTotal = sum('moveInVarianceSum');
-  t.moveInVarianceAvg = t.moveInVarianceCount ? R2(moveInVarianceSumTotal / t.moveInVarianceCount) : 0;
+  const moveInStdRateSumTotal = sum('moveInStdRateSum');
+  t.moveInVarianceSum = moveInVarianceSumTotal;
+  t.moveInStdRateSum = moveInStdRateSumTotal;
+  t.moveInVarStdRatePct = moveInStdRateSumTotal ? R2(moveInVarianceSumTotal / moveInStdRateSumTotal * 100) : 0;
+  t.moveInVarStdRateActualPct = R2(t.moveInVarStdRatePct - 8.33);
   const varFromStdRate = (() => {
     const g = {};
     for (const s of sites) for (const b of (s.varFromStdRate || [])) {
@@ -1789,20 +1793,18 @@ export default function PortalV2Page() {
           const prevRate = livePrevSites ? moveInRate(livePrevSites) : null;
           return { title: 'Move-In Rental Rate', live: true, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInRentalRate, MovedInArea.\nCalculation: Σ MovedInRentalRate ÷ Σ MovedInArea × 12. Rate achieved on this month\'s new move-ins only, not the whole portfolio.', tiles: [{ value: '£' + rate.toFixed(2), label: 'Per ft² (this month’s move-ins)', ...deltaTick(rate, prevRate, 'money') }] };
         })(),
-        // Move-in Variance vs Standard Rate — this-period half (ADDED 9 Jul 2026, Michael's "build
-        // both" decision, after the "verify you have everything" check confirmed exact source fields
-        // via live probes). Discounts report's dcVariance for tenants who moved in THIS month,
-        // deduplicated by unit (a unit on a ~28-day billing cycle can post 2 charge rows inside one
-        // calendar month — confirmed live, not a bug — so this avoids double-weighting one move-in).
-        // FIXED 10 Jul 2026 (KPIs page audit, task #61): delta was hardcoded null/null even on the
-        // live branch, even though kpiPrevT.moveInVarianceAvg is already computed by computeTotals()
-        // (same aggregate the rest of this page's stat cards read their own "vs last month" deltas
-        // from) -- unlike Reservations/Reserved Sqft (genuinely live-snapshot-only, no historical
-        // concept) or Customer Churn (genuinely blocked on 12+ months of history), there was no data
-        // reason this one was skipped. Now wired the same way as every sibling card on this page.
+        // Move-in Variance vs Standard Rate — RESOURCED 21 Jul 2026 (Rich's portal review, task #360).
+        // Was reading Discounts' dcVariance (this-period £avg per move-in); Rich flagged this as wrong
+        // and confirmed the correct source is MoveInsAndMoveOuts' own MovedInVariance/StandardRate
+        // columns, expressed as a % ("you take the variance vs standard rate"), per his supplied
+        // Move_in_Move_out PSF and Variance.xlsx reference workbook. "Actual" subtracts a natural 8.33%
+        // (=13÷12−1) baseline variance from monthly vs 4-weekly billing-cycle differences — Rich's own
+        // words, and the same constant independently found in task #308's Bicester rate-annualization
+        // probe — so it isn't mistaken for a real pricing gap. Delta wired the same way as every
+        // sibling card on this page (kpiPrevT.moveInVarStdRateActualPct, computed by computeTotals()).
         kpiT
-          ? { title: 'Move-in Variance vs Standard Rate', live: true, tip: 'Report: Discounts.\nFields: sChgDesc ("Rent" rows only), dMovedIn, dcVariance, sUnitName.\nCalculation: Average dcVariance for units where dMovedIn falls in the selected period, deduplicated by unit (a billing cycle can post 2 rows/month).', tiles: [{ value: (kpiT.moveInVarianceCount ? (kpiT.moveInVarianceAvg >= 0 ? '£' + kpiT.moveInVarianceAvg.toFixed(2) : '-£' + Math.abs(kpiT.moveInVarianceAvg).toFixed(2)) : '£0.00'), label: `Avg per new move-in (n=${kpiT.moveInVarianceCount ?? 0})`, ...deltaTick(kpiT.moveInVarianceAvg, kpiPrevT && kpiPrevT.moveInVarianceAvg, 'money') }] }
-          : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '£18.40', label: 'Avg per new move-in (n=11)', delta: null, dir: null }] },
+          ? { title: 'Move-in Variance vs Standard Rate', live: true, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInVariance, StandardRate (MoveIn rows only).\nCalculation: Σ MovedInVariance ÷ Σ StandardRate, minus a natural 8.33% baseline variance from monthly vs 4-weekly billing-cycle differences (not a data error — see Rich\'s reference workbook). "Actual" is the baseline-adjusted figure.', tiles: [{ value: (kpiT.moveInVarStdRateActualPct >= 0 ? '+' : '') + kpiT.moveInVarStdRateActualPct.toFixed(1) + '%', label: `Actual (raw ${kpiT.moveInVarStdRatePct.toFixed(1)}%, n=${kpiT.moveInVarianceCount ?? 0})`, ...deltaTick(kpiT.moveInVarStdRateActualPct, kpiPrevT && kpiPrevT.moveInVarStdRateActualPct) }] }
+          : { title: 'Move-in Variance vs Standard Rate', tiles: [{ value: '-4.2%', label: 'Actual (raw 4.1%, n=11)', delta: null, dir: null }] },
         // Increase in Sqft Rented — REMOVED 6 Jul 2026 (Michael). Still available as the "Net ft²"
         // tile on the Move-ins & Move-outs card above (mio.net_area) if needed again.
         // Autobill Conversion — REMOVED from the KPI page 16 Jul 2026 (Michael's manual audit).
@@ -1854,11 +1856,16 @@ export default function PortalV2Page() {
         { title: 'Units by Customer Type', tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany.\nCalculation: A unit is "Business" if bCorporate or bCommercial is set, or sCompany is non-blank; otherwise "Personal". Share = each segment\'s occupied units ÷ total occupied units × 100.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }] : [{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
         { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bCorporate, bCommercial, sCompany.\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, computed separately for the Business and Personal segments.', el: <VBars items={custT ? [{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }] : [{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
         { title: 'Rate Increases by Store (Current Month)', tip: 'Report: TenantRentChangeHistory.\nFields: dcOldRate, dcNewRate.\nCalculation: Count of rows where dcNewRate > dcOldRate, posted this month, per site.', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
-        // Move-in Variance vs Standard Rate — whole-book half (ADDED 9 Jul 2026, Michael's "build
-        // both" decision). Live-wired from kpiT.varFromStdRate (ManagementSummary's hidden
-        // VarFromStdRate table — every currently-occupied unit at the site, bucketed by how far its
-        // rent sits from standard rate). A live snapshot regardless of month, same "as of now, not
-        // true history" caveat as RentRoll/OccupancyStatistics elsewhere in this app.
+        // RELABELED 21 Jul 2026 (Rich's portal review, task #360). This chart was previously titled
+        // "Move-in Variance vs Standard Rate (Whole Book...)" — Rich flagged that title's metric as
+        // "just taken from the mgmt summary" and pointed to a differently-sourced, move-in-specific %
+        // as the correct "Move-in Variance vs Standard Rate" (now the stat tile above, sourced from
+        // MoveInsAndMoveOuts). Rich also called this whole-book data itself "interesting" though, so
+        // it's kept, just renamed to describe what it actually is: every currently-occupied unit,
+        // bucketed by how far its rent sits below/above standard rate (not move-in-scoped). Data/logic
+        // unchanged — kpiT.varFromStdRate (ManagementSummary's hidden VarFromStdRate table), a live
+        // snapshot regardless of month, same "as of now, not true history" caveat as RentRoll/
+        // OccupancyStatistics elsewhere in this app.
         // FIXED 16 Jul 2026 (Michael, external verification against real SiteLink exports): this used
         // to silently fall back to hardcoded sample numbers (145/74/61/33/1) whenever a past month was
         // selected, with no on-screen indication they were fake — confirmed live to have fooled a
@@ -1870,11 +1877,11 @@ export default function PortalV2Page() {
         (() => {
           const buckets = kpiT?.varFromStdRate;
           const hasData = !!(buckets && buckets.length);
-          if (!hasData) debugWarn('[portal-v2] Move-in Variance (whole-book): no varFromStdRate stored for the selected period (only captured for months locked since 9 Jul 2026).');
+          if (!hasData) debugWarn('[portal-v2] Units Below Standard Rate (whole-book): no varFromStdRate stored for the selected period (only captured for months locked since 9 Jul 2026).');
           const data = hasData ? buckets.map((b) => ({ label: b.bucket, value: b.count, disp: intFmt(b.count), color: C.blue })) : [];
           return {
-            title: 'Move-in Variance vs Standard Rate (Whole Book, % of units below standard)',
-            tip: 'Report: ManagementSummary.\nFields: sVarFromStdRateCat, VarFromStdRateCount (hidden VarFromStdRate table).\nCalculation: Count of currently-occupied units per bucket of (rent − standard rate) ÷ standard rate. Live snapshot, not scoped to the selected period.\nNote: not available for months locked before 9 Jul 2026 — this field didn\'t exist in the pipeline yet, not a data error.',
+            title: 'Units Below Standard Rate (Whole Book)',
+            tip: 'Report: ManagementSummary.\nFields: sVarFromStdRateCat, VarFromStdRateCount (hidden VarFromStdRate table).\nCalculation: Count of currently-occupied units per bucket of (rent − standard rate) ÷ standard rate. Live snapshot of the whole book, not scoped to move-ins or the selected period (see the separate "Move-in Variance vs Standard Rate" tile for the move-in-specific figure).\nNote: not available for months locked before 9 Jul 2026 — this field didn\'t exist in the pipeline yet, not a data error.',
             el: hasData
               ? <VBars items={data} opts={{ max: Math.max(...data.map((d) => d.value)) * 1.15 }} />
               : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not available for this period — only captured for months locked since 9 Jul 2026.</div>,
