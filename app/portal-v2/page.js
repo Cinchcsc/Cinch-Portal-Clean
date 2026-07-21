@@ -1308,9 +1308,22 @@ export default function PortalV2Page() {
       fetchFloorOccupancy();
       fetchCockpit();
     }
+    // FIXED 21 Jul 2026 (Rich's portal review, task #362): "Clicking off dropdown on store selection
+    // to move on. Not having to click back on drop down." Root cause: this listener is registered on
+    // `document` with capture:true, so it always fires BEFORE the store/period popup panels' own
+    // onClick={(e) => e.stopPropagation()} even gets a chance to run — capture phase runs document
+    // first, then walks DOWN to the target, so a capture listener on `document` itself can never be
+    // stopped by a descendant's stopPropagation() call. The `closest('select')` check was only ever
+    // an exception for the period popup's native FROM/TO <select> dropdowns — the store popup's own
+    // checkboxes, "Select all"/"Clear" buttons, and region chips were never covered, so EVERY click
+    // inside the store popup (most commonly: ticking a store checkbox) closed the whole popup
+    // immediately, forcing a re-open to pick a second store. Fixed properly by checking against the
+    // popup panels themselves (data-popover-panel, added to both panel divs below) instead of relying
+    // on stopPropagation()/capture-order — closes on any REAL outside click, stays open for anything
+    // inside either panel.
     const onDocClick = (e) => {
       if (storePopOpen || periodPopOpen) {
-        if (!e.target.closest || !e.target.closest('select')) {
+        if (!e.target.closest || !e.target.closest('[data-popover-panel]')) {
           setStorePopOpen(false);
           setPeriodPopOpen(false);
         }
@@ -3490,7 +3503,7 @@ export default function PortalV2Page() {
                     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" style={{ marginLeft: '2px' }}><path d="m6 9 6 6 6-6" stroke="#667085" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </button>
                   {storePopOpen && (
-                    <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 'calc(100% + 8px)', zIndex: 50, background: '#fff', border: '1px solid #E4E7EC', borderRadius: '12px', boxShadow: '0 12px 32px rgba(16,24,40,.14)', width: '300px', padding: '12px' }}>
+                    <div data-popover-panel onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 'calc(100% + 8px)', zIndex: 50, background: '#fff', border: '1px solid #E4E7EC', borderRadius: '12px', boxShadow: '0 12px 32px rgba(16,24,40,.14)', width: '300px', padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
                         {regionChips.map((rc) => (
                           <button key={rc.label} onClick={rc.onClick} style={{ fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 500, padding: '5px 10px', borderRadius: '999px', cursor: 'pointer', border: '1px solid ' + (rc.active ? '#2757E8' : '#E4E7EC'), background: rc.active ? '#EEF3FF' : '#fff', color: rc.active ? '#2757E8' : '#475467' }}>{rc.label}</button>
@@ -3527,7 +3540,7 @@ export default function PortalV2Page() {
                     {rangeLabel}
                   </button>
                   {periodPopOpen && (
-                    <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 'calc(100% + 8px)', zIndex: 50, background: '#fff', border: '1px solid #E4E7EC', borderRadius: '12px', boxShadow: '0 12px 32px rgba(16,24,40,.14)', width: '260px', padding: '14px' }}>
+                    <div data-popover-panel onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', left: 0, top: 'calc(100% + 8px)', zIndex: 50, background: '#fff', border: '1px solid #E4E7EC', borderRadius: '12px', boxShadow: '0 12px 32px rgba(16,24,40,.14)', width: '260px', padding: '14px' }}>
                       <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', color: '#98A2B3', marginBottom: '6px' }}>FROM</div>
                       <select value={monthFrom} onChange={(e) => { setPeriod('custom'); selectRange(+e.target.value, monthTo); }} style={{ width: '100%', fontFamily: 'inherit', fontSize: '13px', padding: '9px 10px', border: '1px solid #E4E7EC', borderRadius: '9px', color: '#101828', background: '#fff', marginBottom: '12px' }}>
                         {AVAILABLE_MONTHS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
