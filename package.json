@@ -23,6 +23,7 @@
     "import:unit-status": "node --env-file=.env scripts/import-unit-status.js",
     "check": "node --env-file=.env scripts/check-payload.js",
     "check:refresh-log": "node --env-file=.env scripts/check-refresh-log.js",
+    "check:snapshot": "node --env-file=.env scripts/check-snapshot.js",
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",

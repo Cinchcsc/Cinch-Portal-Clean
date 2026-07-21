@@ -3007,41 +3007,54 @@ export default function PortalV2Page() {
         // Then Michael asked for "the number of enquiries and reservations from the prior day"
         // specifically — a real, different metric (NEW reservations MADE yesterday, from
         // InquiryTracking/lead_funnel's reservation_stage_count) from Reserved Scheduled Sqft's live
-        // OPEN waiting-list count below (a stock, not a flow — structurally can't be day-scoped, see
-        // that card's own note). Keeps both concepts, but as two tiles on ONE card instead of two
-        // separate cards, so it reads as "yesterday's flow" rather than "two reservation numbers."
-        { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nNote: different from Reserved Scheduled Sqft\'s live "as of now" reservation count below — that\'s today\'s currently-open waiting list (a running total), not new reservations made yesterday (a daily flow).', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }] },
+        // OPEN waiting-list count (a stock, not a flow). Keeps both concepts, but as two tiles on ONE
+        // card instead of two separate cards, so it reads as "yesterday's flow" rather than "two
+        // reservation numbers."
+        // Reserved sqft tile ADDED 21 Jul 2026 (Michael, same-day follow-up: "reserved scheduled sqft
+        // is still showing 460, remove the 460 and move the sqft to the enquiries and reservations
+        // widget but for the appropriate amount of sqft based on the enquiries and reservation from
+        // the last complete day"). Removes the standalone Reserved Scheduled Sqft card entirely (was
+        // below this one) instead of just relocating its live "as of now" figure — Michael specifically
+        // wants sqft scoped to the period, same as the other two tiles here, not the live stock total.
+        // Neither underlying report can give that exactly: ReservationList (the sqft estimate's only
+        // source — see lib/buildPayload.js's reservedSqftEstimate) has NO date field on its rows at
+        // all, confirmed via every reference to it in this codebase, so it's structurally impossible
+        // to ask it for "sqft reserved yesterday" directly; InquiryTracking (the source of the
+        // period-scoped Reservations count on this card) has no area/size field on ITS rows either,
+        // confirmed the same way. No single report has both a date and an area. Best available
+        // estimate: take the LIVE portfolio's blended average area-per-reservation
+        // (reservedSqftEstimate ÷ activeReservations, across whatever reservations are currently open
+        // portfolio-wide, from lib/buildPayload.js) and apply that rate to the period-scoped
+        // Reservations count already on this card — i.e. assume the period's new reservations have
+        // roughly the live book's overall unit-type mix. A genuine estimate, not a measured figure —
+        // labelled as such below and in the tooltip, same honesty standard as reservedSqftEstimate's
+        // own "ESTIMATE only" comment in buildPayload.js. Falls back to a representative ~70 sqft/
+        // reservation ratio (matching this card's own prior mock numbers) when liveSites isn't
+        // available yet, same as every other mock branch on this page.
+        (() => {
+          const avgSqftPerRes = (() => {
+            if (!liveSites || !liveSites.length) return null;
+            const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
+            const count = liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0);
+            return count ? sqft / count : null;
+          })();
+          const estSqft = Math.round(totals.reservations * (avgSqftPerRes != null ? avgSqftPerRes : 70));
+          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × the live portfolio\'s current blended average area per reservation (RentRoll\'s average area per UnitTypeID, applied to ReservationList\'s active-reservation type mix — see the KPIs page\'s own Reserved Scheduled Sqft card for that live "as of now" figure by itself). Neither source has both a date and an area field, so this assumes the period\'s new reservations match the live book\'s overall type mix — a reasonable approximation, not an exact figure.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
+        })(),
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
         // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
         // record so this can come back easily if that field is ever found.
         { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MoveIn, MoveOut.\nCalculation: Count of rows flagged MoveIn and rows flagged MoveOut within the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
         { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInArea, MovedOutArea.\nCalculation: Σ MovedInArea (rows flagged MoveIn) and Σ MovedOutArea (rows flagged MoveOut) for the selected window, summed across sites; Out shown negative.', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
-        // Reserved Scheduled Sqft — ADDED 21 Jul 2026 (Rich's portal review, task #353): "Have sqft
-        // reserved as well as number of reservations." Deliberately live/current, NOT scoped to the
-        // daily/weekly/quarterly selector above (unlike every other card on this page) — ReservationList
-        // (the source, same as the KPIs page's own Reserved Scheduled Sqft card) "ignores any date-range
-        // parameter and always returns its FULL current list" (see lib/reportMap.js's `reservations`
-        // parser comment), so there's no way to give this a genuine daily/weekly/quarterly split; it's
-        // always "right now," same caveat as this page's mock-data note but for a structural reason,
-        // not a missing-data one. Reads liveSites directly (the main monthly pull's per-site data,
-        // refreshed several times a day) rather than snapshot_payload, since this field was never part
-        // of the separate snapshot pull and doesn't need to be — no new SiteLink calls required.
-        // NOTE ADDED 21 Jul 2026 (Michael, after the Reservations card above was removed: "shows
-        // reservation as 460, look into this number it seems high for only the day"): the count is
-        // correct for what it actually measures (portfolio-wide currently-open reservations, ~446 was
-        // legacy's own live figure days ago, so 460 is a plausible small drift, not a bug) — the
-        // confusion is that it isn't a daily figure at all, and now that it's the only reservation
-        // number on this page there's no neighboring card to contrast it against. Added an always-
-        // visible note (not just the tooltip, which is exactly what got missed) saying so directly.
-        (() => {
-          if (liveSites && liveSites.length) {
-            const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
-            const count = liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0);
-            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (active reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Reservations = currently active (not cancelled/expired/already-converted) rows on the live waiting list, portfolio-wide. Sqft = Σ active reservations per UnitTypeID × that type\'s average unit area. Always "as of now" — ReservationList has no date-range parameter, so this doesn\'t change with the Daily/Weekly/Quarterly selector above like the other cards on this page.', note: 'Live total across all 29 stores right now — not scoped to Daily/Weekly/Quarterly above, and not the count of reservations made in that period.', tiles: [{ value: intFmt(count), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(sqft) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
-          }
-          return { title: 'Reserved Scheduled Sqft', note: 'Live total across all 29 stores right now — not scoped to Daily/Weekly/Quarterly above, and not the count of reservations made in that period.', tiles: [{ value: intFmt(37 * f), label: 'Reservations (as of now)', delta: null, dir: null }, { value: intFmt(2600 * f) + ' ft²', label: 'Reserved sqft (as of now)', delta: null, dir: null }] };
-        })(),
+        // Reserved Scheduled Sqft — the standalone card that used to sit here (task #353, then #367)
+        // was REMOVED 21 Jul 2026 (Michael: "reserved scheduled sqft is still showing 460, remove the
+        // 460 and move the sqft to the enquiries and reservations widget..."). Its live "Reservations
+        // (as of now)" tile is gone from this page entirely; its sqft concept now lives as an
+        // estimated, period-scoped third tile on the Enquiries & Reservations card above instead — see
+        // that card's comment for the full reasoning. The live "as of now" version of this figure still
+        // exists unchanged on the KPIs page's own Reserved Scheduled Sqft card, for anyone who wants the
+        // un-scoped, right-now total specifically.
       ];
       const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
         .slice().sort((a, b) => a.code.localeCompare(b.code))
