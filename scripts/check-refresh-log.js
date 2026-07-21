@@ -2,8 +2,8 @@
 // table every cron/pull writes a 'running' row into on start and updates to 'ok'/'error'/'partial'
 // on finish (see lib/pullLock.js). ADDED 15 Jul 2026 (Michael: "is there a different way you can
 // confirm the auto updates" — I don't have Supabase/Vercel credentials in my own sandbox, so this
-// is the quickest way to check whether the 7 daily crons (5x /api/pull report-groups, pull-snapshot,
-// pull-cockpit) actually fired and succeeded, without waiting on the portal UI to reflect it).
+// is the quickest way to check whether the daily crons actually fired and succeeded, without waiting
+// on the portal UI to reflect it).
 //
 // Note: all 5 of the /api/pull?reports=... cron slots share kind='pull' (they call the same
 // runPull() with different `reports` overrides) — there's no per-slot label stored, so distinguish
@@ -36,9 +36,10 @@ const todays = data.filter((r) => r.started_at.startsWith(today));
 // #297/#328, added 17 Jul) started writing its own row. Then, 16 minutes after that fix was commented
 // in here (see commit 22360aa, 11:31+01:00), commit 97eb685 (11:53+01:00, task #327 "fixed properly")
 // site-sharded true_revenue 4 ways across ITS OWN 3 new hourly cron slots (10/11/12), on top of the
-// one it already had (hour 5) — turning 5x pull into 9x pull. 12 daily crons total now: 9x pull
+// one it already had (hour 5) — turning 5x pull into 9x pull. 13 daily crons total now: 9x pull
 // (hours 1,2,3,4,5,9,10,11,12 — all kind='pull', distinguished only by started_at hour — see comment
-// above), 1x snapshot (hour 6), 1x cockpit (hour 7), 1x rebuild (hour 8). Check vercel.json directly
-// if this drifts again rather than trusting this count — it's now been wrong twice in one day.
-console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 12 once the first full overnight cycle has run (9x pull, 1x snapshot, 1x cockpit, 1x rebuild).`);
+// above), 1x snapshot (hour 6), 1x cockpit (hour 7), 1x rebuild (hour 8), 1x floor (hour 13, added
+// 21 Jul 2026 to auto-refresh the Occupancy by Floor widget's unit_floor_status snapshot). Check
+// vercel.json directly if this drifts again rather than trusting this count.
+console.log(`\n${todays.length} row(s) started today (${today}, UTC-ish) — expect 13 once the first full overnight cycle has run (9x pull, 1x snapshot, 1x cockpit, 1x rebuild, 1x floor).`);
 process.exit(0);

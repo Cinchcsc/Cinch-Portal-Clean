@@ -1324,7 +1324,7 @@ export default function PortalV2Page() {
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured || !data.floors || !data.floors.length) {
-          debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run import:unit-status <file>`. Occupancy by Floor will show mock data.');
+          debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run pull:floor-occupancy`. Occupancy by Floor will show mock data.');
           setLiveFloorOcc(null);
           return;
         }

@@ -1,6 +1,5 @@
 // Clean JSON read for the KPI page's Occupancy by Floor widget. Mirrors app/api/snapshot/route.js's
-// pattern — reads already-imported data, no live SiteLink calls (UnitStatus isn't a callable SOAP
-// method; scripts/import-unit-status.js is the only writer, run manually per exported site).
+// pattern — reads the already-imported unit_floor_status snapshot, no live SiteLink calls here.
 import { NextResponse } from 'next/server';
 import { getFloorOccupancy } from '../../../lib/floorOccupancy.js';
 

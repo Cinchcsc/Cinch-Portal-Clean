@@ -13,6 +13,7 @@
     "pull": "node --env-file=.env scripts/run-pull.js",
     "pull:snapshot": "node --env-file=.env scripts/run-pull-snapshot.js",
     "pull:cockpit": "node --env-file=.env scripts/run-pull-cockpit.js",
+    "pull:floor-occupancy": "node --env-file=.env scripts/run-pull-floor-occupancy.js",
     "rebuild:payload": "node --env-file=.env scripts/run-rebuild-payload.js",
     "rebuild": "node --env-file=.env scripts/rebuild.js",
     "rebuild:as-of": "node --env-file=.env scripts/rebuild-as-of.js",

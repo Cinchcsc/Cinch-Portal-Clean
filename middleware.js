@@ -32,7 +32,7 @@ import { NextResponse } from 'next/server';
 const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit', '/api/rebuild-payload'];
+const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit', '/api/rebuild-payload', '/api/pull-floor-occupancy'];
 const PUBLIC_PATHS = ['/login', '/auth/confirm'];
 
 export async function middleware(request) {

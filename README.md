@@ -13,6 +13,7 @@ Lean Next.js portal for Cinch reporting.
 - `npm run build` — production build check
 - `npm run pull` — run the main SiteLink pull
 - `npm run pull:snapshot` — refresh the snapshot payload
+- `npm run pull:floor-occupancy` — refresh the Occupancy by Floor unit snapshot
 - `npm run rebuild` — rebuild `portal_payload` from stored raw data
 - `npm run rebuild:as-of -- 2026-06` — rebuild for a chosen month
 - `npm run backfill` — backfill historical data
