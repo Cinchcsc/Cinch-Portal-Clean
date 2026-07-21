@@ -1,9 +1,12 @@
 // Loads a manually-exported SiteLink "UnitStatus" report into unit_floor_status, for the Occupancy
-// by Floor widget (roadmap #132/#139). UnitStatus is NOT a callable SOAP method (confirmed against
-// the live WSDL) -- only available from SiteLink's own web UI report picker -- so this is a manual,
-// per-site import rather than part of the automated pull.js pipeline. Floor is a static per-unit
-// property, so re-running this for a site just replaces its rows (upsert on site_code+unit_name);
-// there's no "month" to this data.
+// by Floor widget (roadmap #132/#139). UnitStatus itself is NOT a callable SOAP method (confirmed
+// against the live WSDL) -- only available from SiteLink's own web UI report picker -- so this
+// remains a manual per-site import rather than part of the automated pull.js pipeline. 21 Jul 2026
+// follow-up: this is no longer the only path — scripts/import-units-information.js can now pull the
+// same floor dataset live from CallCenterWs.UnitsInformation and is the preferred importer. Keep
+// this XLSX path as a fallback if a site/account ever needs the direct export instead. Floor is a
+// static per-unit property, so re-running this for a site just replaces its rows (upsert on
+// site_code+unit_name); there's no "month" to this data.
 //
 // Expected shape (confirmed 10 Jul 2026 against Michael's export): two sheets.
 //   Sheet1: one row per unit. Column P = Floor. Also uses SiteID, UnitName, Type, TenantName,

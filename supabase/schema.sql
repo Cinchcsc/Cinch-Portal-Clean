@@ -132,14 +132,15 @@ alter table autobill_daily enable row level security;
 insert into portal_payload (id, payload) values (1, '{"sites":[],"reports":{},"months":[]}'::jsonb)
 on conflict (id) do nothing;
 
--- ADDED 10 Jul 2026: floor-level unit data for the Occupancy by Floor widget (roadmap #132/#139,
--- originally blocked -- confirmed against the live WSDL that "UnitStatus" is NOT a callable
--- SiteLink SOAP method, only available via SiteLink's own web UI report picker). Michael exports
--- this manually per-site (column P = Floor) and scripts/import-unit-status.js loads it -- this is
--- a static unit-level snapshot, not a monthly time series like raw_report, so re-importing a site
--- just replaces its rows (upsert on site_code+unit_name). Read via lib/floorOccupancy.js /
--- /api/floor-occupancy, deliberately independent of buildPayload.js's monthly pipeline -- same
--- separation already used for snapshot_payload.
+-- ADDED 10 Jul 2026: floor-level unit data for the Occupancy by Floor widget (roadmap #132/#139).
+-- UnitStatus itself is NOT a callable SOAP method, so the initial path here was a manual export
+-- from SiteLink's web UI (column P = Floor) loaded by scripts/import-unit-status.js. FOLLOW-UP
+-- 21 Jul 2026: CallCenterWs.UnitsInformation was confirmed live to return iFloor/bRented/bRentable
+-- plus dimensions, and scripts/import-units-information.js now imports this table directly from the
+-- API. This is still a static unit-level snapshot, not a monthly time series like raw_report, so
+-- re-importing a site just replaces its rows (upsert on site_code+unit_name). Read via
+-- lib/floorOccupancy.js / /api/floor-occupancy, deliberately independent of buildPayload.js's
+-- monthly pipeline -- same separation already used for snapshot_payload.
 create table if not exists unit_floor_status (
   id bigserial primary key,
   site_code text references sites(code),

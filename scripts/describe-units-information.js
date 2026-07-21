@@ -3,7 +3,7 @@
 // matched (it only searched for the literal word "status"). This prints each variant's real input
 // parameter names/types from the WSDL's own describe() output, so we know how to actually call one
 // without guessing blind. Run locally:  node --env-file=.env scripts/describe-units-information.js
-import { ccwsClient } from '../lib/sitelink.js';
+import { describeCcws } from '../lib/sitelink.js';
 
 const need = ['SITELINK_WSDL', 'SITELINK_CORP_CODE', 'SITELINK_CORP_USER', 'SITELINK_CORP_PASSWORD', 'SITELINK_LICENSE_KEY'];
 const miss = need.filter((k) => !process.env[k]);
@@ -15,8 +15,7 @@ const candidates = [
   'UnitsInformationByUnitID', 'UnitsInformationByUnitName', 'UnitsInformationInternal',
 ];
 
-const cc = await ccwsClient();
-const d = cc.describe(); // same synchronous .describe() pattern lib/sitelink.js's own describe() uses on the main client
+const d = await describeCcws();
 const port = Object.values(Object.values(d)[0])[0];
 
 for (const name of candidates) {

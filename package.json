@@ -21,6 +21,7 @@
     "repull:all": "node --env-file=.env scripts/repull-report-all-months.js",
     "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
     "import:unit-status": "node --env-file=.env scripts/import-unit-status.js",
+    "import:units-information": "node --env-file=.env scripts/import-units-information.js",
     "list:wsdl-methods": "node --env-file=.env scripts/list-all-wsdl-methods.js",
     "check": "node --env-file=.env scripts/check-payload.js",
     "check:refresh-log": "node --env-file=.env scripts/check-refresh-log.js",
@@ -41,7 +42,8 @@
     "probe:customertype-rate": "node --env-file=.env scripts/probe-customertype-rate.js",
     "probe:enquiry-reservation-gap": "node --env-file=.env scripts/probe-enquiry-reservation-gap.js",
     "probe:conversion-field-check": "node --env-file=.env scripts/probe-conversion-field-check.js",
-    "probe:channel-flag-reliability": "node --env-file=.env scripts/probe-channel-flag-reliability.js"
+    "probe:channel-flag-reliability": "node --env-file=.env scripts/probe-channel-flag-reliability.js",
+    "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",

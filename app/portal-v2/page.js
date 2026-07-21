@@ -1127,11 +1127,11 @@ export default function PortalV2Page() {
   const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly } or null if unavailable/unconfigured
   const [snapshotPeriod, setSnapshotPeriod] = useState('daily'); // 'daily' | 'weekly' | 'quarterly' — which liveSnapshot period the Snapshot page currently shows
   // Occupancy by Floor (10 Jul 2026, roadmap #132/#139) — same independent-fetch pattern as
-  // liveSnapshot above: floor is a static per-unit property sourced from a manually-imported
-  // SiteLink "UnitStatus" export (not a callable SOAP method, so it can't go through the normal
-  // per-month pull), not part of the global month/range selector at all. Covers however many sites
-  // have been imported so far via scripts/import-unit-status.js — starts at just one.
-  const [liveFloorOcc, setLiveFloorOcc] = useState(null); // { sites: [...codes], floors: [{floor,totalUnits,occupiedUnits,occPct}] } or null if unavailable
+  // liveSnapshot above: floor is a static per-unit property, not part of the normal per-month pull
+  // or the global month/range selector. Since 21 Jul 2026 this dataset can be populated either by
+  // the older manual XLSX import or by the preferred live CallCenterWs.UnitsInformation import; this
+  // page just reads whatever sites have been loaded into unit_floor_status so far.
+  const [liveFloorOcc, setLiveFloorOcc] = useState(null); // { sites: [...codes], floors: [...], siteFloors: {code:[...]} } or null if unavailable
 
   // District Manager — Unit Groups Stay & Re-Lease widget-local filters (14 Jul 2026, Michael:
   // "condense... add a filter for that specific widget to filter by location and by type or both, all
@@ -1314,9 +1314,9 @@ export default function PortalV2Page() {
       .catch((err) => { debugWarn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
   };
 
-  // Occupancy by Floor fetch — reads unit_floor_status via /api/floor-occupancy (no SiteLink calls;
-  // that table is only ever written by scripts/import-unit-status.js, run manually per exported
-  // site). Independent of every other live fetch, same reasoning as fetchSnapshot above.
+  // Occupancy by Floor fetch — reads unit_floor_status via /api/floor-occupancy (no live SiteLink
+  // calls here; that table is written by the import scripts). Independent of every other live
+  // fetch, same reasoning as fetchSnapshot above.
   const fetchFloorOccupancy = () => {
     fetch('/api/floor-occupancy')
       .then((res) => res.json())
@@ -1326,7 +1326,7 @@ export default function PortalV2Page() {
           setLiveFloorOcc(null);
           return;
         }
-        setLiveFloorOcc({ sites: data.sites, floors: data.floors, generatedAt: data.generated_at });
+        setLiveFloorOcc({ sites: data.sites, floors: data.floors, siteFloors: data.site_floors || {}, generatedAt: data.generated_at });
       })
       .catch((err) => { debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err); setLiveFloorOcc(null); });
   };
@@ -1557,6 +1557,36 @@ export default function PortalV2Page() {
       const anySel = Object.values(selected).some(Boolean);
       if (!anySel) return livePrevSitesRaw;
       return livePrevSitesRaw.filter((s) => selected[s.name]);
+    })();
+    // Same store-checkbox rule as liveSites above, but applied to the independent floor-occupancy
+    // dataset. Region-only filtering still can't narrow live floor data (no region field in the
+    // imported rows), so only explicit store selections affect this widget; no selection = all
+    // imported sites.
+    const liveFloorFloors = (() => {
+      if (!liveFloorOcc) return null;
+      const anySel = Object.values(selected).some(Boolean);
+      if (!anySel) return liveFloorOcc.floors;
+      if (!liveSitesRaw) return liveFloorOcc.floors;
+      const selectedCodes = new Set(
+        liveSitesRaw
+          .filter((s) => selected[s.name])
+          .map((s) => s.code)
+      );
+      if (!selectedCodes.size) return [];
+      const byFloor = new Map();
+      for (const code of selectedCodes) {
+        for (const row of (liveFloorOcc.siteFloors?.[code] || [])) {
+          const bucket = byFloor.get(row.floor) || { floor: row.floor, totalUnits: 0, occupiedUnits: 0, totalArea: 0, occupiedArea: 0 };
+          bucket.totalUnits += row.totalUnits || 0;
+          bucket.occupiedUnits += row.occupiedUnits || 0;
+          bucket.totalArea += row.totalArea || 0;
+          bucket.occupiedArea += row.occupiedArea || 0;
+          byFloor.set(row.floor, bucket);
+        }
+      }
+      return [...byFloor.values()]
+        .sort((a, b) => a.floor - b.floor)
+        .map((b) => ({ ...b, occPct: b.totalUnits ? +((b.occupiedUnits / b.totalUnits) * 100).toFixed(1) : 0 }));
     })();
     const agg = fs.reduce((a, s) => {
       a.occupied += s.occupied; a.total += s.total; a.area += s.area; a.rentRoll += s.rentRoll; a.claW += s.occupied * s.claPct;
@@ -2117,15 +2147,14 @@ export default function PortalV2Page() {
               : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not available for this period — only captured for months locked since 9 Jul 2026.</div>,
           };
         })(),
-        // Occupancy by Floor (10 Jul 2026, roadmap #132/#139 — previously blocked: UnitStatus, the
-        // SiteLink report carrying floor data, isn't a callable SOAP method, confirmed against the
-        // live WSDL). Sourced from liveFloorOcc — a manually-imported export (scripts/import-
-        // unit-status.js), independent of the month/range selector and everything else on this
-        // page, same as the Snapshot page's liveSnapshot. Covers however many sites have been
-        // imported so far (starts at one), so the title says exactly how many rather than implying
-        // full-portfolio coverage it doesn't have yet.
+        // Occupancy by Floor (10 Jul 2026, roadmap #132/#139). liveFloorOcc is independent of the
+        // month/range selector and everything else on this page, same as the Snapshot page's
+        // liveSnapshot. The underlying unit_floor_status rows can now come from either the manual
+        // UnitStatus XLSX path or the preferred live UnitsInformation API importer added on 21 Jul
+        // 2026. Covers however many sites have been imported so far, so the title says exactly how
+        // many rather than implying full-portfolio coverage it doesn't have yet.
         (() => {
-          const floors = liveFloorOcc?.floors;
+          const floors = liveFloorFloors;
           const mockFloors = [{ floor: 1, occPct: 88.2 }, { floor: 2, occPct: 91.5 }, { floor: 3, occPct: 79.4 }];
           const rows = (floors && floors.length ? floors : mockFloors).map((b) => ({
             label: b.floor === 0 ? 'Ground' : `Floor ${b.floor}`,
@@ -2133,16 +2162,9 @@ export default function PortalV2Page() {
             disp: b.occPct.toFixed(1) + '%',
             color: b.occPct >= 85 ? C.green : b.occPct >= 75 ? C.amber : C.red,
           }));
-          if (!floors || !floors.length) debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — run `npm run import:unit-status <file>` for at least one site.');
-          const siteCount = liveFloorOcc?.sites?.length || 0;
-          // FIXED 21 Jul 2026 (Michael: "Occupany by floor is wierd, it says l001") — liveFloorOcc.sites
-          // holds raw site CODES (unit_floor_status's own key, see /api/floor-occupancy), never mapped
-          // to names before landing in this title, unlike every other per-site display on this page.
-          // Same code->name lookup the Weekly/Daily Snapshot page already uses (nameForCode, page.js
-          // ~3211), just inlined here since liveSitesRaw is in scope but that helper isn't.
-          const siteNames = (liveFloorOcc?.sites || []).map((code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code);
-          const title = siteCount ? `Occupancy by Floor (${siteCount} site${siteCount === 1 ? '' : 's'} imported: ${siteNames.join(', ')})` : 'Occupancy by Floor (%)';
-          return { title, tip: 'Report: UnitStatus.\nFields: floor, occupied, rentable (manually imported export, not a live SiteLink API call).\nCalculation: Occupied ÷ total rentable units, grouped by floor. Covers only sites imported so far.', el: <VBars items={rows} opts={{ max: 100 }} /> };
+          if (!floors || !floors.length) debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — import floor data for the selected site(s), or clear the store filter to view all imported sites.');
+          const title = 'Occupancy by Floor';
+          return { title, tip: 'Source: unit_floor_status (loaded from SiteLink UnitStatus export or UnitsInformation API import).\nFields: floor, occupied, rentable.\nCalculation: Occupied ÷ total rentable units, grouped by floor. Respects the selected store checkbox filter; with no store selected, shows all imported sites.', el: <VBars items={rows} opts={{ max: 100 }} /> };
         })(),
       ];
       const unitDefs = [['9 ft²', 'Locker', 4, 36], ['15 ft²', 'Locker', 16, 240], ['25 ft²', 'Small', 31, 775], ['35 ft²', 'Small', 78, 2730], ['50 ft²', 'Medium', 88, 4400], ['75 ft²', 'Medium', 40, 3000], ['100 ft²', 'Large', 13, 1300], ['125 ft²', 'Large', 10, 1250], ['150 ft²', 'Large', 9, 1350], ['180 ft²', 'Drive Up', 2, 360], ['200 ft²', 'Drive Up', 3, 600], ['250 ft²', 'Enterprise', 2, 500]];

@@ -12,6 +12,6 @@ export async function GET() {
     const result = await getFloorOccupancy();
     return NextResponse.json({ configured: result.floors.length > 0, ...result }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    return NextResponse.json({ configured: false, error: error.message, sites: [], floors: [] }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ configured: false, error: error.message, sites: [], floors: [], site_floors: {} }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }
 }
