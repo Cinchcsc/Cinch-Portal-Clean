@@ -2693,17 +2693,62 @@ export default function PortalV2Page() {
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
       // FIXED 21 Jul 2026 (Rich's portal review, task #352): Rich — "Month on month: Revenue collected
       // - what is the intention here? I have selected 1 store and still see portfolio numbers in
-      // this." Root cause isn't a bug in the store filter itself — it's that `liveHistory` only ever
-      // stores ONE portfolio-wide total per month (see lib/buildPayload.js's buildHistory()); no
-      // per-site history is retained, so there's nothing for a store filter to select FROM here (same
-      // structural limitation already documented on Customer Churn above). Building true per-site
-      // history is a real schema/backfill project (new per-site-per-month table + cron changes +
-      // deciding how far back to reconstruct) — flagged to Michael as its own scoped item rather than
-      // rushed in 3 days before cutover. For now, make the limitation visible on-screen (not just in
-      // the hover tooltip, which is exactly what Rich didn't notice) whenever a store/region filter is
-      // actually selected, so it reads as "known, by design" instead of "broken."
-      const momFilterActive = region !== 'All' || Object.values(selected).some(Boolean);
-      const momFilterNote = momFilterActive ? 'Portfolio-wide — store/region filter doesn\'t apply to trend history yet (only current-month figures are split by store). Ask Michael/Claude about scoping true per-store history if this is needed.' : null;
+      // this." At the time, `liveHistory` (one portfolio-wide total per stored month — see
+      // lib/buildPayload.js's buildHistory()) looked like the only history available, so a store
+      // filter genuinely had nothing per-site to select from, and this was flagged to Michael as a
+      // real schema/backfill project (new per-site-per-month table, cron changes, a backfill-depth
+      // decision) — out of scope before cutover.
+      // CORRECTED 21 Jul 2026 (Michael: "the mom page should show portfolio wide graphs as default,
+      // but if i click on the individual store or stores it should show the lines for those
+      // individual stores... all overlaid and easily comparable"): that "needs new infra" call was
+      // wrong. Re-read lib/buildPayload.js's buildPayload() end to end before writing anything this
+      // time — `monthly` (portfolio.monthly, fetched into this page's `liveMonthly` state since the
+      // very first version of the global range selector, task #50, but never once READ anywhere on
+      // this page until now) is already a LIGHT per-site record for EVERY stored month, built by the
+      // exact same recordFor() as the full-detail `sites[]` array. `full` only gates recordFor()'s
+      // HEAVY per-unit arrays (unit mix, channels) — the plain scalar fields every one of these 6
+      // charts needs (rent, occA, ss.occA, ssRate, revenue.collected, insurancePremiumSum) are computed
+      // unconditionally. So true per-site MoM history already existed in the payload, sitting unused —
+      // this was a wiring gap, not a missing backend capability. momSeriesFor() below reads it.
+      const momAnySel = Object.values(selected).some(Boolean);
+      // momFilterNote — NARROWED 21 Jul 2026: used to fire for ANY active filter (region or store),
+      // since neither reached trend history. Individual store selection now genuinely works (see
+      // momSeriesFor below), so the only real gap left is region-ONLY filtering — liveMonthly's
+      // per-site records carry no region field (same disclosed gap as every other live per-site widget
+      // on this page), so picking a region without checking a specific store still can't scope these
+      // charts.
+      const momFilterNote = (region !== 'All' && !momAnySel)
+        ? 'Region filter doesn\'t reach trend history yet — select individual store(s) above (not just a region) to see their lines here.'
+        : null;
+      // momSelectedSites — the {code,name} pairs for whichever stores are checked, sorted by code
+      // (matching this page's other per-site orderings). Null when none are checked, so every chart's
+      // normal single portfolio-wide line is completely unaffected by this feature by default, exactly
+      // as Michael asked ("portfolio wide graphs as default").
+      const momSelectedCodes = (momAnySel && liveSites) ? new Set(liveSites.map((s) => s.code)) : null;
+      const momSelectedSites = (momSelectedCodes && liveSitesRaw)
+        ? liveSitesRaw.filter((s) => momSelectedCodes.has(s.code)).sort((a, b) => a.code.localeCompare(b.code))
+        : null;
+      // A small, distinct palette for overlaid per-store lines — cycles if more stores are selected
+      // than colors (the store picker is a checkbox list, not built for dozens at once in practice).
+      const momPalette = ['#2757E8', '#12B76A', '#F79009', '#EE46BC', '#7A5AF8', '#0E9384', '#D92D20', '#667085'];
+      // momSeriesFor(getter) — builds one LineChart series per selected store from liveMonthly,
+      // reading getter(record) off each site's record for each month liveHist itself is charting (so a
+      // per-store overlay always covers exactly the same months/range the portfolio line would).
+      // Returns null ("no override, use the normal single portfolio-wide series") when no store is
+      // selected or liveMonthly hasn't loaded yet — every call site below falls back to its original
+      // single-series portfolio line in that case, unchanged from before this feature existed.
+      const momSeriesFor = (getter) => {
+        if (!momSelectedSites || !momSelectedSites.length || !liveMonthly) return null;
+        const monthKeys = (liveHist || []).map((h) => h.month);
+        return momSelectedSites.map((s, i) => ({
+          name: s.name,
+          color: momPalette[i % momPalette.length],
+          values: monthKeys.map((mk) => {
+            const rec = (liveMonthly[mk] || []).find((r) => r.code === s.code);
+            return (rec ? getter(rec) : 0) || 0;
+          }),
+        }));
+      };
       // Revenue Collected — daily-within-current-month view (17 Jul 2026, task #312, Michael: "the
       // rev collected on the mom page only shows '20-'24 [when] i have it 1m... make it show the
       // current month only and how it changes daily"). Root cause of the '20-'24 symptom: selecting
@@ -2737,29 +2782,39 @@ export default function PortalV2Page() {
       // (Marketing YoY, Cockpit Charting, etc.) are untouched since they don't pass this option.
       const momChartHeight = 95;
       // FIXED 21 Jul 2026 (Michael, verifying task #352 live: "Revenue collected - what is the
-      // intention here? I have selected 1 store and still see portfolio numbers in this"). The
-      // momFilterNote above says "only current-month figures are split by store" — true of the DATA
-      // (daily_financial_snapshot has always stored one row per site per day, and lib/cockpitData.js's
-      // readCockpitData() already returns a per-site sites[] breakdown alongside the portfolio total
-      // specifically "for the store filter to slice client-side", per that file's own comment) but
-      // never actually true of THIS chart's wiring — it read straight off the pre-summed portfolio
-      // total_charge/total_credit fields regardless of the store filter, so the note described a
-      // capability that existed in the data but was never connected. Fixed by summing only the
-      // selected sites' figures when the store-checkbox filter is active, matched from site NAME (what
-      // `selected` is keyed by) to site CODE (what sites[] is keyed by) via liveSites — the same
-      // shadow-filtered array every other live widget on this page already reads (see its own comment
-      // above `const liveSites = ...`). Region-only filtering still can't reach this chart (live
-      // per-site data has no region field anywhere on this page — a separate, pre-existing gap), so
-      // momFilterNote still shows whenever only a region is picked with no individual store checked.
-      const momAnySel = Object.values(selected).some(Boolean);
-      const momSelectedCodes = (momAnySel && liveSites) ? new Set(liveSites.map((s) => s.code)) : null;
+      // intention here? I have selected 1 store and still see portfolio numbers in this"). Fixed by
+      // summing only the selected sites' figures when the store-checkbox filter is active, matched
+      // from site NAME (what `selected` is keyed by) to site CODE (what sites[] is keyed by) via
+      // liveSites — the same shadow-filtered array every other live widget on this page already reads.
+      // dailySeriesFor() below (task #373, same day) goes further — a per-store OVERLAY (one line per
+      // selected store) rather than this blended sum, same as the other 5 charts now get via
+      // momSeriesFor(). dailyRevenue/dailyRevNote stay as the fallback for whenever dailySeriesFor()
+      // can't build per-store lines (liveSitesRaw not loaded yet), same graceful-degradation pattern
+      // used everywhere else on this page.
       const dailyRevenue = (c) => momSelectedCodes
         ? (c.sites || []).filter((s) => momSelectedCodes.has(s.code)).reduce((sum, s) => sum + (s.total_charge || 0) - (s.total_credit || 0), 0)
         : (c.total_charge || 0) - (c.total_credit || 0);
       const dailyRevNote = momAnySel ? null : momFilterNote;
+      // dailySeriesFor() — the daily-cockpit equivalent of momSeriesFor() above, since Revenue
+      // Collected's '1M' view reads liveCockpit.curve (daily_financial_snapshot) instead of liveMonthly
+      // (see the big comment block above this one explaining why this one chart has its own daily
+      // source). lib/cockpitData.js's readCockpitData() already returns each day's per-site sites[]
+      // breakdown "for the store filter to slice client-side" (that file's own comment) — same
+      // situation as liveMonthly, data already there, just never read per-store before today.
+      const dailySeriesFor = () => {
+        if (!momSelectedSites || !momSelectedSites.length) return null;
+        return momSelectedSites.map((s, i) => ({
+          name: s.name,
+          color: momPalette[i % momPalette.length],
+          values: liveCockpit.curve.map((c) => {
+            const site = (c.sites || []).find((x) => x.code === s.code);
+            return site ? (site.total_charge || 0) - (site.total_credit || 0) : 0;
+          }),
+        }));
+      };
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — scoped to the selected store(s) if any are checked (region-only filtering doesn\'t reach live data).\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month, portfolio-wide regardless of filter.', note: dailyRevNote, el: <LineChart series={[{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
-        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, portfolio-wide, per stored month.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — one line per selected store if any are checked (region-only filtering doesn\'t reach live data), else portfolio-wide.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.revenue && r.revenue.collected) || [{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
       // accurate tax/deferred-adjusted figure now lives on the Financials page's True Revenue
@@ -2785,11 +2840,11 @@ export default function PortalV2Page() {
       // underlying data/labels were already complete.
       out.chartCards = liveHist ? [
         revCollectedCard,
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, across all sites, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea across all sites, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month.' + momTip, note: momFilterNote, el: <LineChart series={[{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.rent) || [{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.insurancePremiumSum) || [{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.occA) || [{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.ss && r.ss.occA) || [{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.ssRate) || [{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
@@ -3534,7 +3589,7 @@ export default function PortalV2Page() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveSitesRaw, livePrevSitesRaw, liveHistory, liveCockpit, liveSnapshot, monthFrom, monthTo, selected, region]);
+  }, [liveSitesRaw, livePrevSitesRaw, liveHistory, liveMonthly, liveCockpit, liveSnapshot, monthFrom, monthTo, selected, region]);
 
   // resolveLineChart (task #313): look up one specific OTHER chart's live series/opts by page+title,
   // for whichever card currently has an overlay selected. Always calls buildPage(page) fresh rather
