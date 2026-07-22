@@ -47,6 +47,7 @@
     "probe:r6-rate-formula": "node --env-file=.env scripts/probe-r6-rate-formula.js",
     "probe:billing-frequency-deep": "node --env-file=.env scripts/probe-billing-frequency-deep.js",
     "probe:exhaustive-billing-search": "node --env-file=.env scripts/probe-exhaustive-billing-search.js",
+    "probe:bill28day-followup": "node --env-file=.env scripts/probe-bill28day-followup.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
