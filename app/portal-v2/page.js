@@ -4438,7 +4438,18 @@ export default function PortalV2Page() {
                 </div>
               </div>
 
-              {page !== 'snapshot' && <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {page === 'snapshot' ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.06em', color: '#98A2B3' }}>VIEW</span>
+                  <div style={{ display: 'flex', background: '#F2F4F7', borderRadius: '9px', padding: '3px', gap: '2px' }}>
+                    {[{ id: 'daily', label: 'Daily' }, { id: 'weekly', label: 'Weekly' }, { id: 'quarterly', label: 'Quarterly' }].map((o) => (
+                      <button key={o.id} onClick={() => setSnapshotPeriod(o.id)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px', border: 'none', cursor: 'pointer', color: snapshotPeriod === o.id ? '#2757E8' : '#667085', background: snapshotPeriod === o.id ? '#fff' : 'transparent', boxShadow: snapshotPeriod === o.id ? '0 1px 2px rgba(16,24,40,.08)' : 'none' }}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.06em', color: '#98A2B3' }}>PERIOD</span>
                 <div style={{ display: 'flex', background: '#F2F4F7', borderRadius: '9px', padding: '3px', gap: '2px' }}>
                   {presets.map((p) => (
@@ -4512,15 +4523,6 @@ export default function PortalV2Page() {
                 <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#2757E8" strokeWidth={2} strokeLinecap="round" /></svg>
                 Build a widget
               </button>
-            )}
-            {page === 'snapshot' && (
-              <div style={{ display: 'flex', background: '#F2F4F7', borderRadius: '9px', padding: '3px', gap: '2px' }}>
-                {[{ id: 'daily', label: 'Daily' }, { id: 'weekly', label: 'Weekly' }, { id: 'quarterly', label: 'Quarterly' }].map((o) => (
-                  <button key={o.id} onClick={() => setSnapshotPeriod(o.id)} style={{ fontFamily: 'inherit', fontSize: '13px', fontWeight: 600, padding: '7px 14px', borderRadius: '7px', border: 'none', cursor: 'pointer', color: snapshotPeriod === o.id ? '#2757E8' : '#667085', background: snapshotPeriod === o.id ? '#fff' : 'transparent', boxShadow: snapshotPeriod === o.id ? '0 1px 2px rgba(16,24,40,.08)' : 'none' }}>
-                    {o.label}
-                  </button>
-                ))}
-              </div>
             )}
           </div>
 
