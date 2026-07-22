@@ -83,7 +83,8 @@
     "probe:realrate-may-april-verify": "node --env-file=.env scripts/probe-realrate-may-april-verify.js",
     "probe:check-frozen-history-coverage": "node --env-file=.env scripts/probe-check-frozen-history-coverage.js",
     "probe:realrate-rewind-occupied-area": "node --env-file=.env scripts/probe-realrate-rewind-occupied-area.js",
-    "probe:realrate-rewind-plus-discounts": "node --env-file=.env scripts/probe-realrate-rewind-plus-discounts.js"
+    "probe:realrate-rewind-plus-discounts": "node --env-file=.env scripts/probe-realrate-rewind-plus-discounts.js",
+    "probe:realrate-all-sites-june": "node --env-file=.env scripts/probe-realrate-all-sites-june.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
