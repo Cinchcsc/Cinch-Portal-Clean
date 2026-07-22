@@ -67,7 +67,8 @@
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js",
     "probe:full-custom-report-sweep": "node --env-file=.env scripts/probe-full-custom-report-sweep.js",
     "probe:cscollections-valuation-deep": "node --env-file=.env scripts/probe-cscollections-valuation-deep.js",
-    "probe:r6-realrate-wired-verify": "node --env-file=.env scripts/probe-r6-realrate-wired-verify.js"
+    "probe:r6-realrate-wired-verify": "node --env-file=.env scripts/probe-r6-realrate-wired-verify.js",
+    "probe:truerevenue-rentonly": "node --env-file=.env scripts/probe-truerevenue-rentonly.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
