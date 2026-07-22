@@ -2908,28 +2908,25 @@ export default function PortalV2Page() {
       // stored month regardless of what's picked elsewhere on the portal.
       const selFromKey = monthKeyOf(monthFrom), selToKey = monthKeyOf(monthTo);
       const scopedHistory = liveHistory ? liveHistory.filter((h) => h.month >= selFromKey && h.month <= selToKey) : null;
-      const scopedOk = !!(scopedHistory && scopedHistory.length >= 2);
-      // FIXED 10 Jul 2026 (pre-go-live audit): the PERIOD selector's OWN default state (the '1M'
-      // preset, monthFrom === monthTo) scopes down to a single point — below the >=2 a trend line
-      // needs — so on every fresh page load, and any time '1M' is picked, all 6 charts below silently
-      // rendered 100% FABRICATED seq() mock numbers with no visual difference from real data (chartCards
-      // never carry a live/mock badge). This wasn't a real data shortage: a multi-month backfill has
-      // since been run (see buildPayload.js's buildIndex() comment) and liveHistory (unscoped) reliably
-      // has well over 2 points. Falls back to the full unscoped history — still 100% real, already-
-      // stored data, just not narrowed to the selection — instead of inventing numbers whenever the
-      // selected range itself is too narrow to plot. True mock data is now reserved for the genuine
-      // "no live history at all" case.
-      const liveHist = scopedOk ? scopedHistory : (liveHistory && liveHistory.length >= 2 ? liveHistory : null);
+      const scopedOk = !!(scopedHistory && scopedHistory.length >= 1);
+      // FIXED AGAIN 22 Jul 2026 (Michael: "still show startin in sept 2020 not the current month,
+      // when 1m is selected"). The earlier fallback to full history solved the old fake-mock-data
+      // problem, but it still meant a single selected month (<2 points) snapped back to the whole
+      // stored history for 5 of the 6 MoM charts. LineChart no longer needs >=2 points here
+      // (xFor() already guards len-1 with Math.max(..., 1)), so a genuine one-point selected-month
+      // chart is preferable to showing unrelated years of history. Keep the full-history fallback
+      // only for the true "no scoped history at all" case now.
+      const liveHist = scopedOk ? scopedHistory : (liveHistory && liveHistory.length >= 1 ? liveHistory : null);
       const momUsingFullHistory = !scopedOk && !!liveHist;
       if (!liveHist) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (no stored history at all yet — run npm run pull a few more times, or npm run backfill).');
-      else if (momUsingFullHistory) debugWarn('[portal-v2] Month-on-Month: selected period has <2 months of history — showing full stored history instead of the narrower selection.');
+      else if (momUsingFullHistory) debugWarn('[portal-v2] Month-on-Month: selected period has no stored history — showing full stored history instead of the narrower selection.');
       // FIXED 15 Jul 2026 (pre-go-live audit finding): this used to be appended straight onto the
       // visible chart TITLE ('(full history — selected period too narrow)'), which meant every user
       // saw a debug-sounding string in all-caps (titles render text-transform:uppercase) on every one
       // of these 6 charts on every page load, since the default '1M' period is <2 months by
       // definition. debugWarn above already covers the developer-facing signal; the user-facing note
       // now lives only in the tooltip (tip), worded plainly, not shouted in the header.
-      const momTip = momUsingFullHistory ? '\nShowing full history — the selected period is too narrow to plot.' : '';
+      const momTip = momUsingFullHistory ? '\nShowing full history — the selected period has no stored history yet.' : '';
       const hLabels = liveHist ? liveHist.map((h) => { const [y, m] = h.month.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en-GB', { month: 'short' }) + " '" + y.slice(2); }) : L;
       // FIXED 21 Jul 2026 (Rich's portal review, task #352): Rich — "Month on month: Revenue collected
       // - what is the intention here? I have selected 1 store and still see portfolio numbers in
