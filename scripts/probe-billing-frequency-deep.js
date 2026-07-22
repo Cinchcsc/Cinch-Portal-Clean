@@ -68,7 +68,10 @@ for (const m of ['TenantBillingInfoByTenantID_v3', 'TenantListDetailed_v3']) {
 
 if (firstOccupied?.TenantID) {
   try {
-    const { rows } = await callCallCenterMethod('TenantBillingInfoByTenantID_v3', site, { TenantID: firstOccupied.TenantID });
+    // FIXED same day — describeCcws() above shows the real param is iTenantID (int), not TenantID.
+    // The first version of this script passed the wrong key, node-soap silently dropped it, and the
+    // call failed with "Invalid Tenant ID" — a bug in the probe, not a real negative result.
+    const { rows } = await callCallCenterMethod('TenantBillingInfoByTenantID_v3', site, { iTenantID: Number(firstOccupied.TenantID) });
     console.log(`\nTenantBillingInfoByTenantID_v3(${firstOccupied.TenantID}): ${rows.length} row(s).`);
     if (rows[0]) {
       console.log('Columns:', Object.keys(rows[0]).join(', '));
