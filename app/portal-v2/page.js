@@ -1186,6 +1186,14 @@ export default function PortalV2Page() {
     }
     return out;
   };
+  const monthDayLabels = (monthKey) => {
+    if (!monthKey) return null;
+    const [yy, mm] = monthKey.split('-').map(Number);
+    const today = new Date();
+    const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
+    const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
+    return Array.from({ length: lastDay }, (_, i) => String(i + 1));
+  };
 
   // Global PERIOD selector (Michael, 6 Jul 2026): fetches the FULL detail for a specific from/to
   // month range from /api/portfolio's ?from/?to params (server computes this live from already-
@@ -3003,6 +3011,17 @@ export default function PortalV2Page() {
           }),
         }));
       };
+      const momSingleMonthSeriesFor = (getter, fallbackName, fallbackColor, fallbackValue) => {
+        if (!isSingleSelectedMonth || !selectedMonthDayLabels || !selectedMonthDayLabels.length) return null;
+        if (momSelectedSites && momSelectedSites.length && liveMonthly) {
+          return momSelectedSites.map((s, i) => {
+            const rec = (liveMonthly[selectedMonthKey] || []).find((r) => r.code === s.code);
+            const value = (rec ? getter(rec) : 0) || 0;
+            return { name: s.name, color: momPalette[i % momPalette.length], values: selectedMonthDayLabels.map(() => value) };
+          });
+        }
+        return [{ name: fallbackName, color: fallbackColor, values: selectedMonthDayLabels.map(() => fallbackValue || 0) }];
+      };
       // Revenue Collected — daily-within-current-month view (17 Jul 2026, task #312, Michael: "the
       // rev collected on the mom page only shows '20-'24 [when] i have it 1m... make it show the
       // current month only and how it changes daily"). Root cause of the '20-'24 symptom: selecting
@@ -3027,6 +3046,7 @@ export default function PortalV2Page() {
       // migration comment).
       const selectedMonthKey = monthKeyOf(monthTo);
       const isSingleSelectedMonth = monthFrom === monthTo;
+      const selectedMonthDayLabels = monthDayLabels(selectedMonthKey);
       const momCockpit = (liveMomCockpit && liveMomCockpit.month === selectedMonthKey) ? liveMomCockpit : null;
       // Fill the selected month's daily curve out to one point per calendar day: before the first
       // available snapshot, values are 0; after that, any missing dates carry the most recent
@@ -3046,6 +3066,12 @@ export default function PortalV2Page() {
       // page specifically (via LineChart's new opts.height, default 150) — every other page's charts
       // (Marketing YoY, Cockpit Charting, etc.) are untouched since they don't pass this option.
       const momChartHeight = 95;
+      const momSingleMonthOpts = (extra = {}) => ({
+        labels: selectedMonthDayLabels,
+        height: momChartHeight,
+        niceAxis: true,
+        ...extra,
+      });
       // FIXED 21 Jul 2026 (Michael, verifying task #352 live: "Revenue collected - what is the
       // intention here? I have selected 1 store and still see portfolio numbers in this"). Fixed by
       // summing only the selected sites' figures when the store-checkbox filter is active, matched
@@ -3105,11 +3131,11 @@ export default function PortalV2Page() {
       // underlying data/labels were already complete.
       out.chartCards = liveHist ? [
         revCollectedCard,
-        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.rent) || [{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.insurancePremiumSum) || [{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.occA) || [{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.ss && r.ss.occA) || [{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.ssRate) || [{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={{ labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
+        { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: <LineChart series={momSingleMonthSeriesFor((r) => r.rent, 'Portfolio', C.teal, (liveHist[0] && liveHist[0].rent) || 0) || momSeriesFor((r) => r.rent) || [{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }]} opts={isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ zero: true, unit: '£', unitPrefix: true }) : { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: <LineChart series={momSingleMonthSeriesFor((r) => r.insurancePremiumSum, 'Premiums', C.blue, (liveHist[0] && liveHist[0].insurancePremium) || 0) || momSeriesFor((r) => r.insurancePremiumSum) || [{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }]} opts={isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ zero: true, unit: '£', unitPrefix: true }) : { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> },
+        { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end, not a true daily figure. In 1M view, that selected month\'s stored value is repeated across the month.' + momTip, note: momFilterNote, el: <LineChart series={momSingleMonthSeriesFor((r) => r.occA, 'ft²', C.blue, (liveHist[0] && liveHist[0].occA) || 0) || momSeriesFor((r) => r.occA) || [{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }]} opts={isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: 'ft²' }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end, not a true daily figure. In 1M view, that selected month\'s stored value is repeated across the month.' + momTip, note: momFilterNote, el: <LineChart series={momSingleMonthSeriesFor((r) => r.ss && r.ss.occA, 'ft²', C.teal, (liveHist[0] && liveHist[0].ssOccA) || 0) || momSeriesFor((r) => r.ss && r.ss.occA) || [{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }]} opts={isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: 'ft²' }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }} /> },
+        { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: <LineChart series={momSingleMonthSeriesFor((r) => r.ssRate, 'Rate', C.blue, (liveHist[0] && liveHist[0].ssRate) || 0) || momSeriesFor((r) => r.ssRate) || [{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }]} opts={isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: '£', unitPrefix: true, axisDecimals: 2 }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
       ] : [
         { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
         { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
