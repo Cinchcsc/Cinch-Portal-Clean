@@ -55,6 +55,7 @@
     "probe:billing-frequency-report": "node --env-file=.env scripts/probe-billing-frequency-report.js",
     "probe:billing-frequency-confirm": "node --env-file=.env scripts/probe-billing-frequency-confirm.js",
     "probe:r6-formula-preview": "node --env-file=.env scripts/probe-r6-formula-preview.js",
+    "probe:r6-formula-wired-verify": "node --env-file=.env scripts/probe-r6-formula-wired-verify.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
