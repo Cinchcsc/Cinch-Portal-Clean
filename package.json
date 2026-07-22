@@ -75,7 +75,8 @@
     "probe:realrate-occstats-formula": "node --env-file=.env scripts/probe-realrate-occstats-formula.js",
     "probe:realrate-effective-rent-exact": "node --env-file=.env scripts/probe-realrate-effective-rent-exact.js",
     "probe:rentroll-all-tables": "node --env-file=.env scripts/probe-rentroll-all-tables.js",
-    "probe:realrate-truerevenue-rent-exact": "node --env-file=.env scripts/probe-realrate-truerevenue-rent-exact.js"
+    "probe:realrate-truerevenue-rent-exact": "node --env-file=.env scripts/probe-realrate-truerevenue-rent-exact.js",
+    "probe:realrate-category-search-occarea": "node --env-file=.env scripts/probe-realrate-category-search-occarea.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
