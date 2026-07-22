@@ -874,6 +874,12 @@ function NavIcon({ id }) {
         <circle cx={8.5} cy={7.5} r={1.5} stroke="currentColor" strokeWidth={2} />
       </>
     ),
+    economicOccupancy: (
+      <>
+        <path d="M4 19V5M4 19h16" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+        <path d="M8 15v-3M12 15V8M16 15v-5M20 15V6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+      </>
+    ),
     snapshot: (
       <>
         <path d="M3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" stroke="currentColor" strokeWidth={2} />
@@ -905,6 +911,36 @@ function thresholdColor(value) {
   if (value >= 85) return C.green;
   if (value >= 70) return C.amber;
   return C.red;
+}
+
+function normalizedReservationSqftPerReservation(sites) {
+  if (!sites || !sites.length) return 70;
+  const moveInArea = sites.reduce((a, s) => a + (s.moveInAreaSum || 0), 0);
+  const moveIns = sites.reduce((a, s) => a + (s.moveIns || 0), 0);
+  if (moveInArea > 0 && moveIns > 0) {
+    const avg = moveInArea / moveIns;
+    if (avg >= 25 && avg <= 400) return avg;
+  }
+  const reservedSqft = sites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
+  const activeReservations = sites.reduce((a, s) => a + (s.activeReservations || 0), 0);
+  if (reservedSqft > 0 && activeReservations > 0) {
+    const avg = reservedSqft / activeReservations;
+    if (avg >= 25 && avg <= 400) return avg;
+  }
+  return 70;
+}
+
+function normalizedReservationSqftPerReservationForSite(site, fallback) {
+  if (!site) return fallback;
+  if ((site.moveInAreaSum || 0) > 0 && (site.moveIns || 0) > 0) {
+    const avg = site.moveInAreaSum / site.moveIns;
+    if (avg >= 25 && avg <= 400) return avg;
+  }
+  if ((site.reservedSqftEstimate || 0) > 0 && (site.activeReservations || 0) > 0) {
+    const avg = site.reservedSqftEstimate / site.activeReservations;
+    if (avg >= 25 && avg <= 400) return avg;
+  }
+  return fallback;
 }
 // `totals` (optional): object keyed by column key with pre-computed portfolio totals/averages for
 // this table — rendered as a pinned footer row (visible on every pagination page), matching the
@@ -1628,6 +1664,64 @@ export default function PortalV2Page() {
     const claPct = agg.occupied ? agg.claW / agg.occupied : 0;
     const gross = occPct ? agg.rentRoll / (occPct / 100) : 0;
     const out = { kpiRow: [], statCards: [], tables: [], chartCards: [], unitMix: [] };
+    const econDetailData = (() => {
+      if (!liveSites || !liveSites.length) return null;
+      const normType = (t) => (t || '').trim().toLowerCase().replace(/\s+/g, '');
+      const TYPE_LABELS = {
+        driveup: 'Drive Up', enterprise: 'Enterprise', indoorselfstorage: 'Indoor Self Storage',
+        mailbox: 'Mailbox', office: 'Office', parking: 'Parking', valueunit: 'Value Unit',
+        selfstorage: 'Self Storage', bulk: 'Bulk', miscellaneousst: 'Miscellaneous St',
+        locker: 'Locker', tradecounter: 'Trade Counter',
+      };
+      const sumByType = (sites) => {
+        const g = {};
+        for (const s of sites) for (const row of (s.occByTypeSize || [])) {
+          const k = normType(row.type);
+          if (!k) continue;
+          const Z = (g[k] ??= { type: TYPE_LABELS[k] || (row.type || '').trim(), occArea: 0, totalArea: 0, grossPotential: 0, actualOccupied: 0 });
+          Z.occArea += row.occArea || 0;
+          Z.totalArea += row.totalArea || 0;
+          Z.grossPotential += row.grossPotential || 0;
+          Z.actualOccupied += row.actualOccupied || 0;
+        }
+        return g;
+      };
+      const metricsFor = (g) => {
+        if (!g) return null;
+        const askingRaw = g.totalArea ? (g.grossPotential / g.totalArea * 12) : 0;
+        const inPlaceRaw = g.occArea ? (g.actualOccupied / g.occArea * 12) : 0;
+        const discountPct = askingRaw ? +((inPlaceRaw - askingRaw) / askingRaw * 100).toFixed(1) : 0;
+        const occPct = g.totalArea ? +(g.occArea / g.totalArea * 100).toFixed(1) : 0;
+        const econPct = g.grossPotential ? +(g.actualOccupied / g.grossPotential * 100).toFixed(1) : 0;
+        return { askingPSF: R2(askingRaw), inPlacePSF: R2(inPlaceRaw), discountPct, occPct, econPct };
+      };
+      const momStr = (cur, prev, isMoney) => {
+        if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return '–';
+        const diff = cur - prev;
+        if (Math.abs(diff) < (isMoney ? 0.005 : 0.05)) return '–';
+        const arrow = diff > 0 ? '↑' : '↓';
+        return arrow + Math.abs(diff).toFixed(isMoney ? 2 : 1) + (isMoney ? '' : 'pt');
+      };
+      const cur = sumByType(liveSites);
+      const prev = livePrevSites ? sumByType(livePrevSites) : {};
+      const rows = Object.keys(cur).sort((a, b) => a.localeCompare(b)).map((k) => {
+        const m = metricsFor(cur[k]), p = metricsFor(prev[k]);
+        return {
+          type: cur[k].type,
+          askingPSF: m.askingPSF, askingMoM: p ? momStr(m.askingPSF, p.askingPSF, true) : '–',
+          inPlacePSF: m.inPlacePSF, inPlaceMoM: p ? momStr(m.inPlacePSF, p.inPlacePSF, true) : '–',
+          discountPct: m.discountPct, discountMoM: p ? momStr(m.discountPct, p.discountPct, false) : '–',
+          occPct: m.occPct, occMoM: p ? momStr(m.occPct, p.occPct, false) : '–',
+          econPct: m.econPct, econMoM: p ? momStr(m.econPct, p.econPct, false) : '–',
+        };
+      });
+      const scope = (() => {
+        const anySel = Object.values(selected).some(Boolean);
+        if (!anySel) return 'All stores, blended';
+        return liveSites.length === 1 ? liveSites[0].name : liveSites.length + ' stores, blended';
+      })();
+      return { rows, scope };
+    })();
 
     if (page === 'dashboard') {
       // --- KPI row: live-wired for these 6 tiles only ---
@@ -1647,6 +1741,25 @@ export default function PortalV2Page() {
       // block and the Portfolio Occupancy table below can share one `prevT` (removed the duplicate
       // declaration that used to sit lower down).
       const prevT = livePrevSites ? computeTotals(livePrevSites) : null;
+      const claYoy = (() => {
+        if (!liveMonthly) return null;
+        const curMonthKey = monthKeyOf(monthTo);
+        const yoyMonthKey = monthKeyOf(monthTo - 12);
+        const currentRows = liveMonthly[curMonthKey];
+        const yoyRows = liveMonthly[yoyMonthKey];
+        if (!currentRows || !yoyRows) return null;
+        const selectedNames = Object.entries(selected).filter(([, on]) => on).map(([name]) => name);
+        const filterRows = (rows) => {
+          if (!selectedNames.length) return rows;
+          const wanted = new Set(selectedNames);
+          return rows.filter((r) => wanted.has(r.name));
+        };
+        const currentTotals = computeTotals(filterRows(currentRows));
+        const yoyTotals = computeTotals(filterRows(yoyRows));
+        if (currentTotals.claPC == null || yoyTotals.claPC == null) return null;
+        const diff = +(currentTotals.claPC - yoyTotals.claPC).toFixed(1);
+        return { label: 'YoY', value: (diff > 0 ? '+' : '') + diff.toFixed(1) + 'pt', positive: diff >= 0 };
+      })();
 
       if (useLive) {
         // Defensive fallback to 0 per-field: a stale/incomplete portal_payload row (e.g. written
@@ -1654,7 +1767,7 @@ export default function PortalV2Page() {
         // whole dashboard. If you see 0s here, re-run `npm run pull` to refresh portal_payload.
         const claPC = t.claPC ?? 0;
         out.kpiRow = [
-          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', ...deltaTick(t.claPC, prevT && prevT.claPC), sub: 'vs last month', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
+          { label: 'Occupancy (% of CLA)', value: claPC.toFixed(1) + '%', ...deltaTick(t.claPC, prevT && prevT.claPC), sub: 'vs last month', extraChip: claYoy, tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.' },
           { label: 'Occupied Units', value: intFmt(t.occ ?? 0), ...deltaTick(t.occ, prevT && prevT.occ, 'count'), sub: 'of ' + intFmt(t.tot ?? 0), tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: Σ Occupied units of Σ TotalUnits, summed across all stores.' },
           // ADDED 16 Jul 2026 (Michael: "total occupancy in sqft, it is a column in the occupancy
           // statistics excel"). t.occA already existed — computeTotals() sums each site's occA
@@ -2350,111 +2463,14 @@ export default function PortalV2Page() {
         tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), Area, TotalUnits, Unrentable.\nCalculation: % of CLA = Σ OccupiedArea ÷ Σ(Area × (TotalUnits − Unrentable)) × 100 per site. Average bar = portfolio-weighted (sum-then-divide).\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.',
         el: <StoreBarChart items={claRowsAll.map((s) => ({ label: s.name, disp: (s.claPct || 0).toFixed(1) + '%', value: s.claPct || 0, color: (s.claPct || 0) >= 85 ? C.green : (s.claPct || 0) >= 75 ? C.amber : C.red }))} opts={{ zero: false, average: { value: claTotals.claPct, disp: claTotals.claPct.toFixed(1) + '%' } }} />,
       });
-      // Economic Occupancy Detail table — task #376/377 (Michael: "Can we add economic occupancy
-      // into this section please? Example of the table with dropdown plus instructions attached" —
-      // his Economic occupancy Tracker.xlsx). Reuses the page's EXISTING store filter (liveSites)
-      // instead of adding a second, redundant dropdown: select one store above to match the
-      // tracker's single-store view; leave none/multiple selected and every row blends across
-      // whichever stores are in scope — same sum-first-divide-once rule as every other rate on this
-      // page. Sourced from lib/reportMap.js's occupancy parser's `by_type_size` field (task #376) —
-      // the SAME OccupancyStatistics report/fields (GrossPotential, ActualOccupied, TotalArea,
-      // OccupiedArea) already trusted for the Occupancy by Store table's Economic Occupancy %
-      // column — so this table's blended totals, if you select every store, are the SAME figures as
-      // that one, just disaggregated. MoM comparison reuses livePrevSites, the same "last month"
-      // snapshot every other "vs last month" delta on this page already uses (task #121).
-      // COMPRESSED + MOVED 21 Jul 2026 (Michael: "compress the economic occupancy detail, by
-      // bulk/driveup/enterprise and but this widget to the bottom"). Was one row per unit TYPE +
-      // EXACT SIZE (e.g. five separate "Bulk" rows for its five sizes) — 20-30+ rows, the tallest
-      // table on the page. Grouped by unit Type ALONE instead (Bulk, Drive Up, Enterprise, Indoor
-      // Self Storage, Offices, etc.), summing every size within a type into one row — same formulas,
-      // just one coarser level of aggregation (still sum-then-divide-once, never an average of
-      // per-size %s). Dropped the now-meaningless "Size (ft²)" column. Also moved this whole table
-      // to the end of the page's table list (was right after Occupancy by Store, near the top) so
-      // it renders last/at the bottom, per the same request.
-      const econDetailRows = (() => {
-        if (!liveSites || !liveSites.length) return null;
-        // FIXED 21 Jul 2026 (Michael: "grouped too tight... a bunch of different categories into
-        // one" — meant the OPPOSITE, one real category was splitting into several rows). Root cause:
-        // occByTypeSize's raw `type` comes straight from SiteLink's UnitType string, un-normalized —
-        // confirmed live: "Drive Up" / "Drive up" / "DriveUp" all exist across the portfolio as 3
-        // distinct raw strings for one category, so they summed into 3 separate rows with 3 different
-        // (wrong) rates. Group by a casing/whitespace-normalized key instead, and map back to one
-        // canonical display label. Deliberately NOT merging "Self Storage" with "Indoor Self Storage"
-        // — different words, not just case/spacing noise, so that stays a separate, unconfirmed merge.
-        const normType = (t) => (t || '').trim().toLowerCase().replace(/\s+/g, '');
-        const TYPE_LABELS = {
-          driveup: 'Drive Up', enterprise: 'Enterprise', indoorselfstorage: 'Indoor Self Storage',
-          mailbox: 'Mailbox', office: 'Office', parking: 'Parking', valueunit: 'Value Unit',
-          selfstorage: 'Self Storage', bulk: 'Bulk', miscellaneousst: 'Miscellaneous St',
-          locker: 'Locker', tradecounter: 'Trade Counter',
-        };
-        const sumByType = (sites) => {
-          const g = {};
-          for (const s of sites) for (const row of (s.occByTypeSize || [])) {
-            const k = normType(row.type);
-            if (!k) continue;
-            const Z = (g[k] ??= { type: TYPE_LABELS[k] || (row.type || '').trim(), occArea: 0, totalArea: 0, grossPotential: 0, actualOccupied: 0 });
-            Z.occArea += row.occArea || 0; Z.totalArea += row.totalArea || 0;
-            Z.grossPotential += row.grossPotential || 0; Z.actualOccupied += row.actualOccupied || 0;
-          }
-          return g;
-        };
-        const metricsFor = (g) => {
-          if (!g) return null;
-          // Discount MUST be derived from the full-precision rate, not the 2dp-rounded display
-          // value — verified directly against the tracker's own Source data (Sidcup/Indoor Self
-          // Storage/size 25): rounding askingPSF/inPlacePSF to 2dp BEFORE computing the ratio drifted
-          // the discount to -4.2% vs the tracker's own -4.1% (K9's formula divides G9/C9 directly,
-          // and Excel cells hold full precision regardless of displayed decimals). Round only for
-          // display, after the ratio is computed from the raw numbers.
-          const askingRaw = g.totalArea ? (g.grossPotential / g.totalArea * 12) : 0;
-          const inPlaceRaw = g.occArea ? (g.actualOccupied / g.occArea * 12) : 0;
-          const discountPct = askingRaw ? +((inPlaceRaw - askingRaw) / askingRaw * 100).toFixed(1) : 0;
-          const occPct = g.totalArea ? +(g.occArea / g.totalArea * 100).toFixed(1) : 0;
-          const econPct = g.grossPotential ? +(g.actualOccupied / g.grossPotential * 100).toFixed(1) : 0;
-          return { askingPSF: R2(askingRaw), inPlacePSF: R2(inPlaceRaw), discountPct, occPct, econPct };
-        };
-        // Plain arrow + magnitude, same convention as the tracker's own F9 formula
-        // (=IF(E9>0,"↑",IF(E9<0,"↓","-"))) — money deltas to 2dp (£), point deltas to 1dp ("pt").
-        const momStr = (cur, prev, isMoney) => {
-          if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return '–';
-          const diff = cur - prev;
-          if (Math.abs(diff) < (isMoney ? 0.005 : 0.05)) return '–';
-          const arrow = diff > 0 ? '↑' : '↓';
-          return arrow + Math.abs(diff).toFixed(isMoney ? 2 : 1) + (isMoney ? '' : 'pt');
-        };
-        const cur = sumByType(liveSites);
-        const prev = livePrevSites ? sumByType(livePrevSites) : {};
-        return Object.keys(cur)
-          .sort((a, b) => a.localeCompare(b))
-          .map((k) => {
-            const m = metricsFor(cur[k]), p = metricsFor(prev[k]);
-            return {
-              type: cur[k].type,
-              askingPSF: m.askingPSF, askingMoM: p ? momStr(m.askingPSF, p.askingPSF, true) : '–',
-              inPlacePSF: m.inPlacePSF, inPlaceMoM: p ? momStr(m.inPlacePSF, p.inPlacePSF, true) : '–',
-              discountPct: m.discountPct, discountMoM: p ? momStr(m.discountPct, p.discountPct, false) : '–',
-              occPct: m.occPct, occMoM: p ? momStr(m.occPct, p.occPct, false) : '–',
-              econPct: m.econPct, econMoM: p ? momStr(m.econPct, p.econPct, false) : '–',
-            };
-          });
-      })();
-      if (!econDetailRows) debugWarn('[portal-v2] Economic Occupancy Detail table rendering with no data (no live sites available).');
-      const econDetailScope = (() => {
-        if (!liveSites) return 'no data';
-        const anySel = Object.values(selected).some(Boolean);
-        if (!anySel) return 'All stores, blended';
-        return liveSites.length === 1 ? liveSites[0].name : liveSites.length + ' stores, blended';
-      })();
-      if (econDetailRows && econDetailRows.length) {
+    }
+
+    else if (page === 'economicOccupancy') {
+      if (!econDetailData) debugWarn('[portal-v2] Economic Occupancy page rendering with no data (no live sites available).');
+      if (econDetailData && econDetailData.rows.length) {
         out.tables.push({
-          // NARROWED 21 Jul 2026 (Michael: "make all the big tables narrower... put them next to
-          // eachother", no exceptions) — 11 columns is a lot to fit in a half-width column; the
-          // overflowX:auto safety net on DataTable's wrapper means this specific table may still pick
-          // up its own horizontal scrollbar on a narrower browser window rather than overlapping text,
-          // but on a normal desktop width it should fit at the ~560px+ column this now gets.
-          title: 'Economic Occupancy Detail — ' + econDetailScope, live: true, pageSize: 30,
-          tip: 'Report: OccupancyStatistics.\nFields: TotalArea, OccupiedArea (falls back to Area × Occupied), GrossPotential, ActualOccupied — grouped by unit Type (Bulk, Drive Up, Enterprise, Indoor Self Storage, Offices, etc.), summed across every size within that type.\nCalculation: Asking Rent PSF = Σ GrossPotential ÷ Σ TotalArea × 12. In-Place Rent PSF = Σ ActualOccupied ÷ Σ OccupiedArea × 12. In-Place Discount = (In-Place − Asking) ÷ Asking × 100. Occupancy % = Σ OccupiedArea ÷ Σ TotalArea × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100 (same formula as the Economic Occupancy % column on the Occupancy by Store table, just broken down by unit type instead of collapsed to one figure per store).\nMoM columns compare against last month\'s snapshot for the same store selection. Select exactly one store above (not a region) to match Michael\'s Economic occupancy Tracker.xlsx\'s single-store view; leave none/multiple selected to see a blended breakdown across those stores.',
+          title: 'Economic Occupancy Detail — ' + econDetailData.scope, live: true, pageSize: 30,
+          tip: 'Report: OccupancyStatistics.\nFields: TotalArea, OccupiedArea (falls back to Area × Occupied), GrossPotential, ActualOccupied — grouped by unit Type and summed across every size within that type.\nCalculation: Asking Rent PSF = Σ GrossPotential ÷ Σ TotalArea × 12. In-Place Rent PSF = Σ ActualOccupied ÷ Σ OccupiedArea × 12. In-Place Discount = (In-Place − Asking) ÷ Asking × 100. Occupancy % = Σ OccupiedArea ÷ Σ TotalArea × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100.\nMoM columns compare against last month\'s snapshot for the same store selection.',
           columns: [
             { key: 'type', label: 'Unit Type', type: 'text' },
             { key: 'askingPSF', label: 'Asking Rent PSF', type: 'money2', align: 'right' },
@@ -2468,7 +2484,7 @@ export default function PortalV2Page() {
             { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
             { key: 'econMoM', label: 'MoM', type: 'text', align: 'right' },
           ],
-          rows: econDetailRows,
+          rows: econDetailData.rows,
         });
       }
     }
@@ -3398,14 +3414,9 @@ export default function PortalV2Page() {
         // reservation ratio (matching this card's own prior mock numbers) when liveSites isn't
         // available yet, same as every other mock branch on this page.
         (() => {
-          const avgSqftPerRes = (() => {
-            if (!liveSites || !liveSites.length) return null;
-            const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
-            const count = liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0);
-            return count ? sqft / count : null;
-          })();
-          const estSqft = Math.round(totals.reservations * (avgSqftPerRes != null ? avgSqftPerRes : 70));
-          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × the live portfolio\'s current blended average area per reservation (RentRoll\'s average area per UnitTypeID, applied to ReservationList\'s active-reservation type mix — see the KPIs page\'s own Reserved Scheduled Sqft card for that live "as of now" figure by itself). Neither source has both a date and an area field, so this assumes the period\'s new reservations match the live book\'s overall type mix — a reasonable approximation, not an exact figure.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
+          const avgSqftPerRes = normalizedReservationSqftPerReservation(liveSites);
+          const estSqft = Math.round(totals.reservations * avgSqftPerRes);
+          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × a blended average reservation size. The portal now prefers current-month move-in area per customer (closest available dated proxy), falling back to the live reservation-book estimate only when that looks plausible. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
         })(),
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
@@ -3760,6 +3771,313 @@ export default function PortalV2Page() {
 
   // ---------- export (Excel) ----------
   const exportItemsRef = useRef([]);
+  function exportLiveSites() {
+    if (!liveSitesRaw) return null;
+    const anySelected = Object.values(selected).some(Boolean);
+    const rows = anySelected ? liveSitesRaw.filter((s) => selected[s.name]) : liveSitesRaw;
+    return rows.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }
+  function exportLiveSiteMap() {
+    const rows = exportLiveSites() || [];
+    return Object.fromEntries(rows.map((s) => [s.code, s]));
+  }
+  function exportSnapshotRows() {
+    const snap = liveSnapshot && liveSnapshot[snapshotPeriod];
+    if (!snap || !Array.isArray(snap.sites)) return null;
+    const selectedNames = new Set(Object.entries(selected).filter(([, on]) => on).map(([name]) => name));
+    const siteMap = exportLiveSiteMap();
+    const anySelected = selectedNames.size > 0;
+    const rows = snap.sites.filter((r) => !anySelected || selectedNames.has((siteMap[r.code] && siteMap[r.code].name) || r.code));
+    return rows.slice().sort((a, b) => ((siteMap[a.code] && siteMap[a.code].name) || a.code).localeCompare((siteMap[b.code] && siteMap[b.code].name) || b.code));
+  }
+  function toSheet(columns, rows, totals, totalsLabel = 'Total') {
+    const keys = columns.map((c) => c.key);
+    const aoa = [columns.map((c) => c.label), ...rows.map((r) => keys.map((k) => r[k]))];
+    if (totals) aoa.push(keys.map((k, i) => (i === 0 ? totalsLabel : (totals[k] ?? ''))));
+    return aoa;
+  }
+  const sumBy = (rows, fn) => rows.reduce((a, row) => a + fn(row), 0);
+  const moveInRateForSite = (s) => (s.moveInAreaSum ? R2((s.moveInRateSum || 0) / s.moveInAreaSum * 12) : 0);
+  const moveInVarianceRawPctForSite = (s) => (s.moveInStdRateSum ? R2((s.moveInVarianceSum || 0) / s.moveInStdRateSum * 100) : 0);
+  const avgCustomerValueForSite = (s) => (s.occ ? R2(((s.rent || 0) / s.occ) * ((s.avgStayDays || 0) / 30.43)) : 0);
+  const autobillConversionForSite = (s) => (s.autobillNewTotal ? +(((s.autobillNewCount || 0) / s.autobillNewTotal) * 100).toFixed(1) : 0);
+  const insuranceConversionForSite = (s) => (s.moveIns ? Math.min(100, +((((s.insuredNewCustomers && s.insuredNewCustomers.count) || 0) / s.moveIns) * 100).toFixed(1)) : 0);
+  const insuranceContentsAvgForSite = (s) => {
+    const count = (s.insuredNewCustomers && s.insuredNewCustomers.count) || 0;
+    return count ? R2((s.insuredNewCustomers.coverageSum || 0) / count) : 0;
+  };
+  const insurancePremiumWeeklyForSite = (s) => (s.moveIns ? R2((((s.insuredNewCustomers && s.insuredNewCustomers.premiumSum) || 0) / s.moveIns) / 4) : 0);
+  const merchandiseSalesForSite = (s) => (s.merchandise && s.merchandise.chargeFromFinancial) || 0;
+  const merchandiseIncomePerNewCustomerForSite = (s) => (s.moveIns ? R2(merchandiseSalesForSite(s) / s.moveIns) : 0);
+  const discountTotalForSite = (s) => (s.discountPlans || []).reduce((a, row) => a + (row.discount || 0), 0);
+  function statCardExportAoa(pk, card) {
+    const title = card.title;
+    const sites = exportLiveSites();
+    const snapshotRows = exportSnapshotRows();
+    const siteMap = exportLiveSiteMap();
+    const blendedSqftPerReservation = normalizedReservationSqftPerReservation(sites);
+    if (pk === 'dashboard' && title === 'Move-ins & Move-outs' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, moveIns: s.moveIns || 0, moveOuts: s.moveOuts || 0, netFt: s.netArea || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'moveIns', label: 'Move-ins' }, { key: 'moveOuts', label: 'Move-outs' }, { key: 'netFt', label: 'Net ft²' }],
+        rows,
+        { moveIns: sumBy(rows, (r) => r.moveIns), moveOuts: sumBy(rows, (r) => r.moveOuts), netFt: sumBy(rows, (r) => r.netFt) },
+      );
+    }
+    if (pk === 'dashboard' && title === 'Enquiries' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, phone: s.enquiries?.phone || 0, walkins: s.enquiries?.walkin || 0, web: s.enquiries?.web || 0, total: s.enquiries?.total || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Total' }],
+        rows,
+        { phone: sumBy(rows, (r) => r.phone), walkins: sumBy(rows, (r) => r.walkins), web: sumBy(rows, (r) => r.web), total: sumBy(rows, (r) => r.total) },
+      );
+    }
+    if (pk === 'kpis' && title === 'Total Store Occupancy' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.occPC || 0, rate: s.rate || 0, occSqft: s.occA || 0, occupiedUnits: s.occ || 0, totalUnits: s.tot || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occSqft', label: 'Total Occupancy (sqft)' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
+        rows,
+        { occupancyPct: totals.occPC || 0, rate: totals.rate || 0, occSqft: totals.occA || 0, occupiedUnits: totals.occ || 0, totalUnits: totals.tot || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'kpis' && title === 'Self Storage' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.ss?.occPC || 0, rate: s.ssRate || 0, occupiedUnits: s.ss?.occ || 0, totalUnits: s.ss?.tot || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Unit Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
+        rows,
+        { occupancyPct: totals.ssOccPC || 0, rate: totals.ssRate || 0, occupiedUnits: totals.ssOcc || 0, totalUnits: totals.ssTot || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'kpis' && title === 'Offices Occupancy' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.offices?.occPC || 0, rate: s.offices?.rate || 0, occupiedUnits: s.offices?.occ || 0, totalUnits: s.offices?.tot || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
+        rows,
+        { occupancyPct: totals.officesOccPC || 0, rate: totals.officesRate || 0, occupiedUnits: totals.officesOcc || 0, totalUnits: totals.officesTot || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'kpis' && title === 'Scheduled Reservations vs Scheduled Move-outs' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, reservations: s.activeReservations || 0, moveOuts: s.scheduledOuts || 0, netChange: (s.activeReservations || 0) - (s.scheduledOuts || 0) }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'reservations', label: 'Reservations' }, { key: 'moveOuts', label: 'Move-outs' }, { key: 'netChange', label: 'Net change' }],
+        rows,
+        { reservations: sumBy(rows, (r) => r.reservations), moveOuts: sumBy(rows, (r) => r.moveOuts), netChange: sumBy(rows, (r) => r.netChange) },
+      );
+    }
+    if (pk === 'kpis' && title === 'Reserved Scheduled Sqft' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, reservedSqft: s.reservedSqftEstimate || 0, reservations: s.activeReservations || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'reservedSqft', label: 'Reserved sqft' }, { key: 'reservations', label: 'Reservations (live)' }],
+        rows,
+        { reservedSqft: sumBy(rows, (r) => r.reservedSqft), reservations: sumBy(rows, (r) => r.reservations) },
+      );
+    }
+    if (pk === 'kpis' && title === 'Debtor Levels' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, tenantPct: s.debtors?.tenantPct || 0, rentRollPct: s.debtors?.rentRollPct || 0, total: s.debtors?.total || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'tenantPct', label: '% Tenants' }, { key: 'rentRollPct', label: '% Rent Roll' }, { key: 'total', label: 'Total overdue' }],
+        rows,
+        { tenantPct: totals.debtorTenantPct || 0, rentRollPct: totals.debtorRentRollPct || 0, total: totals.debtorTotal || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'kpis' && title === 'Move-ins & Move-outs' && sites) {
+      const rows = sites.map((s) => ({
+        store: s.name,
+        moveIns: s.moveIns || 0,
+        moveOuts: s.moveOuts || 0,
+        netMoveIns: (s.moveIns || 0) - (s.moveOuts || 0),
+        sqftIn: s.moveInAreaSum || 0,
+        sqftOut: -(s.moveOutAreaSum || 0),
+        netFt: s.netArea || 0,
+      }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'moveIns', label: 'Move-ins' }, { key: 'moveOuts', label: 'Move-outs' }, { key: 'netMoveIns', label: 'Net Move-ins' }, { key: 'sqftIn', label: 'Sqft In' }, { key: 'sqftOut', label: 'Sqft Out' }, { key: 'netFt', label: 'Net ft²' }],
+        rows,
+        { moveIns: sumBy(rows, (r) => r.moveIns), moveOuts: sumBy(rows, (r) => r.moveOuts), netMoveIns: sumBy(rows, (r) => r.netMoveIns), sqftIn: sumBy(rows, (r) => r.sqftIn), sqftOut: sumBy(rows, (r) => r.sqftOut), netFt: sumBy(rows, (r) => r.netFt) },
+      );
+    }
+    if (pk === 'kpis' && title === 'Move-In Rental Rate' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, rate: moveInRateForSite(s), movedInArea: s.moveInAreaSum || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'rate', label: 'Per ft² (this month’s move-ins)' }, { key: 'movedInArea', label: 'Moved-in area' }],
+        rows,
+        { rate: totals.moveInAreaSum ? R2((totals.moveInRateSum || 0) / totals.moveInAreaSum * 12) : 0, movedInArea: totals.moveInAreaSum || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'kpis' && title === 'Move-in Variance vs Standard Rate' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, actualPct: s.moveInVarStdRateActualPct || 0, rawPct: moveInVarianceRawPctForSite(s), moveIns: s.moveInVarianceCount || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'actualPct', label: 'Actual %' }, { key: 'rawPct', label: 'Raw %' }, { key: 'moveIns', label: 'Move-ins counted' }],
+        rows,
+        { actualPct: totals.moveInVarStdRateActualPct || 0, rawPct: totals.moveInVarStdRatePct || 0, moveIns: totals.moveInVarianceCount || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'financials' && title === 'Customer Insights' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, avgCustomerValue: avgCustomerValueForSite(s), avgLengthOfStayDays: s.avgStayDays || 0 }));
+      const finT = computeTotals(sites);
+      const weightedStay = finT.occ ? sumBy(sites, (s) => (s.avgStayDays || 0) * (s.occ || 0)) / finT.occ : 0;
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'avgCustomerValue', label: 'Avg customer value' }, { key: 'avgLengthOfStayDays', label: 'Avg length of stay (days)' }],
+        rows,
+        { avgCustomerValue: finT.occ ? R2((finT.rent / finT.occ) * (weightedStay / 30.43)) : 0, avgLengthOfStayDays: Math.round(weightedStay) },
+        'Portfolio',
+      );
+    }
+    if (pk === 'financials' && title === 'Past Due Balances' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, totalOverdue: s.debtors?.total || 0, rentRollPct: s.debtors?.rentRollPct || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'totalOverdue', label: 'Total overdue (30+ days)' }, { key: 'rentRollPct', label: '% of rent roll' }],
+        rows,
+        { totalOverdue: totals.debtorTotal || 0, rentRollPct: totals.debtorRentRollPct || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Autobill Conversion' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, conversionPct: autobillConversionForSite(s), newAutobilledCustomers: s.autobillNewCount || 0, newCustomers: s.autobillNewTotal || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion %' }, { key: 'newAutobilledCustomers', label: 'New autobilled customers' }, { key: 'newCustomers', label: 'New customers' }],
+        rows,
+        { conversionPct: totals.autobillPC || 0, newAutobilledCustomers: totals.autobillNewCount || 0, newCustomers: totals.autobillNewTotal || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Insurance Conversion' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, conversionPct: insuranceConversionForSite(s), insuredNewCustomers: s.insuredNewCustomers?.count || 0, moveIns: s.moveIns || 0 }));
+      const moveIns = sumBy(sites, (s) => s.moveIns || 0);
+      const insuredNewCustomers = sumBy(sites, (s) => (s.insuredNewCustomers && s.insuredNewCustomers.count) || 0);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion %' }, { key: 'insuredNewCustomers', label: 'Insured new customers' }, { key: 'moveIns', label: 'Move-ins' }],
+        rows,
+        { conversionPct: moveIns ? Math.min(100, +((insuredNewCustomers / moveIns) * 100).toFixed(1)) : 0, insuredNewCustomers, moveIns },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Insurance Roll' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, premiums: s.insurance?.premium || 0, pctRentRoll: s.rent ? +(((s.insurance?.premium || 0) / s.rent) * 100).toFixed(1) : 0, pctInsured: s.insurance?.penetration || 0 }));
+      const totals = computeTotals(sites);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'premiums', label: 'Premiums' }, { key: 'pctRentRoll', label: '% Rent Roll' }, { key: 'pctInsured', label: '% Insured' }],
+        rows,
+        { premiums: totals.insurancePremium || 0, pctRentRoll: totals.insurancePctRoll || 0, pctInsured: totals.insurancePctInsured || 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Insurance Premiums (New Customers)' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, contentsAvg: insuranceContentsAvgForSite(s), premiumsWeekly: insurancePremiumWeeklyForSite(s) }));
+      const totalCount = sumBy(sites, (s) => (s.insuredNewCustomers && s.insuredNewCustomers.count) || 0);
+      const totalCoverage = sumBy(sites, (s) => (s.insuredNewCustomers && s.insuredNewCustomers.coverageSum) || 0);
+      const totalPremium = sumBy(sites, (s) => (s.insuredNewCustomers && s.insuredNewCustomers.premiumSum) || 0);
+      const totalMoveIns = sumBy(sites, (s) => s.moveIns || 0);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'contentsAvg', label: 'Contents avg' }, { key: 'premiumsWeekly', label: 'Premiums weekly' }],
+        rows,
+        { contentsAvg: totalCount ? R2(totalCoverage / totalCount) : 0, premiumsWeekly: totalMoveIns ? R2((totalPremium / totalMoveIns) / 4) : 0 },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Merchandise Income per New Customer' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, incomePerNewCustomer: merchandiseIncomePerNewCustomerForSite(s), moveIns: s.moveIns || 0, merchandiseSales: merchandiseSalesForSite(s) }));
+      const totalMoveIns = sumBy(sites, (s) => s.moveIns || 0);
+      const totalSales = sumBy(sites, (s) => merchandiseSalesForSite(s));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'incomePerNewCustomer', label: 'Income per new customer' }, { key: 'moveIns', label: 'Move-ins' }, { key: 'merchandiseSales', label: 'Merchandise sales' }],
+        rows,
+        { incomePerNewCustomer: totalMoveIns ? R2(totalSales / totalMoveIns) : 0, moveIns: totalMoveIns, merchandiseSales: totalSales },
+        'Portfolio',
+      );
+    }
+    if (pk === 'ancillaries' && title === 'Merchandise Sales' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, merchandiseSales: merchandiseSalesForSite(s) }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'merchandiseSales', label: 'Merchandise sales' }],
+        rows,
+        { merchandiseSales: sumBy(rows, (r) => r.merchandiseSales) },
+      );
+    }
+    if (pk === 'marketing' && title === 'Enquiries by Channel' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, phone: s.enquiries?.phone || 0, walkins: s.enquiries?.walkin || 0, web: s.enquiries?.web || 0, total: s.enquiries?.total || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Total' }],
+        rows,
+        { phone: sumBy(rows, (r) => r.phone), walkins: sumBy(rows, (r) => r.walkins), web: sumBy(rows, (r) => r.web), total: sumBy(rows, (r) => r.total) },
+      );
+    }
+    if (pk === 'marketing' && title === 'Enquiry → Reservation' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, conversionPct: s.enquiries?.total ? +(((s.enquiries.reservationConversions || 0) / s.enquiries.total) * 100).toFixed(1) : 0, reservations: s.enquiries?.reservationConversions || 0, enquiries: s.enquiries?.total || 0 }));
+      const totalEnquiries = sumBy(sites, (s) => s.enquiries?.total || 0);
+      const totalReservations = sumBy(sites, (s) => s.enquiries?.reservationConversions || 0);
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion rate %' }, { key: 'reservations', label: 'Reservation-stage enquiries' }, { key: 'enquiries', label: 'Enquiries' }],
+        rows,
+        { conversionPct: totalEnquiries ? +((totalReservations / totalEnquiries) * 100).toFixed(1) : 0, reservations: totalReservations, enquiries: totalEnquiries },
+        'Portfolio',
+      );
+    }
+    if (pk === 'discountSummary' && title === 'Units on a Discount Plan' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, unitsOnDiscountPlan: s.discountUnitsTotal || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'unitsOnDiscountPlan', label: 'Units on a discount plan' }],
+        rows,
+        { unitsOnDiscountPlan: sumBy(rows, (r) => r.unitsOnDiscountPlan) },
+      );
+    }
+    if (pk === 'discountSummary' && title === 'Total £ Discount' && sites) {
+      const rows = sites.map((s) => ({ store: s.name, totalDiscount: discountTotalForSite(s) }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'totalDiscount', label: 'Total £ Discount' }],
+        rows,
+        { totalDiscount: sumBy(rows, (r) => r.totalDiscount) },
+      );
+    }
+    if (pk === 'snapshot' && title === 'Enquiries & Reservations' && snapshotRows) {
+      const rows = snapshotRows.map((r) => {
+        const liveSite = siteMap[r.code];
+        const localAvg = normalizedReservationSqftPerReservationForSite(liveSite, blendedSqftPerReservation);
+        return {
+          store: (liveSite && liveSite.name) || r.code,
+          enquiries: r.enquiries || 0,
+          reservations: r.reservations || 0,
+          reservedSqftEst: Math.round((r.reservations || 0) * (localAvg || blendedSqftPerReservation || 70)),
+        };
+      });
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'enquiries', label: 'Enquiries' }, { key: 'reservations', label: 'Reservations' }, { key: 'reservedSqftEst', label: 'Reserved sqft (est.)' }],
+        rows,
+        { enquiries: sumBy(rows, (r) => r.enquiries), reservations: sumBy(rows, (r) => r.reservations), reservedSqftEst: sumBy(rows, (r) => r.reservedSqftEst) },
+      );
+    }
+    if (pk === 'snapshot' && title === 'Move-ins / Move-outs' && snapshotRows) {
+      const rows = snapshotRows.map((r) => ({ store: (siteMap[r.code] && siteMap[r.code].name) || r.code, moveIns: r.moveIns || 0, moveOuts: r.moveOuts || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'moveIns', label: 'Move-ins' }, { key: 'moveOuts', label: 'Move-outs' }],
+        rows,
+        { moveIns: sumBy(rows, (r) => r.moveIns), moveOuts: sumBy(rows, (r) => r.moveOuts) },
+      );
+    }
+    if (pk === 'snapshot' && title === 'Sqft In / Out' && snapshotRows) {
+      const rows = snapshotRows.map((r) => ({ store: (siteMap[r.code] && siteMap[r.code].name) || r.code, sqftIn: r.sqftIn || 0, sqftOut: r.sqftOut || 0 }));
+      return toSheet(
+        [{ key: 'store', label: 'Store' }, { key: 'sqftIn', label: 'Sqft In' }, { key: 'sqftOut', label: 'Sqft Out' }],
+        rows,
+        { sqftIn: sumBy(rows, (r) => r.sqftIn), sqftOut: sumBy(rows, (r) => r.sqftOut) },
+      );
+    }
+    return null;
+  }
   // FIXED 10 Jul 2026 (pre-go-live audit): this used to always `return pageData` regardless of `pk`,
   // silently mislabeling every non-active-page group in the "export everything" Excel file with the
   // CURRENTLY-VIEWED page's data instead of the page named in each group's header — e.g. exporting
@@ -3785,7 +4103,7 @@ export default function PortalV2Page() {
         return [['KPI', 'Value', 'Change'], ...d.kpiRow.map((k) => [k.label, k.value, k.delta ? (k.dir === 'up' ? '+' : '-') + k.delta : ''])];
       },
     });
-    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
+    const pages = { dashboard: 'Dashboard', kpis: 'KPIs', economicOccupancy: 'Economic Occupancy', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
     Object.keys(pages).forEach((pk) => {
       const d = pk === page ? pageData : withPage(pk);
       d.tables.forEach((t, i) => items.push({
@@ -3799,7 +4117,7 @@ export default function PortalV2Page() {
       }));
       d.statCards.forEach((c, i) => items.push({
         id: pk + '_s' + i, page: pages[pk], label: c.title, icon: chartIcon,
-        aoa: () => [['Metric', 'Value', 'Change'], ...c.tiles.map((t) => [t.label, t.value, t.delta ? (t.dir === 'up' ? '+' : t.dir === 'down' ? '-' : '') + t.delta : ''])],
+        aoa: () => statCardExportAoa(pk, c) || [['Metric', 'Value', 'Change'], ...c.tiles.filter((t) => !t.rowBreak).map((t) => [t.label, t.value, t.delta ? (t.dir === 'up' ? '+' : t.dir === 'down' ? '-' : '') + t.delta : ''])],
       }));
     });
     const groups = {};
@@ -3885,7 +4203,7 @@ export default function PortalV2Page() {
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
-  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
+  const titles = { dashboard: 'Dashboard', kpis: 'KPIs', economicOccupancy: 'Economic Occupancy', financials: 'Financials', ancillaries: 'Ancillaries', marketing: 'Marketing', mom: 'Month on Month', unitmix: 'Unit Mix Detail', discountSummary: 'Discount Summary', snapshot: 'Weekly/Daily Snapshot', districtManager: 'District Manager' };
 
   // lineChartOptions (17 Jul 2026, task #313): the full portal-wide list of {page,title} for every
   // LineChart card that exists anywhere, built by calling buildPage() for EVERY page (not just the
@@ -3965,15 +4283,15 @@ export default function PortalV2Page() {
   const storeOptions = liveSitesRaw
     ? liveSitesRaw.map((s) => ({
         name: s.name, region: null, checked: !!selected[s.name],
-        onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); reload(); },
+        onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); setStorePopOpen(false); reload(); },
       }))
     : STORES.filter((st) => region === 'All' || st.region === region).map((st) => ({
         name: st.name, region: st.region, checked: !!selected[st.name],
-        onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); reload(); },
+        onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); setStorePopOpen(false); reload(); },
       }));
   const regionChips = (liveSitesRaw ? ['All'] : ['All', ...REGIONS]).map((r) => ({
     label: r,
-    onClick: () => { setRegion(r); setSelected({}); reload(); },
+    onClick: () => { setRegion(r); setSelected({}); setStorePopOpen(false); reload(); },
     active: region === r,
   }));
   // 'PM' (Prior Month) ADDED 15 Jul 2026 (Michael: "add a butting for prior month as well") — plain
@@ -3985,7 +4303,7 @@ export default function PortalV2Page() {
 
   const navGroups = [
     { label: 'Overview', items: [{ id: 'dashboard', label: 'Dashboard' }, { id: 'snapshot', label: 'Weekly/Daily Snapshot' }] },
-    { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }, { id: 'discountSummary', label: 'Discount Summary' }] },
+    { label: 'Performance', items: [{ id: 'kpis', label: 'KPIs' }, { id: 'economicOccupancy', label: 'Economic Occupancy' }, { id: 'financials', label: 'Financials' }, { id: 'ancillaries', label: 'Ancillaries' }, { id: 'unitmix', label: 'Unit Mix Detail' }, { id: 'discountSummary', label: 'Discount Summary' }] },
     { label: 'Growth', items: [{ id: 'marketing', label: 'Marketing' }] },
     { label: 'Trends', items: [{ id: 'mom', label: 'Month on Month' }] },
     { label: 'District Manager', items: [{ id: 'districtManager', label: 'District Manager' }] },
@@ -4112,15 +4430,15 @@ export default function PortalV2Page() {
                         ))}
                       </div>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-between', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #F2F4F7' }}>
-                        <button onClick={() => { const sel = {}; storeOptions.forEach((o) => (sel[o.name] = true)); setSelected(sel); reload(); }} style={{ fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#2757E8', background: 'none', border: 'none', cursor: 'pointer' }}>Select all</button>
-                        <button onClick={() => { setSelected({}); reload(); }} style={{ fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#667085', background: 'none', border: 'none', cursor: 'pointer' }}>Clear</button>
+                        <button onClick={() => { const sel = {}; storeOptions.forEach((o) => (sel[o.name] = true)); setSelected(sel); setStorePopOpen(false); reload(); }} style={{ fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#2757E8', background: 'none', border: 'none', cursor: 'pointer' }}>Select all</button>
+                        <button onClick={() => { setSelected({}); setStorePopOpen(false); reload(); }} style={{ fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#667085', background: 'none', border: 'none', cursor: 'pointer' }}>Clear</button>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {page !== 'snapshot' && <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.06em', color: '#98A2B3' }}>PERIOD</span>
                 <div style={{ display: 'flex', background: '#F2F4F7', borderRadius: '9px', padding: '3px', gap: '2px' }}>
                   {presets.map((p) => (
@@ -4145,7 +4463,7 @@ export default function PortalV2Page() {
                     </div>
                   )}
                 </div>
-              </div>
+              </div>}
 
               <div style={{ flex: 1 }} />
 
@@ -4233,6 +4551,7 @@ export default function PortalV2Page() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
                           {k.hasDelta && <span style={k.deltaStyle}>{k.deltaArrow} {k.delta}</span>}
                           <span style={{ fontSize: '12px', color: '#98A2B3' }}>{k.sub}</span>
+                          {k.extraChip && <span style={{ fontSize: '11px', fontWeight: 600, color: k.extraChip.positive ? '#067647' : '#B42318', background: k.extraChip.positive ? '#E7F6EF' : '#FEECEB', borderRadius: '999px', padding: '4px 8px', marginLeft: 'auto' }}>{k.extraChip.label} {k.extraChip.value}</span>}
                         </div>
                       </div>
                     ))}
