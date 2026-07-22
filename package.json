@@ -56,6 +56,7 @@
     "probe:billing-frequency-confirm": "node --env-file=.env scripts/probe-billing-frequency-confirm.js",
     "probe:r6-formula-preview": "node --env-file=.env scripts/probe-r6-formula-preview.js",
     "probe:r6-formula-wired-verify": "node --env-file=.env scripts/probe-r6-formula-wired-verify.js",
+    "probe:generaljournal-credits": "node --env-file=.env scripts/probe-generaljournal-credits.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
