@@ -45,6 +45,7 @@
     "probe:conversion-field-check": "node --env-file=.env scripts/probe-conversion-field-check.js",
     "probe:channel-flag-reliability": "node --env-file=.env scripts/probe-channel-flag-reliability.js",
     "probe:r6-rate-formula": "node --env-file=.env scripts/probe-r6-rate-formula.js",
+    "probe:billing-frequency-deep": "node --env-file=.env scripts/probe-billing-frequency-deep.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
