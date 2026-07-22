@@ -3011,7 +3011,34 @@ export default function PortalV2Page() {
       const selectedMonthKey = monthKeyOf(monthTo);
       const isSingleSelectedMonth = monthFrom === monthTo;
       const momCockpit = (liveMomCockpit && liveMomCockpit.month === selectedMonthKey) ? liveMomCockpit : null;
-      const cockpitOk = !!(momCockpit && momCockpit.curve && momCockpit.curve.length);
+      // Fill the selected month's daily curve out to one point per calendar day: before the first
+      // available snapshot, values are 0; after that, any missing dates carry the most recent
+      // cumulative total forward. For the CURRENT month, stop at yesterday (the last complete day).
+      // For a closed past month, stop at that month's calendar end.
+      const paddedDailyCurve = (() => {
+        if (!momCockpit || !momCockpit.curve || !momCockpit.curve.length) return null;
+        const [yy, mm] = selectedMonthKey.split('-').map(Number);
+        const today = new Date();
+        const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
+        const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
+        const byDate = new Map(momCockpit.curve.map((c) => [c.date, c]));
+        const out = [];
+        let carry = { total_charge: 0, total_credit: 0, total_payment: 0, sites: [] };
+        for (let day = 1; day <= lastDay; day++) {
+          const date = `${selectedMonthKey}-${String(day).padStart(2, '0')}`;
+          const hit = byDate.get(date);
+          if (hit) carry = hit;
+          out.push({
+            date,
+            total_charge: carry.total_charge || 0,
+            total_credit: carry.total_credit || 0,
+            total_payment: carry.total_payment || 0,
+            sites: (carry.sites || []).map((s) => ({ ...s })),
+          });
+        }
+        return out;
+      })();
+      const cockpitOk = !!(paddedDailyCurve && paddedDailyCurve.length);
       const dailyOk = isSingleSelectedMonth && cockpitOk;
       if (isSingleSelectedMonth && !cockpitOk) debugWarn(`[portal-v2] Month-on-Month: single-month view selected for ${selectedMonthKey} but no daily_financial_snapshot rows exist for that month yet — showing full history meanwhile.`);
       // ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these smaller like in
@@ -3044,14 +3071,14 @@ export default function PortalV2Page() {
         return momSelectedSites.map((s, i) => ({
           name: s.name,
           color: momPalette[i % momPalette.length],
-          values: momCockpit.curve.map((c) => {
+          values: paddedDailyCurve.map((c) => {
             const site = (c.sites || []).find((x) => x.code === s.code);
             return site ? (site.total_charge || 0) - (site.total_credit || 0) : 0;
           }),
         }));
       };
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through that month\'s last completed day available in the snapshot data — one line per selected store if any are checked (region-only filtering doesn\'t reach live data), else portfolio-wide.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: momCockpit.curve.map(dailyRevenue) }]} opts={{ labels: momCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through the last complete day. Missing snapshot dates are filled by carrying the most recent cumulative total forward.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: paddedDailyCurve.map(dailyRevenue) }]} opts={{ labels: paddedDailyCurve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
         : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.revenue && r.revenue.collected) || [{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
