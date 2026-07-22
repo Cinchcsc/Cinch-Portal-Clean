@@ -70,7 +70,8 @@
     "probe:r6-realrate-wired-verify": "node --env-file=.env scripts/probe-r6-realrate-wired-verify.js",
     "probe:truerevenue-rentonly": "node --env-file=.env scripts/probe-truerevenue-rentonly.js",
     "probe:truerevenue-rentonly-bytype": "node --env-file=.env scripts/probe-truerevenue-rentonly-bytype.js",
-    "probe:realrate-june-july-exact": "node --env-file=.env scripts/probe-realrate-june-july-exact.js"
+    "probe:realrate-june-july-exact": "node --env-file=.env scripts/probe-realrate-june-july-exact.js",
+    "probe:realrate-category-search": "node --env-file=.env scripts/probe-realrate-category-search.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
