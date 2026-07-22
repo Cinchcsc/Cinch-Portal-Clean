@@ -105,7 +105,10 @@ console.log('\n=== CallCenterWs: LedgersByTenantID_v3 ===');
 console.log('LedgersByTenantID_v3 input params:', port['LedgersByTenantID_v3'] ? JSON.stringify(port['LedgersByTenantID_v3'].input) : 'NOT on this WSDL');
 if (firstOccupied?.TenantID) {
   try {
-    const { rows } = await callCallCenterMethod('LedgersByTenantID_v3', site, { iTenantID: Number(firstOccupied.TenantID) });
+    // FIXED same run — the describe() call directly above shows this method's real param is
+    // sTenantID (a STRING), not iTenantID like TenantBillingInfoByTenantID_v3 used. Same mistake as
+    // before, caught this time before shipping the result: I'd copy-pasted the wrong key again.
+    const { rows } = await callCallCenterMethod('LedgersByTenantID_v3', site, { sTenantID: String(firstOccupied.TenantID) });
     console.log(`LedgersByTenantID_v3(${firstOccupied.TenantID}): ${rows.length} row(s).`);
     if (rows[0]) {
       console.log('Columns:', Object.keys(rows[0]).join(', '));
