@@ -59,6 +59,7 @@
     "probe:generaljournal-credits": "node --env-file=.env scripts/probe-generaljournal-credits.js",
     "probe:custom-report-catalog-credits": "node --env-file=.env scripts/probe-custom-report-catalog-credits.js",
     "probe:waived-charges-credits": "node --env-file=.env scripts/probe-waived-charges-credits.js",
+    "probe:r6-realrate-with-credits-preview": "node --env-file=.env scripts/probe-r6-realrate-with-credits-preview.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
