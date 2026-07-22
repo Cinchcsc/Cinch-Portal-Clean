@@ -86,7 +86,8 @@
     "probe:realrate-rewind-plus-discounts": "node --env-file=.env scripts/probe-realrate-rewind-plus-discounts.js",
     "probe:realrate-all-sites-june": "node --env-file=.env scripts/probe-realrate-all-sites-june.js",
     "probe:realrate-baddebt-exclusion": "node --env-file=.env scripts/probe-realrate-baddebt-exclusion.js",
-    "probe:realrate-nocredit-all-sites": "node --env-file=.env scripts/probe-realrate-nocredit-all-sites.js"
+    "probe:realrate-nocredit-all-sites": "node --env-file=.env scripts/probe-realrate-nocredit-all-sites.js",
+    "probe:transfer-row-shape": "node --env-file=.env scripts/probe-transfer-row-shape.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
