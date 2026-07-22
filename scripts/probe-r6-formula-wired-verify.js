@@ -27,8 +27,13 @@ const R2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 console.log(`Site: ${site}   Month: ${start.toISOString().slice(0, 7)}\n`);
 
 // Pull through the ACTUAL reportMap.js dispatch/parse path, exactly as lib/pull.js does.
-const rr = await pullReport('rent_roll', site, start, now);
-const bf = await pullReport('billing_frequency', site, start, now);
+// pullReport() returns { data, rowcount, raw } (confirmed by reading lib/reportMap.js's own
+// definition just now, after this line first threw "Cannot read properties of undefined (reading
+// 'length')" against real SiteLink data) — lib/pull.js's tryPull() destructures `data` out at its own
+// call site (lib/pull.js line ~176: `const { data, raw } = await tryPull(...)`), so the actual
+// production wiring was never affected by this — only this verify script forgot the same unwrap.
+const { data: rr } = await pullReport('rent_roll', site, start, now);
+const { data: bf } = await pullReport('billing_frequency', site, start, now);
 
 console.log(`rent_roll: ${rr.unit_rows.length} unit_rows, area_sum=${rr.area_sum}, ss.area_sum=${rr.self_storage.area_sum}`);
 console.log(`billing_frequency: ${Object.keys(bf.by_ledger).length} ledger(s) in by_ledger\n`);
