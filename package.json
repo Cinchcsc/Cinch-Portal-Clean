@@ -81,7 +81,8 @@
     "probe:realrate-financialsummary-credit-exact": "node --env-file=.env scripts/probe-realrate-financialsummary-credit-exact.js",
     "probe:june-frozen-unitcount-check": "node --env-file=.env scripts/probe-june-frozen-unitcount-check.js",
     "probe:realrate-may-april-verify": "node --env-file=.env scripts/probe-realrate-may-april-verify.js",
-    "probe:check-frozen-history-coverage": "node --env-file=.env scripts/probe-check-frozen-history-coverage.js"
+    "probe:check-frozen-history-coverage": "node --env-file=.env scripts/probe-check-frozen-history-coverage.js",
+    "probe:realrate-rewind-occupied-area": "node --env-file=.env scripts/probe-realrate-rewind-occupied-area.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
