@@ -1169,6 +1169,23 @@ export default function PortalV2Page() {
   // idx's sign.
   const monthKeyOf = (idx) => { const y = 2025 + Math.floor(idx / 12), m = idx - Math.floor(idx / 12) * 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
   const indexOfMonthKey = (mk) => { const [y, m] = mk.split('-').map(Number); return (y - 2025) * 12 + (m - 1); };
+  const padDailyMonthCurve = (curve, monthKey, makeEmpty) => {
+    if (!curve || !curve.length || !monthKey) return null;
+    const [yy, mm] = monthKey.split('-').map(Number);
+    const today = new Date();
+    const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
+    const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
+    const byDate = new Map(curve.map((row) => [row.date, row]));
+    const out = [];
+    let carry = makeEmpty();
+    for (let day = 1; day <= lastDay; day++) {
+      const date = `${monthKey}-${String(day).padStart(2, '0')}`;
+      const hit = byDate.get(date);
+      if (hit) carry = hit;
+      out.push(hit ? hit : { ...carry, date });
+    }
+    return out;
+  };
 
   // Global PERIOD selector (Michael, 6 Jul 2026): fetches the FULL detail for a specific from/to
   // month range from /api/portfolio's ?from/?to params (server computes this live from already-
@@ -3015,29 +3032,12 @@ export default function PortalV2Page() {
       // available snapshot, values are 0; after that, any missing dates carry the most recent
       // cumulative total forward. For the CURRENT month, stop at yesterday (the last complete day).
       // For a closed past month, stop at that month's calendar end.
-      const paddedDailyCurve = (() => {
-        if (!momCockpit || !momCockpit.curve || !momCockpit.curve.length) return null;
-        const [yy, mm] = selectedMonthKey.split('-').map(Number);
-        const today = new Date();
-        const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
-        const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
-        const byDate = new Map(momCockpit.curve.map((c) => [c.date, c]));
-        const out = [];
-        let carry = { total_charge: 0, total_credit: 0, total_payment: 0, sites: [] };
-        for (let day = 1; day <= lastDay; day++) {
-          const date = `${selectedMonthKey}-${String(day).padStart(2, '0')}`;
-          const hit = byDate.get(date);
-          if (hit) carry = hit;
-          out.push({
-            date,
-            total_charge: carry.total_charge || 0,
-            total_credit: carry.total_credit || 0,
-            total_payment: carry.total_payment || 0,
-            sites: (carry.sites || []).map((s) => ({ ...s })),
-          });
-        }
-        return out;
-      })();
+      const paddedDailyCurve = padDailyMonthCurve(momCockpit && momCockpit.curve, selectedMonthKey, () => ({
+        total_charge: 0,
+        total_credit: 0,
+        total_payment: 0,
+        sites: [],
+      }));
       const cockpitOk = !!(paddedDailyCurve && paddedDailyCurve.length);
       const dailyOk = isSingleSelectedMonth && cockpitOk;
       if (isSingleSelectedMonth && !cockpitOk) debugWarn(`[portal-v2] Month-on-Month: single-month view selected for ${selectedMonthKey} but no daily_financial_snapshot rows exist for that month yet — showing full history meanwhile.`);
@@ -3694,7 +3694,10 @@ export default function PortalV2Page() {
       // which reuse data that was already being pulled monthly.
       const cockpitOk = !!(liveCockpit && liveCockpit.curve && liveCockpit.curve.length);
       if (!cockpitOk) debugWarn('[portal-v2] Cockpit Charting rendering with mock data (no daily_financial_snapshot rows yet — run npm run pull:cockpit, then again daily to build up the curve).');
-      const cockpitCurve = cockpitOk ? liveCockpit.curve : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
+      const cockpitMonthKey = liveCockpit && liveCockpit.month ? liveCockpit.month : monthKeyOf(monthTo);
+      const cockpitCurve = cockpitOk
+        ? padDailyMonthCurve(liveCockpit.curve, cockpitMonthKey, () => ({ total_charge: 0 }))
+        : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
       const cockpitAvgRate = cockpitOk ? liveCockpit.avgDailyRate : 3400;
       const cockpitActual = cockpitCurve.map((c) => c.total_charge);
       // FIXED 16 Jul 2026 (deep re-audit #4): was `cockpitAvgRate * (i + 1)` -- i is this row's
