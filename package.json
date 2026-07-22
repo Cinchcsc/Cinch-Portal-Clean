@@ -49,6 +49,7 @@
     "probe:exhaustive-billing-search": "node --env-file=.env scripts/probe-exhaustive-billing-search.js",
     "probe:bill28day-followup": "node --env-file=.env scripts/probe-bill28day-followup.js",
     "probe:rentroll-full-dump": "node --env-file=.env scripts/probe-rentroll-full-dump.js",
+    "probe:rentroll-union-columns": "node --env-file=.env scripts/probe-rentroll-union-columns.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
