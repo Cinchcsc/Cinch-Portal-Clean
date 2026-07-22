@@ -77,7 +77,8 @@
     "probe:rentroll-all-tables": "node --env-file=.env scripts/probe-rentroll-all-tables.js",
     "probe:realrate-truerevenue-rent-exact": "node --env-file=.env scripts/probe-realrate-truerevenue-rent-exact.js",
     "probe:realrate-category-search-occarea": "node --env-file=.env scripts/probe-realrate-category-search-occarea.js",
-    "probe:new-reports-credits-discounts-rate": "node --env-file=.env scripts/probe-new-reports-credits-discounts-rate.js"
+    "probe:new-reports-credits-discounts-rate": "node --env-file=.env scripts/probe-new-reports-credits-discounts-rate.js",
+    "probe:realrate-financialsummary-credit-exact": "node --env-file=.env scripts/probe-realrate-financialsummary-credit-exact.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
