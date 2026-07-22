@@ -97,6 +97,25 @@ try {
   }
 } catch (e) { console.log('TenantListDetailed_v3 call failed:', e.message); }
 
+// --- 2b: LedgersByTenantID_v3 — new lead: CallCenterWs has a LedgerBillingDayUpdate (WRITE) method,
+// which implies billing day/cycle is tracked at the LEDGER level (the unit-rental contract), not the
+// tenant level like the two methods just checked above turned out to be. If there's a write endpoint
+// for it, there's likely a read one too.
+console.log('\n=== CallCenterWs: LedgersByTenantID_v3 ===');
+console.log('LedgersByTenantID_v3 input params:', port['LedgersByTenantID_v3'] ? JSON.stringify(port['LedgersByTenantID_v3'].input) : 'NOT on this WSDL');
+if (firstOccupied?.TenantID) {
+  try {
+    const { rows } = await callCallCenterMethod('LedgersByTenantID_v3', site, { iTenantID: Number(firstOccupied.TenantID) });
+    console.log(`LedgersByTenantID_v3(${firstOccupied.TenantID}): ${rows.length} row(s).`);
+    if (rows[0]) {
+      console.log('Columns:', Object.keys(rows[0]).join(', '));
+      const flagged = Object.keys(rows[0]).filter((k) => billRe.test(k));
+      console.log(flagged.length ? `Matching columns: ${flagged.join(', ')}` : 'No column matches the billing-frequency pattern.');
+      console.log('Row:', JSON.stringify(rows[0]).slice(0, 900));
+    }
+  } catch (e) { console.log('LedgersByTenantID_v3 call failed:', e.message); }
+}
+
 // --- 3: Other already-integrated ReportingWs reports, same site/month ---
 for (const method of ['TenantRentChangeHistory', 'MoveInsAndMoveOuts', 'ManagementSummary']) {
   console.log(`\n=== ${method} ===`);
