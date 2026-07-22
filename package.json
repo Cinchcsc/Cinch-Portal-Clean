@@ -79,7 +79,8 @@
     "probe:realrate-category-search-occarea": "node --env-file=.env scripts/probe-realrate-category-search-occarea.js",
     "probe:new-reports-credits-discounts-rate": "node --env-file=.env scripts/probe-new-reports-credits-discounts-rate.js",
     "probe:realrate-financialsummary-credit-exact": "node --env-file=.env scripts/probe-realrate-financialsummary-credit-exact.js",
-    "probe:june-frozen-unitcount-check": "node --env-file=.env scripts/probe-june-frozen-unitcount-check.js"
+    "probe:june-frozen-unitcount-check": "node --env-file=.env scripts/probe-june-frozen-unitcount-check.js",
+    "probe:realrate-may-april-verify": "node --env-file=.env scripts/probe-realrate-may-april-verify.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
