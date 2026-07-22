@@ -1144,6 +1144,7 @@ export default function PortalV2Page() {
   // liveFloorOcc above: its own accumulating table (daily_financial_snapshot), refreshed by its own
   // daily cron (lib/pullCockpit.js), not part of the global month/range selector.
   const [liveCockpit, setLiveCockpit] = useState(null); // { month, curve, avgDailyRate } or null if unavailable
+  const [liveMomCockpit, setLiveMomCockpit] = useState(null); // selected single month's daily_financial_snapshot curve for MoM's 1M daily chart
 
   const reloadTimer = useRef(null);
   const rangeInitialized = useRef(false);   // snaps monthFrom/monthTo to the real latest month exactly once, the first time liveMonths loads — never overrides a month the person has since picked themselves
@@ -1331,18 +1332,19 @@ export default function PortalV2Page() {
   // Cockpit Charting fetch — reads the accumulated daily_financial_snapshot rows via /api/cockpit (no
   // live SiteLink calls; those only happen in lib/pullCockpit.js). Independent of every other live
   // fetch, same reasoning as fetchSnapshot/fetchFloorOccupancy above.
-  const fetchCockpit = () => {
-    fetch('/api/cockpit')
+  const fetchCockpit = (monthKey, setter = setLiveCockpit) => {
+    const qs = monthKey ? `?month=${monthKey}` : '';
+    fetch(`/api/cockpit${qs}`)
       .then((res) => res.json())
       .then((data) => {
         if (!data || !data.configured) {
-          debugWarn('[portal-v2] /api/cockpit not configured yet — run `npm run pull:cockpit`. Cockpit Charting will show mock data.');
-          setLiveCockpit(null);
+          debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will show mock data.`);
+          setter(null);
           return;
         }
-        setLiveCockpit({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate });
+        setter({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate });
       })
-      .catch((err) => { debugWarn('[portal-v2] /api/cockpit fetch failed.', err); setLiveCockpit(null); });
+      .catch((err) => { debugWarn(`[portal-v2] /api/cockpit${qs} fetch failed.`, err); setter(null); });
   };
 
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
@@ -1468,6 +1470,15 @@ export default function PortalV2Page() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (monthFrom !== monthTo) {
+      setLiveMomCockpit(null);
+      return;
+    }
+    fetchCockpit(monthKeyOf(monthTo), setLiveMomCockpit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthFrom, monthTo]);
 
   const filteredStores = () => {
     const anySel = Object.values(selected).some(Boolean);
@@ -3000,11 +3011,12 @@ export default function PortalV2Page() {
       // days pulled before the migration read total_credit as 0 until Michael runs it and new daily
       // rows accumulate (no raw response is kept for this pipeline to backfill from, see schema.sql's
       // migration comment).
-      const latestMonthIdx = liveMonths && liveMonths.length ? indexOfMonthKey(liveMonths[liveMonths.length - 1]) : null;
-      const isSingleCurrentMonth = monthFrom === monthTo && latestMonthIdx != null && monthFrom === latestMonthIdx;
-      const cockpitOk = !!(liveCockpit && liveCockpit.curve && liveCockpit.curve.length);
-      const dailyOk = isSingleCurrentMonth && cockpitOk;
-      if (isSingleCurrentMonth && !cockpitOk) debugWarn('[portal-v2] Month-on-Month: 1M selected but no daily_financial_snapshot rows yet for Revenue Collected — run npm run pull:cockpit (and again daily), showing full history meanwhile.');
+      const selectedMonthKey = monthKeyOf(monthTo);
+      const isSingleSelectedMonth = monthFrom === monthTo;
+      const momCockpit = (liveMomCockpit && liveMomCockpit.month === selectedMonthKey) ? liveMomCockpit : null;
+      const cockpitOk = !!(momCockpit && momCockpit.curve && momCockpit.curve.length);
+      const dailyOk = isSingleSelectedMonth && cockpitOk;
+      if (isSingleSelectedMonth && !cockpitOk) debugWarn(`[portal-v2] Month-on-Month: single-month view selected for ${selectedMonthKey} but no daily_financial_snapshot rows exist for that month yet — showing full history meanwhile.`);
       // ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these smaller like in
       // the portal to see more in a single fold"). momChartHeight shrinks all 6 trend charts on this
       // page specifically (via LineChart's new opts.height, default 150) — every other page's charts
@@ -3035,14 +3047,14 @@ export default function PortalV2Page() {
         return momSelectedSites.map((s, i) => ({
           name: s.name,
           color: momPalette[i % momPalette.length],
-          values: liveCockpit.curve.map((c) => {
+          values: momCockpit.curve.map((c) => {
             const site = (c.sites || []).find((x) => x.code === s.code);
             return site ? (site.total_charge || 0) - (site.total_credit || 0) : 0;
           }),
         }));
       };
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the live current month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, for the current month so far — one line per selected store if any are checked (region-only filtering doesn\'t reach live data), else portfolio-wide.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: liveCockpit.curve.map(dailyRevenue) }]} opts={{ labels: liveCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through that month\'s last completed day available in the snapshot data — one line per selected store if any are checked (region-only filtering doesn\'t reach live data), else portfolio-wide.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: momCockpit.curve.map(dailyRevenue) }]} opts={{ labels: momCockpit.curve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
         : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.revenue && r.revenue.collected) || [{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more

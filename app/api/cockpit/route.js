@@ -7,9 +7,10 @@ import { readCockpitData } from '../../../lib/cockpitData.js';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req) {
   try {
-    const data = await readCockpitData();
+    const month = req.nextUrl.searchParams.get('month');
+    const data = await readCockpitData(month);
     const configured = data.curve.length > 0;
     if (!configured) {
       return NextResponse.json(
