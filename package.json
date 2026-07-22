@@ -73,7 +73,8 @@
     "probe:realrate-june-july-exact": "node --env-file=.env scripts/probe-realrate-june-july-exact.js",
     "probe:realrate-category-search": "node --env-file=.env scripts/probe-realrate-category-search.js",
     "probe:realrate-occstats-formula": "node --env-file=.env scripts/probe-realrate-occstats-formula.js",
-    "probe:realrate-effective-rent-exact": "node --env-file=.env scripts/probe-realrate-effective-rent-exact.js"
+    "probe:realrate-effective-rent-exact": "node --env-file=.env scripts/probe-realrate-effective-rent-exact.js",
+    "probe:rentroll-all-tables": "node --env-file=.env scripts/probe-rentroll-all-tables.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
