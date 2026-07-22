@@ -51,6 +51,7 @@
     "probe:rentroll-full-dump": "node --env-file=.env scripts/probe-rentroll-full-dump.js",
     "probe:rentroll-union-columns": "node --env-file=.env scripts/probe-rentroll-union-columns.js",
     "probe:exhaustive-billing-search-v2": "node --env-file=.env scripts/probe-exhaustive-billing-search-v2.js",
+    "probe:charge-period-length": "node --env-file=.env scripts/probe-charge-period-length.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
