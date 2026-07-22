@@ -62,6 +62,7 @@
     "probe:r6-realrate-with-credits-preview": "node --env-file=.env scripts/probe-r6-realrate-with-credits-preview.js",
     "probe:automate-reports-credits": "node --env-file=.env scripts/probe-automate-reports-credits.js",
     "probe:credit-balance-fields": "node --env-file=.env scripts/probe-credit-balance-fields.js",
+    "probe:account-balance-variants": "node --env-file=.env scripts/probe-account-balance-variants.js",
     "probe:units-information": "node --env-file=.env scripts/probe-units-information.js"
   },
   "dependencies": {
