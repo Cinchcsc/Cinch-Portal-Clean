@@ -398,8 +398,7 @@ function VBars({ items, opts = {} }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: '18px', height: '170px', padding: '6px 4px 0' }}>
       {items.map((it, i) => (
-        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', height: '100%', justifyContent: 'flex-end' }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, color: '#101828', fontVariantNumeric: 'tabular-nums' }}>{it.disp}</div>
+        <div key={i} title={it.label + ': ' + it.disp} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', height: '100%', justifyContent: 'flex-end' }}>
           <div style={{ width: '100%', maxWidth: '72px', height: Math.max(4, (it.value / max) * 118) + 'px', borderRadius: '8px 8px 3px 3px', background: it.color || C.blue, transition: 'height .6s cubic-bezier(.2,.8,.2,1)' }} />
           <div style={{ fontSize: '11.5px', color: '#667085', textAlign: 'center', whiteSpace: 'nowrap' }}>{it.label}</div>
         </div>
@@ -442,15 +441,11 @@ function StoreBarChart({ items, opts = {} }) {
           {sortDir === 'desc' ? 'Highest → lowest' : 'Lowest → highest'}
         </button>
       </div>
-      {/* Bars widened + value label rotated vertically (6 Jul 2026, Michael: "make the values easy
-          to read, maybe put them vertically") — with 27 stores crammed into 30px columns the old
-          10px horizontal value text either overlapped neighbors or had to shrink unreadably small.
-          Rotating the value to match the already-vertical store-name label below lets both use a
-          bigger, bolder font in the same footprint. */}
+      {/* Values hidden 22 Jul 2026 (Michael): keep the store/location labels visible, but move the
+          per-bar number to a hover tooltip instead of always rendering it above the bar. */}
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '7px', height: '236px', padding: '6px 2px 0', overflowX: 'auto' }}>
         {shown.map((it, i) => (
           <div key={i} title={it.label + ': ' + it.disp} style={{ flex: '0 0 auto', width: '38px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', height: '100%', justifyContent: 'flex-end' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: '#101828', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{it.disp}</div>
             <div style={{ width: '100%', maxWidth: '26px', height: Math.max(4, ((it.value - min) / range) * BAR_H) + 'px', borderRadius: '4px 4px 2px 2px', background: it.color || C.blue, transition: 'height .6s cubic-bezier(.2,.8,.2,1)' }} />
             <div style={{ fontSize: '10.5px', color: '#667085', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%', writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '66px' }}>{it.label}</div>
           </div>
