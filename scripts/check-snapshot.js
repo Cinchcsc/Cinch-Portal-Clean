@@ -44,4 +44,19 @@ for (const period of ['daily', 'weekly', 'quarterly']) {
   console.log(`  ${nonZeroSites.length}/${w.sites?.length || 0} sites have any nonzero enquiries/reservations`);
   if (nonZeroSites.length) console.log(`  e.g. ${nonZeroSites.slice(0, 3).map((s) => `${s.code}: enq=${s.enquiries} res=${s.reservations}`).join(', ')}`);
 }
+
+// ADDED 23 Jul 2026 (task #406/#409 verification) — the sample above only ever shows the first 3
+// nonzero-enquiries sites in whatever order `sites` comes back in, which may well never include
+// whichever specific site you're actually trying to check (e.g. Abingdon/L029 wasn't in it above).
+// Pass a site code to see its FULL row (incl. moveIns/moveOuts/sqftIn/sqftOut, not just enq/res) across
+// all three periods:  npm run check:snapshot -- L029
+const targetSite = process.argv[2];
+if (targetSite) {
+  console.log(`\n=== ${targetSite} detail ===`);
+  for (const period of ['daily', 'weekly', 'quarterly']) {
+    const w = p[period];
+    const s = w?.sites?.find((x) => x.code === targetSite);
+    console.log(`  ${period}: ${s ? JSON.stringify(s) : `not found in ${period}.sites`}`);
+  }
+}
 process.exit(0);
