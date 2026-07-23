@@ -43,26 +43,39 @@ const locations = process.env.SITELINK_LOCATIONS.split(',').map((s) => s.trim())
 const wideStart = new Date(2026, 3, 1);  // 1 Apr 2026
 const wideEnd = new Date();              // today
 
+// BUG FIXED 23 Jul 2026 (2nd bug caught before reporting, this time by checking my own CURRENT-method
+// output against the ALREADY-KNOWN-GOOD baseline before trusting the PROPOSED comparison at all): this
+// previously counted EVERY row placed in window as an "enquiry", with no channel classification --
+// production's actual total_enquiries (reportMap.js's lead_funnel parser) is `phone+walkin+web+email`,
+// EXPLICITLY EXCLUDING "other"-classified rows. Inflating the denominator with "other" rows deflates the
+// computed ratio relative to production's true one -- likely why CURRENT read 10.5% here instead of the
+// already-validated 23.9%. Rewritten to mirror reportMap.js's lead_funnel classification EXACTLY (same
+// str()/toLowerCase() logic, same 4-bucket-plus-other split), so `enquiries` here means the same thing
+// production's total_enquiries does. Only the ONE thing actually under test -- which date field gates
+// reservation_stage_count -- is allowed to differ from production.
 async function siteCounts(site, monthStart, monthEnd) {
   const { raw } = await callReport('InquiryTracking', site, wideStart, wideEnd);
   const rows = extractNamedTable(raw, 'Activity');
-  let enquiries = 0;               // unchanged -- dPlaced-based, not part of this fix
-  let resCurrent = 0;               // CURRENT method: isPlacedInWindow(dPlaced) && isReservationStage
+  let phone = 0, walkin = 0, web = 0, email = 0; // "other" deliberately NOT counted into enquiries, same as production
+  let resCurrent = 0;               // CURRENT (production) method: isPlacedInWindow(dPlaced) && isReservationStage
   let resProposed = 0;              // PROPOSED fix: isReservationStage still required -- ONLY the date field changes
   for (const r of rows) {
-    if (inWindow(r.dPlaced, monthStart, monthEnd)) {
-      enquiries++;
+    const placedInWindow = inWindow(r.dPlaced, monthStart, monthEnd);
+    if (placedInWindow) {
+      const k = str(r.sInquiryType).toLowerCase();
+      if (k === 'phone') phone++;
+      else if (k === 'walkin') walkin++;
+      else if (k === 'web') web++;
+      else if (k === 'email') email++;
+      // else: "other" -- excluded from enquiries, exactly like production's total_enquiries
       if (isReservationStage(r)) resCurrent++;
     }
-    // BUG FIXED 23 Jul 2026 (caught before reporting results): this previously counted ANY row whose
-    // dConverted_ToRsv fell in window, with no isReservationStage check at all -- so a walk-in that
-    // converts straight from Inquiry to Move-In (e.g. Boyles, Abingdon 22 Jul: dConverted_ToRsv set
-    // within 1 second of dPlaced, current sRentalType='Move In', never 'Reservation') was being counted
-    // as a "reservation" too. dConverted_ToRsv looks like a generic "left raw Inquiry status" timestamp,
-    // not specifically "became a Reservation" -- so the status check must stay, only the date field
-    // driving window-membership should change.
+    // dConverted_ToRsv looks like a generic "left raw Inquiry status" timestamp (also set for walk-ins
+    // that convert straight to Move-In), not specifically "became a Reservation" -- isReservationStage
+    // must stay required; only the date field driving window-membership changes.
     if (isReservationStage(r) && inWindow(r.dConverted_ToRsv, monthStart, monthEnd)) resProposed++;
   }
+  const enquiries = phone + walkin + web + email;
   return { enquiries, resCurrent, resProposed, rowCount: rows.length };
 }
 
@@ -88,7 +101,18 @@ console.log(`\n${'='.repeat(90)}\nSTEP 2: portfolio-wide June 2026 -- does switc
   console.log(`\nJune portfolio totals: enquiries=${totalEnq}`);
   console.log(`  CURRENT (dPlaced-based):        reservations=${totalResCurrent}  ratio=${ratioCurrent}%  (legacy target 19.8%, our prior recorded figure 23.9%)`);
   console.log(`  PROPOSED (dConverted_ToRsv-based): reservations=${totalResProposed}  ratio=${ratioProposed}%`);
-  console.log(`\n  ${Math.abs(ratioProposed - 19.8) < Math.abs(ratioCurrent - 19.8) ? 'PROPOSED is CLOSER to legacy\'s 19.8% -- switching looks like a real improvement.' : 'PROPOSED is FURTHER from legacy\'s 19.8% -- switching would make the validated monthly metric worse; needs more thought before wiring in.'}`);
+
+  // SANITY CHECK, added 23 Jul 2026 after 2 straight bugs in this same script were caught only by
+  // noticing CURRENT didn't match the known-good 23.9% baseline. Don't trust ANY conclusion below this
+  // line unless CURRENT is at least close to 23.9% -- if it isn't, this probe's methodology still
+  // doesn't match production's (e.g. the wide fixed query window vs whatever window pull.js actually
+  // used, or something else not yet accounted for), and the PROPOSED comparison is meaningless until
+  // that's resolved.
+  const currentMatchesBaseline = Math.abs(Number(ratioCurrent) - 23.9) < 3; // loose tolerance, not exact
+  console.log(`\n  Self-check: CURRENT (${ratioCurrent}%) vs prior recorded baseline (23.9%) -- ${currentMatchesBaseline ? 'close enough, this probe\'s methodology looks trustworthy' : '*** DOES NOT MATCH -- do not trust the comparison below, something about this probe\'s query still differs from production ***'}`);
+  if (currentMatchesBaseline) {
+    console.log(`\n  ${Math.abs(ratioProposed - 19.8) < Math.abs(ratioCurrent - 19.8) ? 'PROPOSED is CLOSER to legacy\'s 19.8% -- switching looks like a real improvement.' : 'PROPOSED is FURTHER from legacy\'s 19.8% -- switching would make the validated monthly metric worse; needs more thought before wiring in.'}`);
+  }
 }
 
 console.log(`\n${'='.repeat(90)}\nIf STEP 1 confirms the fix recovers Abingdon's missing reservation AND STEP 2 shows\nPROPOSED at least as close to 19.8% as CURRENT, switching reservation_stage_count to\ndConverted_ToRsv-based filtering is safe to wire into both the Snapshot page and the\nMarketing page's conversion rate. If STEP 2 goes the other way, the daily Snapshot and\nmonthly conversion-rate metrics may need to use DIFFERENT date fields rather than one\nshared counter.\n${'='.repeat(90)}`);
