@@ -103,7 +103,8 @@
     "probe:reservation-reparse-check": "node --env-file=.env scripts/probe-reservation-reparse-check.js",
     "probe:realrate-current-vs-rentonly": "node --env-file=.env scripts/probe-realrate-current-vs-rentonly.js",
     "probe:realrate-rentroll-vs-truerevenue-basis": "node --env-file=.env scripts/probe-realrate-rentroll-vs-truerevenue-basis.js",
-    "probe:billing-frequency-breakdown-all-sites": "node --env-file=.env scripts/probe-billing-frequency-breakdown-all-sites.js"
+    "probe:billing-frequency-breakdown-all-sites": "node --env-file=.env scripts/probe-billing-frequency-breakdown-all-sites.js",
+    "probe:realrate-basis-gap-diagnosis": "node --env-file=.env scripts/probe-realrate-basis-gap-diagnosis.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
