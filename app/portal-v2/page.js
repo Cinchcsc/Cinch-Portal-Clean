@@ -79,13 +79,21 @@ function computeTotals(sites) {
     // sum-then-divide-once rule as every other rollup here.
     economicOccPct: sum('gpot') ? +(sum('occActualRent') / sum('gpot') * 100).toFixed(1) : 0,
     claPC: claA ? +(occA / claA * 100).toFixed(1) : (totA ? +(occA / totA * 100).toFixed(1) : 0),
-    // Rate: dcStandardRate-based, unchanged. Real Rate: REPLACED 8 Jul 2026 to mirror
+    // Rate: FIXED 23 Jul 2026 (task #308 follow-up) — this client-side recompute (needed so the store
+    // filter can re-derive totals without a server round-trip) was still reading stdRentSum/
+    // ssStdRentSum (the pre-billing-adjustment dcStdRate-based fields), even after task #401 swapped
+    // lib/buildPayload.js's OWN aggregateTotals()/buildHistory()/range-merge over to adjRentSum/
+    // ssAdjRentSum on 22 Jul. Caught by comparing this page's own KPI tile (£31.20, this stale path)
+    // against the Units-by-Customer-Type table's per-site row (£28.44, reading site.rate directly —
+    // already on the new formula) for Bicester/Jun 2026 — same site, same month, two different numbers.
+    // adjRentSum/ssAdjRentSum are already present on every site record (buildPayload.js line ~181),
+    // this was just never updated to read them. Real Rate: REPLACED 8 Jul 2026 to mirror
     // lib/buildPayload.js's aggregateTotals() exactly — True Revenue-based (Σ(TruePeriod−adj)),
     // divided by TOTAL area (areaTotalAll, incl. vacant units), NOT areaSum (occupied-only, still
     // correct for Rate). Keep this in sync with lib/buildPayload.js if that file changes.
-    rate: sum('areaSum') ? R2(sum('stdRentSum') / sum('areaSum') * 12) : 0,
+    rate: sum('areaSum') ? R2(sum('adjRentSum') / sum('areaSum') * 12) : 0,
     realRate: sum('areaTotalAll') ? R2(sum('trueRevenueNumerator') / sum('areaTotalAll') * 12) : 0,
-    ssRate: sum('ssAreaSum') ? R2(sum('ssStdRentSum') / sum('ssAreaSum') * 12) : 0,
+    ssRate: sum('ssAreaSum') ? R2(sum('ssAdjRentSum') / sum('ssAreaSum') * 12) : 0,
     ssReal: sum('ssAreaTotalAll') ? R2(sum('ssTrueRevenueNumerator') / sum('ssAreaTotalAll') * 12) : 0,
     ssOcc: sites.reduce((a, s) => a + (s.ss ? s.ss.occ : 0), 0), ssTot: sites.reduce((a, s) => a + (s.ss ? s.ss.tot : 0), 0),
     officesOcc: sites.reduce((a, s) => a + (s.offices ? s.offices.occ : 0), 0), officesTot: sites.reduce((a, s) => a + (s.offices ? s.offices.tot : 0), 0),
@@ -1541,10 +1549,28 @@ export default function PortalV2Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthFrom, monthTo]);
 
+  useEffect(() => {
+    if (!liveSitesRaw) return;
+    const liveNames = new Set(liveSitesRaw.map((s) => s.name));
+    setSelected((prev) => {
+      let changed = false;
+      const next = {};
+      for (const [name, on] of Object.entries(prev)) {
+        if (!on) continue;
+        if (liveNames.has(name)) next[name] = true;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [liveSitesRaw]);
+
+  // Live mode currently has no authoritative region metadata, so any stale mock-only region choice
+  // must be neutralized consistently everywhere, including mock fallback scaling paths.
+  const effectiveRegion = liveSitesRaw ? 'All' : region;
   const filteredStores = () => {
     const anySel = Object.values(selected).some(Boolean);
     return STORES.filter((s) => {
-      if (region !== 'All' && s.region !== region) return false;
+      if (effectiveRegion !== 'All' && s.region !== effectiveRegion) return false;
       if (anySel && !selected[s.name]) return false;
       return true;
     });
@@ -2841,14 +2867,20 @@ export default function PortalV2Page() {
       ];
       // Web Enquiries by Store — REMOVED 6 Jul 2026 (Michael: redundant with Enquiries by Channel's
       // Web tile above / Leads by Store on the Marketing page already covering this by channel).
-      // Reservations vs Move-ins: live portfolio sums (activeReservations from ReservationList,
-      // moveIns from ManagementSummary — both already last-complete-month/current-scoped).
-      const resVsMoveIns = liveSites ? { res: liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0), mi: liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) } : null;
-      if (!resVsMoveIns) debugWarn('[portal-v2] Reservations vs Move-ins chart rendering with mock data (no live sites available).');
+      // FIXED 23 Jul 2026 (production-readiness audit): this chart used to compare
+      // `activeReservations` (ReservationList live backlog snapshot, "open right now") against
+      // `moveIns` (ManagementSummary period flow, "completed during the selected month/range"). That
+      // mixed two different time bases inside one visual, so the Reservations bar could stay frozen on
+      // a past-month selection while Move-ins changed with the picker. We already carry the correct
+      // period-scoped reservation-flow metric (`reservationsMade`, from InquiryTracking reservation-
+      // stage rows within the selected window) specifically for historical/date-aware comparisons.
+      // Use that here so both bars respect the same selected period.
+      const resVsMoveIns = liveSites ? { res: liveSites.reduce((a, s) => a + (s.reservationsMade || 0), 0), mi: liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) } : null;
+      if (!resVsMoveIns) debugWarn('[portal-v2] Reservations Made vs Move-ins chart rendering with mock data (no live sites available).');
       out.chartCards = [
         resVsMoveIns
-          ? { title: 'Reservations vs Move-ins', tip: 'Reports: ReservationList (Reservations); ManagementSummary (Move-ins).\nFields: QTRentalTypeID, dCancelled, dNeeded (ReservationList); sDesc rows matching "Move In", iMCount (ManagementSummary).\nCalculation: Reservations = active waiting-list rows (QTRentalTypeID = 2, not cancelled), live snapshot. Move-ins = this period\'s count. A pipeline snapshot, not a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
-          : { title: 'Reservations vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: 52 * f, disp: intFmt(52 * f), color: C.blue }, { label: 'Move-ins', value: 112 * f, disp: intFmt(112 * f), color: C.teal }]} opts={{ max: 130 * f }} /> },
+          ? { title: 'Reservations Made vs Move-ins', tip: 'Reports: InquiryTracking (Reservations made); ManagementSummary (Move-ins).\nFields: sRentalType = "Reservation", dPlaced (InquiryTracking); sDesc rows matching "Move In", iMCount (ManagementSummary).\nCalculation: Reservations = reservation-stage InquiryTracking rows whose dPlaced falls in the selected period. Move-ins = completed move-ins in the same selected period. Both bars are date-scoped flow counts, not a live backlog snapshot or a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
+          : { title: 'Reservations Made vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: 52 * f, disp: intFmt(52 * f), color: C.blue }, { label: 'Move-ins', value: 112 * f, disp: intFmt(112 * f), color: C.teal }]} opts={{ max: 130 * f }} /> },
       ];
       // Marketing Year-on-Year (task #130/#136, 13 Jul 2026 — Michael picked "YoY trend chart" via
       // AskUserQuestion) — trailing 12 months ending at the latest STORED month, overlaid against the
@@ -3012,7 +3044,10 @@ export default function PortalV2Page() {
       // per-site records carry no region field (same disclosed gap as every other live per-site widget
       // on this page), so picking a region without checking a specific store still can't scope these
       // charts.
-      const momFilterNote = (region !== 'All' && !momAnySel)
+      // Once live data is loaded, region filtering is intentionally unavailable (no authoritative
+      // region field on the live records yet). Ignore any stale region state here too, otherwise the
+      // MoM page can warn about a "region filter" that the live charts are not actually applying.
+      const momFilterNote = (effectiveRegion !== 'All' && !momAnySel)
         ? 'Region filter doesn\'t reach trend history yet — select individual store(s) above (not just a region) to see their lines here.'
         : null;
       // momSelectedSites — the {code,name} pairs for whichever stores are checked, sorted by code
@@ -3396,9 +3431,32 @@ export default function PortalV2Page() {
         totals: { daily: { enquiries: 14, reservations: 5, moveIns: 3, moveOuts: 2, sqftIn: 312, sqftOut: 168 }, weekly: { enquiries: 96, reservations: 31, moveIns: 22, moveOuts: 17, sqftIn: 2150, sqftOut: 1340 }, quarterly: { enquiries: 1180, reservations: 402, moveIns: 268, moveOuts: 231, sqftIn: 27400, sqftOut: 21860 } }[snapshotPeriod],
         sites: null,
       };
-      const totals = snap ? snap.totals : mockSnap.totals;
+      const rawTotals = snap ? snap.totals : mockSnap.totals;
       const range = snap ? snap.range : mockSnap.range;
       const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
+      // FIXED 23 Jul 2026 (production-readiness audit): the Snapshot page's per-store table already
+      // respected the global store filter via name→code mapping, but the headline cards and the
+      // table's totals row still read snap.totals (the FULL unfiltered portfolio payload) directly.
+      // Selecting one store therefore produced an immediate contradiction: rows for the chosen store,
+      // but headline figures/totals for every store combined. Re-scope all snapshot totals from the
+      // same filtered site rows whenever snapshot per-site data is present, falling back to the
+      // payload totals only when there is no site array to recompute from yet.
+      const selectedNames = new Set(Object.entries(selected).filter(([, on]) => on).map(([name]) => name));
+      const anySelectedSnapshot = selectedNames.size > 0;
+      const snapshotSiteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
+        .slice().sort((a, b) => a.code.localeCompare(b.code))
+        .filter((s) => !anySelectedSnapshot || selectedNames.has(nameForCode(s.code)))
+        .map((s) => ({ store: nameForCode(s.code), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, moveOuts: s.moveOuts, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
+      const totals = snapshotSiteRows.length
+        ? {
+            enquiries: snapshotSiteRows.reduce((a, r) => a + (r.enquiries || 0), 0),
+            reservations: snapshotSiteRows.reduce((a, r) => a + (r.reservations || 0), 0),
+            moveIns: snapshotSiteRows.reduce((a, r) => a + (r.moveIns || 0), 0),
+            moveOuts: snapshotSiteRows.reduce((a, r) => a + (r.moveOuts || 0), 0),
+            sqftIn: snapshotSiteRows.reduce((a, r) => a + (r.sqftIn || 0), 0),
+            sqftOut: snapshotSiteRows.reduce((a, r) => a + (r.sqftOut || 0), 0),
+          }
+        : rawTotals;
       out.statCards = [
         // Enquiries & Reservations — MERGED 21 Jul 2026 (Michael). Was two separate cards; removed the
         // standalone "Reservations" one earlier the same day because it sat right next to Reserved
@@ -3450,9 +3508,7 @@ export default function PortalV2Page() {
         // exists unchanged on the KPIs page's own Reserved Scheduled Sqft card, for anyone who wants the
         // un-scoped, right-now total specifically.
       ];
-      const siteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
-        .slice().sort((a, b) => a.code.localeCompare(b.code))
-        .map((s) => ({ store: nameForCode(s.code), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
+      const siteRows = snapshotSiteRows.map((s) => ({ store: s.store, enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
       out.tables = [
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         { title: `Per-Store Breakdown — ${periodLabel} (${fmtRange(range)})`, live: !!snap, pageSize: 29,
@@ -4183,7 +4239,7 @@ export default function PortalV2Page() {
   // ---------- derived render values ----------
   const fs = filteredStores();
   const anySel = Object.values(selected).some(Boolean);
-  const storeSummary = region !== 'All' ? region : anySel ? Object.values(selected).filter(Boolean).length + ' stores' : 'All stores';
+  const storeSummary = effectiveRegion !== 'All' ? effectiveRegion : anySel ? Object.values(selected).filter(Boolean).length + ' stores' : 'All stores';
   // FIXED 7 Jul 2026 (Michael: "the date picker only lets me see up to Jan 2025"): this used to look
   // labels up in the fixed 24-entry MONTHS placeholder array (buildMonths(), Jan 2025 -> Dec 2026
   // only), so any real stored month outside that window — real history goes back to 2016-06 — got an
@@ -4302,14 +4358,14 @@ export default function PortalV2Page() {
         name: s.name, region: null, checked: !!selected[s.name],
         onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); setStorePopOpen(false); reload(); },
       }))
-    : STORES.filter((st) => region === 'All' || st.region === region).map((st) => ({
+    : STORES.filter((st) => effectiveRegion === 'All' || st.region === effectiveRegion).map((st) => ({
         name: st.name, region: st.region, checked: !!selected[st.name],
         onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); setStorePopOpen(false); reload(); },
       }));
   const regionChips = (liveSitesRaw ? ['All'] : ['All', ...REGIONS]).map((r) => ({
     label: r,
     onClick: () => { setRegion(r); setSelected({}); setStorePopOpen(false); reload(); },
-    active: region === r,
+    active: effectiveRegion === r,
   }));
   // 'PM' (Prior Month) ADDED 15 Jul 2026 (Michael: "add a butting for prior month as well") — plain
   // preset label map so it reads as a word, not a code, next to the 1M/3M/etc. shorthand buttons.
@@ -4719,7 +4775,7 @@ export default function PortalV2Page() {
               <div style={{ padding: '20px 22px', borderBottom: '1px solid #F2F4F7', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ fontSize: '17px', fontWeight: 700, color: '#0C1425' }}>Export to Excel</div>
-                  <div style={{ fontSize: '13px', color: '#667085', marginTop: '3px' }}>Choose the widgets and tables to include. Each becomes its own sheet.</div>
+                  <div style={{ fontSize: '13px', color: '#667085', marginTop: '3px' }}>Choose the tables and stat-card breakdowns to include. Each becomes its own sheet.</div>
                 </div>
                 <button onClick={() => setExportOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#98A2B3', padding: '4px' }}>
                   <svg width={20} height={20} viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="#98A2B3" strokeWidth={2} strokeLinecap="round" /></svg>
