@@ -98,7 +98,8 @@
     "probe:abingdon-chat-events": "node --env-file=.env scripts/probe-abingdon-chat-events.js",
     "probe:mio-table-selection": "node --env-file=.env scripts/probe-mio-table-selection.js",
     "probe:mio-single-row-shape": "node --env-file=.env scripts/probe-mio-single-row-shape.js",
-    "probe:mio-single-row-fields": "node --env-file=.env scripts/probe-mio-single-row-fields.js"
+    "probe:mio-single-row-fields": "node --env-file=.env scripts/probe-mio-single-row-fields.js",
+    "probe:reservation-converted-date": "node --env-file=.env scripts/probe-reservation-converted-date.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
