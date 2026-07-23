@@ -48,13 +48,20 @@ async function siteCounts(site, monthStart, monthEnd) {
   const rows = extractNamedTable(raw, 'Activity');
   let enquiries = 0;               // unchanged -- dPlaced-based, not part of this fix
   let resCurrent = 0;               // CURRENT method: isPlacedInWindow(dPlaced) && isReservationStage
-  let resProposed = 0;              // PROPOSED fix: dConverted_ToRsv falls in window (regardless of dPlaced)
+  let resProposed = 0;              // PROPOSED fix: isReservationStage still required -- ONLY the date field changes
   for (const r of rows) {
     if (inWindow(r.dPlaced, monthStart, monthEnd)) {
       enquiries++;
       if (isReservationStage(r)) resCurrent++;
     }
-    if (inWindow(r.dConverted_ToRsv, monthStart, monthEnd)) resProposed++;
+    // BUG FIXED 23 Jul 2026 (caught before reporting results): this previously counted ANY row whose
+    // dConverted_ToRsv fell in window, with no isReservationStage check at all -- so a walk-in that
+    // converts straight from Inquiry to Move-In (e.g. Boyles, Abingdon 22 Jul: dConverted_ToRsv set
+    // within 1 second of dPlaced, current sRentalType='Move In', never 'Reservation') was being counted
+    // as a "reservation" too. dConverted_ToRsv looks like a generic "left raw Inquiry status" timestamp,
+    // not specifically "became a Reservation" -- so the status check must stay, only the date field
+    // driving window-membership should change.
+    if (isReservationStage(r) && inWindow(r.dConverted_ToRsv, monthStart, monthEnd)) resProposed++;
   }
   return { enquiries, resCurrent, resProposed, rowCount: rows.length };
 }
