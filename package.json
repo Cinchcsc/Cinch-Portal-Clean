@@ -96,7 +96,8 @@
     "probe:realrate-endof-fixed-all-sites": "node --env-file=.env scripts/probe-realrate-endof-fixed-all-sites.js",
     "probe:verify-snapshot-fix": "node --env-file=.env scripts/probe-verify-snapshot-fix.js",
     "probe:abingdon-chat-events": "node --env-file=.env scripts/probe-abingdon-chat-events.js",
-    "probe:mio-table-selection": "node --env-file=.env scripts/probe-mio-table-selection.js"
+    "probe:mio-table-selection": "node --env-file=.env scripts/probe-mio-table-selection.js",
+    "probe:mio-single-row-shape": "node --env-file=.env scripts/probe-mio-single-row-shape.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
