@@ -91,7 +91,8 @@
     "probe:realrate-fixed-all-sites": "node --env-file=.env scripts/probe-realrate-fixed-all-sites.js",
     "probe:abingdon-snapshot-reservations": "node --env-file=.env scripts/probe-abingdon-snapshot-reservations.js",
     "probe:daily-window-boundary": "node --env-file=.env scripts/probe-daily-window-boundary.js",
-    "probe:monthend-exclusive-bug": "node --env-file=.env scripts/probe-monthend-exclusive-bug.js"
+    "probe:monthend-exclusive-bug": "node --env-file=.env scripts/probe-monthend-exclusive-bug.js",
+    "probe:truerevenue-monthend-bug": "node --env-file=.env scripts/probe-truerevenue-monthend-bug.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
