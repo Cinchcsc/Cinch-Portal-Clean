@@ -94,7 +94,8 @@
     "probe:monthend-exclusive-bug": "node --env-file=.env scripts/probe-monthend-exclusive-bug.js",
     "probe:truerevenue-monthend-bug": "node --env-file=.env scripts/probe-truerevenue-monthend-bug.js",
     "probe:realrate-endof-fixed-all-sites": "node --env-file=.env scripts/probe-realrate-endof-fixed-all-sites.js",
-    "probe:verify-snapshot-fix": "node --env-file=.env scripts/probe-verify-snapshot-fix.js"
+    "probe:verify-snapshot-fix": "node --env-file=.env scripts/probe-verify-snapshot-fix.js",
+    "probe:abingdon-chat-events": "node --env-file=.env scripts/probe-abingdon-chat-events.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
