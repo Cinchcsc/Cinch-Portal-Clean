@@ -183,7 +183,7 @@ function bootstrapScript(legacy, configured) {
 
 export async function GET() {
   try {
-    const result = await readPortalPayload();
+    const result = await readPortalPayload({ ensureFresh: true });
     const legacy = result?.payload ? payloadToLegacy(result.payload) : emptyBootstrap();
     return new NextResponse(bootstrapScript(legacy, Boolean(result?.payload)), {
       headers: {

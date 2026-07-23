@@ -23,7 +23,9 @@ const rows = payload.sites.map((s) => ({
   ssRate: s.ss?.rate ?? null, totalRate: s.rate, realRate: s.realRate,
   insuredUnits: s.insurance?.insured ?? 0, insurancePremium: s.insurance?.premium ?? 0,
   insurancePenetrationPC: s.insurance?.penetration ?? 0, occActualRent: s.occActualRent ?? 0,
-  enquiriesTotal: s.enquiries?.total ?? 0, reservationConversions: s.enquiries?.reservationConversions ?? 0,
+  enquiriesTotal: s.enquiries?.total ?? 0,
+  reservationConversionBase: s.enquiries?.reservationConversionBase ?? s.enquiries?.total ?? 0,
+  reservationConversions: s.enquiries?.reservationConversions ?? 0,
 }));
 
 const out = {

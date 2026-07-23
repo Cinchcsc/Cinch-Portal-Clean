@@ -77,9 +77,12 @@ try {
     const monthStart = new Date(y, m - 1, 1);
     // Same "cap the in-progress current month at today" rule as pull.js/repull-report-month.js — a
     // gap this old is very unlikely to BE the current month, but keep the guard for correctness anyway.
+    // FIXED 23 Jul 2026 (production-readiness audit): closed months must end at the START of the
+    // following day, not midnight on their final calendar day, because SiteLink treats the end bound
+    // as exclusive. Otherwise this backfill path would recreate the same missing-last-day bug.
     const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
-    const fullMonthEnd = new Date(y, m, 0);
-    const monthEnd = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
+    const closedMonthEndExclusive = new Date(y, m, 1);
+    const monthEnd = isCurrentMonth ? now : closedMonthEndExclusive;
     const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
     for (const loc of locations) {

@@ -43,6 +43,10 @@ console.log('This runs sequentially and will take a while — progress is logged
 // inflated/wrong result when asked for a range that extends into the future — this matters here
 // specifically because `management` is now one of the reports this script re-pulls historically, and
 // its OWN current month (July) must not be corrupted by using July 31 (a future date) as the end.
+// FIXED 23 Jul 2026 (production-readiness audit): for CLOSED months, SiteLink's end bound is
+// exclusive of the calendar day it lands on, so `new Date(y, m, 0)` would re-import every past month
+// with its final day missing — the exact bug this script is often used to heal. Closed months must
+// therefore end at the start of the FOLLOWING day instead.
 const now0 = new Date();
 let totalOk = 0, totalFailed = 0;
 const startedAt = Date.now();
@@ -51,8 +55,8 @@ for (let i = 0; i < months.length; i++) {
   const [y, m] = mk.split('-').map(Number);
   const monthStart = new Date(y, m - 1, 1);
   const isCurrentMonth = y === now0.getFullYear() && m === now0.getMonth() + 1;
-  const fullMonthEnd = new Date(y, m, 0);
-  const monthEnd = isCurrentMonth && fullMonthEnd > now0 ? now0 : fullMonthEnd;
+  const closedMonthEndExclusive = new Date(y, m, 1);
+  const monthEnd = isCurrentMonth ? now0 : closedMonthEndExclusive;
   const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
   const { error: delErr } = await admin.from('raw_report').delete().eq('report', reportKey).eq('month', monthKey);

@@ -21,6 +21,7 @@ export async function GET(request) {
     const month = searchParams.get('month');
     const from = searchParams.get('from') || month;
     const to = searchParams.get('to') || month;
+    const realCurrentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 
     if (from && to) {
       const [fy, fm] = from.split('-').map(Number);
@@ -29,6 +30,14 @@ export async function GET(request) {
         return NextResponse.json({ configured: false, error: 'Invalid month format, expected YYYY-MM' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
       }
       const payload = await buildPayloadRange(new Date(fy, fm - 1, 1), new Date(ty, tm - 1, 1));
+      // FIXED 23 Jul 2026 (live portal audit): the current in-progress month must never be served from
+      // edge cache. Local buildPayloadRange() for 2026-07 was correct (e.g. Bicester enquiries=91),
+      // but the live production Marketing page was serving a July-labeled response with June-shaped
+      // figures (e.g. Bicester enquiries=137, exactly our June number). The safest narrow fix is to
+      // keep caching for closed historical ranges, but fail CLOSED to `no-store` for any range that
+      // touches the real current calendar month, so a stale cached range response can never masquerade
+      // as the latest live month again.
+      const touchesCurrentMonth = from <= realCurrentMonth && to >= realCurrentMonth;
       // CACHED 16 Jul 2026 (Michael: Supabase egress over the free-tier 5GB limit) — this used to be
       // 'no-store' on every branch, so every dashboard load/nav-click re-read portal_payload's full
       // ~6.87MB row (or re-scanned raw_report for a range) straight from Supabase with zero caching in
@@ -38,10 +47,13 @@ export async function GET(request) {
       // dashboard) without ever showing data older than the last cron pull anyway. 120s hard cache +
       // 10min stale-while-revalidate: Vercel's edge can keep serving instantly while it quietly
       // refetches in the background, so this never blocks a request on a slow origin hit either.
-      return NextResponse.json({ configured: true, ...payload }, { headers: { 'Cache-Control': 'public, s-maxage=120, stale-while-revalidate=600' } });
+      return NextResponse.json(
+        { configured: true, ...payload },
+        { headers: { 'Cache-Control': touchesCurrentMonth ? 'no-store' : 'public, s-maxage=120, stale-while-revalidate=600' } },
+      );
     }
 
-    const result = await readPortalPayload();
+    const result = await readPortalPayload({ ensureFresh: true });
     if (!result?.payload) {
       return NextResponse.json(
         { configured: false, generated_at: null, current_month: null, months: [], sites: [], totals: null, history: [], monthly: {} },

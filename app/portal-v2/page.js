@@ -2835,7 +2835,7 @@ export default function PortalV2Page() {
         // CORRECTED 6 Jul 2026: was reading `conversions` (Enquiry -> Move-In, a different metric
         // entirely — see buildPayload.js) despite the "Reservation" title. Now uses
         // `reservationConversions`, the actual Enquiry -> Reservation figure.
-        const totalEnq = enqSum('total'), convPct = totalEnq ? +(enqSum('reservationConversions') / totalEnq * 100).toFixed(1) : 0;
+        const totalEnq = enqSum('reservationConversionBase'), convPct = totalEnq ? +(enqSum('reservationConversions') / totalEnq * 100).toFixed(1) : 0;
         // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
         // up has it, this one never did, so this card never showed the green LIVE badge even while
         // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
@@ -2848,7 +2848,7 @@ export default function PortalV2Page() {
         // period). So legacy isn't tracking individual leads here at all — same "sum two aggregates,
         // divide once" pattern as the Enquiry -> Move-In tile. Also fixes the live/in-progress month
         // always reading artificially low, since a period-ratio needs no cross-month data to exist yet.
-        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation-stage rows this period ÷ this period\'s total enquiries × 100 — same period-ratio pattern as Enquiry -> Move-In, no per-lead matching.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: iTotal, iConverted, sInquiryType (InquirySource aggregate table).\nCalculation: Σ iConverted ÷ Σ iTotal for the selected period. This follows SiteLink\'s own aggregate conversion table rather than re-counting reservation-stage Activity rows lead-by-lead.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -2919,7 +2919,7 @@ export default function PortalV2Page() {
           ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total enquiries per stored month (sum of Phone/Walk-in/Web/Email counts). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sRentalType (Reservation stage), dPlaced, sInquiryType.\nCalculation: Reservation-stage rows ÷ total enquiries × 100, per stored month — same period-ratio pattern as the Enquiry → Reservation stat card. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: iTotal, iConverted, sInquiryType (InquirySource aggregate table).\nCalculation: Σ iConverted ÷ Σ iTotal for each stored month. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
@@ -2930,7 +2930,8 @@ export default function PortalV2Page() {
       const liveLeadRows = liveSites ? liveSites.map((s) => {
         const e = s.enquiries || {};
         const total = e.total || 0;
-        return { name: s.name, phone: e.phone || 0, web: e.web || 0, walkin: e.walkin || 0, total, conv: total ? +((e.reservationConversions || 0) / total * 100).toFixed(1) : 0 };
+        const convBase = e.reservationConversionBase || total;
+        return { name: s.name, phone: e.phone || 0, web: e.web || 0, walkin: e.walkin || 0, total, conv: convBase ? +((e.reservationConversions || 0) / convBase * 100).toFixed(1) : 0 };
       }) : null;
       if (!liveLeadRows) debugWarn('[portal-v2] Leads by Store table rendering with mock RAW_STORES data (no live sites available).');
       const leadRowsAll = liveLeadRows || fs.map((s) => {
@@ -2948,7 +2949,7 @@ export default function PortalV2Page() {
         const web = leadRowsAll.reduce((a, r) => a + (r.web || 0), 0);
         const walkin = leadRowsAll.reduce((a, r) => a + (r.walkin || 0), 0);
         const total = leadRowsAll.reduce((a, r) => a + (r.total || 0), 0);
-        const conv = enqSum ? (enqSum('total') ? +(enqSum('reservationConversions') / enqSum('total') * 100).toFixed(1) : 0) : (total ? +(leadRowsAll.reduce((a, r) => a + (r.conv || 0) * (r.total || 0), 0) / total).toFixed(1) : 0);
+        const conv = enqSum ? (enqSum('reservationConversionBase') ? +(enqSum('reservationConversions') / enqSum('reservationConversionBase') * 100).toFixed(1) : 0) : (total ? +(leadRowsAll.reduce((a, r) => a + (r.conv || 0) * (r.total || 0), 0) / total).toFixed(1) : 0);
         return { phone, web, walkin, total, conv };
       })();
       // "vs last month" totals-row delta (task #121, added 10 Jul 2026) — same enqSum() pattern, just
@@ -2957,18 +2958,18 @@ export default function PortalV2Page() {
       const enqSumPrev = livePrevSites ? (k) => livePrevSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
       const leadTotalsPrev = (liveLeadRows && enqSumPrev) ? {
         phone: enqSumPrev('phone'), web: enqSumPrev('web'), walkin: enqSumPrev('walkin'), total: enqSumPrev('total'),
-        conv: enqSumPrev('total') ? +(enqSumPrev('reservationConversions') / enqSumPrev('total') * 100).toFixed(1) : 0,
+        conv: enqSumPrev('reservationConversionBase') ? +(enqSumPrev('reservationConversions') / enqSumPrev('reservationConversionBase') * 100).toFixed(1) : 0,
       } : null;
       // Tooltip FIXED 21 Jul 2026 (full portal audit) — still described the old per-lead email-
       // matching conversion methodology, which was fully removed 17 Jul 2026 (task #310) in favor of
       // a plain period-ratio. The sibling "Enquiry → Reservation" card's tooltip two blocks up was
-      // updated when that change landed; this table's tip was simply missed. conv (line 2776) is
-      // exactly the same enqSum('reservationConversions')/enqSum('total') period-ratio, no sEmail
-      // matching anywhere in this calculation.
+      // updated when that change landed; this table's tip was simply missed. conv is exactly the same
+      // enqSum('reservationConversions')/enqSum('reservationConversionBase') period-ratio, no
+      // sEmail matching anywhere in this calculation.
       out.tables.push({
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, sRentalType.\nCalculation: Inquiry counts by channel per site. Conversion % = reservation-stage rows this period ÷ this period\'s total enquiries × 100 — same period-ratio pattern as Enquiry → Reservation, no per-lead matching. Totals row is sum-then-divide.',
+        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced (channel counts from Activity table); iTotal, iConverted (conversion % from InquirySource aggregate table).\nCalculation: Inquiry counts by channel per site. Conversion % = Σ iConverted ÷ Σ iTotal for that site and period. Totals row is sum-then-divide.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -4090,11 +4091,14 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'marketing' && title === 'Enquiry → Reservation' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, conversionPct: s.enquiries?.total ? +(((s.enquiries.reservationConversions || 0) / s.enquiries.total) * 100).toFixed(1) : 0, reservations: s.enquiries?.reservationConversions || 0, enquiries: s.enquiries?.total || 0 }));
-      const totalEnquiries = sumBy(sites, (s) => s.enquiries?.total || 0);
+      const rows = sites.map((s) => {
+        const conversionBase = s.enquiries?.reservationConversionBase ?? s.enquiries?.total ?? 0;
+        return { store: s.name, conversionPct: conversionBase ? +(((s.enquiries?.reservationConversions || 0) / conversionBase) * 100).toFixed(1) : 0, reservations: s.enquiries?.reservationConversions || 0, enquiries: conversionBase };
+      });
+      const totalEnquiries = sumBy(sites, (s) => s.enquiries?.reservationConversionBase ?? s.enquiries?.total ?? 0);
       const totalReservations = sumBy(sites, (s) => s.enquiries?.reservationConversions || 0);
       return toSheet(
-        [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion rate %' }, { key: 'reservations', label: 'Reservation-stage enquiries' }, { key: 'enquiries', label: 'Enquiries' }],
+        [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion rate %' }, { key: 'reservations', label: 'Converted enquiries' }, { key: 'enquiries', label: 'Enquiries' }],
         rows,
         { conversionPct: totalEnquiries ? +((totalReservations / totalEnquiries) * 100).toFixed(1) : 0, reservations: totalReservations, enquiries: totalEnquiries },
         'Portfolio',

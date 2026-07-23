@@ -23,12 +23,14 @@ const now = new Date();
 const targets = [];
 for (let k = 1; k <= MONTHS; k++) targets.push(new Date(now.getFullYear(), now.getMonth() - k, 1));
 targets.reverse();   // oldest → newest
-// Fix 6 Jul 2026: was slice(-2) — force-refreshing the 2 newest months regardless of lock state.
-// That bypassed the resume/skip logic and let a transient SiteLink hiccup silently overwrite an
-// already-closed, already-correct month (this is exactly what corrupted June's ManagementSummary
-// data during the 96-month backfill). Now only the single most-recent, still-open month is ever
-// force-refreshed — matching pull.js's "current month stays live, previous month locks" logic.
-const recent = new Set(targets.slice(-1).map(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)); // always refresh only the current (still-open) month
+// FIXED 23 Jul 2026 (production-readiness audit): this script targets COMPLETE historical months
+// only (`k = 1..MONTHS`, so last month and older) — it never includes the real current in-progress
+// month. The old `slice(-1)` bypass therefore did NOT "refresh only the current month" as the comment
+// claimed; it force-refreshed the MOST RECENT CLOSED month on every rerun, defeating the resume/skip
+// safety and reopening exactly the kind of locked-history overwrite this comment was trying to avoid.
+// Historical backfill runs should skip any already-stored closed month unless FORCE=1 explicitly says
+// otherwise, so the bypass set is intentionally empty here.
+const recent = new Set();
 
 await admin.from('sites').upsert(locations.map(code => ({ code, name: code })), { onConflict: 'code', ignoreDuplicates: true });
 
@@ -55,21 +57,31 @@ console.log('Reports:', reportKeys.join(', '), '\n');
 const ordered = reportKeys.includes('occupancy') ? ['occupancy', ...reportKeys.filter(k => k !== 'occupancy')] : reportKeys.slice();
 let ok = 0, fail = 0, skip = 0; const t0 = Date.now();
 for (const month of targets) {
-  const mk = ymd(month).slice(0, 7), end = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  // FIXED 23 Jul 2026 (production-readiness audit): closed historical months must end at the START
+  // of the following day, not midnight on their final calendar day, because SiteLink treats the end
+  // bound as exclusive. The old `new Date(y, m + 1, 0)` silently dropped each target month's last
+  // day from every dated report in this backfill path.
+  const mk = ymd(month).slice(0, 7), end = new Date(month.getFullYear(), month.getMonth() + 1, 1);
   for (const loc of locations) {
     let occEmpty = false;
     for (const key of ordered) {
-      if (existing.has(`${loc}|${mk}|${key}`) && !recent.has(mk)) { skip++; continue; }   // skip stored months, but always refresh the newest
+      if (existing.has(`${loc}|${mk}|${key}`) && !recent.has(mk)) { skip++; continue; }
       if (occEmpty && key !== 'occupancy') { skip++; continue; }   // site wasn't open this month — skip the rest
       try {
-        let data;
+        let data, raw;
         for (let attempt = 1; ; attempt++) {
-          try { ({ data } = await pullReport(key, loc, month, end)); break; }
+          try { ({ data, raw } = await pullReport(key, loc, month, end)); break; }
           catch (e) { if (attempt >= 3) throw e; await sleep(2000 * attempt); }
         }
         if (key === 'occupancy' && !(data && data.total_units > 0)) occEmpty = true;
+        // FIXED 23 Jul 2026 (production-readiness audit): historical backfill used to persist only
+        // the parsed `data`, dropping raw_response even though the normal pull/repull paths have
+        // stored it since 7 Jul 2026. That made future parser fixes unreplayable for ANY month first
+        // populated by this script alone — scripts/reparse-report.js would have nothing to work with.
+        // Keep backfilled rows structurally identical to live-pulled rows so every later maintenance
+        // tool can treat them the same way.
         const { error } = await admin.from('raw_report').upsert(
-          { site_code: loc, month: ymd(month), report: key, data, pulled_at: new Date().toISOString() },
+          { site_code: loc, month: ymd(month), report: key, data, raw_response: raw ?? null, pulled_at: new Date().toISOString() },
           { onConflict: 'site_code,month,report' });
         if (error) throw new Error('DB ' + error.message);
         ok++;
@@ -81,7 +93,16 @@ for (const month of targets) {
 
 console.log(`\nPull phase complete: ${ok} pulled, ${skip} skipped, ${fail} failed. Rebuilding payload…`);
 try {
-  const payload = await buildPayload(targets[targets.length - 1], targets[targets.length - 2] || targets[targets.length - 1]);
+  // FIXED 23 Jul 2026 (production-readiness audit): this script only backfills COMPLETE historical
+  // months (targets start at last month and go further back), so `targets[targets.length - 1]` is
+  // never the real in-progress current month. Rebuilding portal_payload against that value silently
+  // relabels the whole portal to the most recent BACKFILLED closed month until the next normal pull/
+  // rebuild cycle happens to correct it. Match every other maintenance script instead: rebuild the
+  // live payload for the actual current month + previous month, while still benefiting from the newly
+  // backfilled history sitting behind it.
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const payload = await buildPayload(currentMonthStart, prevMonthStart);
   await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
   console.log(`Done. Payload now spans ${payload.months?.length || '?'} months.`);
 } catch (e) { console.error('Payload rebuild failed (data is saved; run `npm run rebuild`):', e.message); }

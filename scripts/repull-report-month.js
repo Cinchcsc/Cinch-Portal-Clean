@@ -27,10 +27,14 @@ const monthStart = new Date(y, m - 1, 1);
 // (confirmed for PastDueBalances, likely true for others) return a DIFFERENT, inflated result when
 // asked for a range that extends into the future vs. one capped at "now" — using the full calendar
 // month-end unconditionally here would have silently corrupted any current-month re-pull.
+// FIXED 23 Jul 2026 (production-readiness audit): for CLOSED months, SiteLink's end bound is
+// exclusive of the calendar day it lands on, so `new Date(y, m, 0)` would drop the month's final
+// day exactly like the old lib/pull.js bug did. Historical healing must therefore end at the START
+// of the following day, not midnight at the start of the last day itself.
 const now = new Date();
 const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
-const fullMonthEnd = new Date(y, m, 0);
-const monthEnd = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
+const closedMonthEndExclusive = new Date(y, m, 1);
+const monthEnd = isCurrentMonth ? now : closedMonthEndExclusive;
 const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
 const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map(s => s.trim()).filter(Boolean);

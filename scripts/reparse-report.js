@@ -84,9 +84,14 @@ for (const r of idRows) {
     const mk = String(r.month).slice(0, 7);
     const [y, m] = mk.split('-').map(Number);
     const startDate = new Date(y, m - 1, 1);
-    const fullMonthEnd = new Date(y, m, 0);
     const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
-    const endDate = isCurrentMonth && fullMonthEnd > now ? now : fullMonthEnd;
+    // FIXED 23 Jul 2026 (production-readiness audit): reparsing must use the SAME effective date
+    // window as the live pull that should have created the row. For closed months that means the
+    // start of the FOLLOWING day, not midnight at the start of the last day itself, because
+    // SiteLink's end bound is exclusive. Otherwise a reparse could keep reinforcing missing-last-day
+    // behaviour in any parser that uses start/end to trim raw rows.
+    const closedMonthEndExclusive = new Date(y, m, 1);
+    const endDate = isCurrentMonth ? now : closedMonthEndExclusive;
 
     // One small SELECT per row instead of one big one up front (see comment above) — the whole point
     // of the fix, so a heavy/degraded DB fails (and retries) one row at a time, not all-or-nothing.
