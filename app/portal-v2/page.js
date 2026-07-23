@@ -2160,22 +2160,39 @@ export default function PortalV2Page() {
         // Autobill Conversion — REMOVED from the KPI page 16 Jul 2026 (Michael's manual audit).
         // Still lives on the Ancillaries page (same metric/tile, kpiT.autobillPC) — this was a
         // straight duplicate between the two pages, not a data bug.
-        // Customer Churn: legacy formula is trailing-12-month move-outs / average occupancy over the
-        // same 12 months (confirmed 2 Jul 2026). Live-wired (3 Jul 2026) against `liveHistory`
-        // (portfolio history, one point per stored month — see lib/buildPayload.js) once at least 12
-        // months are stored; falls back to mock until then (the pipeline only kept current+previous
-        // month before — needs `npm run backfill 12` or more, see scripts/backfill.js). NOTE: like
-        // the Month-on-Month trend charts, this is portfolio-wide and does not respect the
-        // store/region filter (no per-site history retained yet).
+        // Customer Churn — REBUILT 23 Jul 2026 (Michael: cutover moved to end of August, do the real
+        // fix rather than just a tooltip). Previously always read `liveHistory` (portfolio.history — a
+        // single already-summed portfolio-wide series, per-site granularity discarded server-side by
+        // buildHistory() in lib/buildPayload.js) and always ended its trailing-12-month window at
+        // whatever the LATEST stored month happened to be — so neither the store filter nor the period
+        // selector could ever move the number, exactly matching what Michael saw ("almost as if it does
+        // not change"). Fixed by reading `liveMonthly` instead (portfolio.monthly — per-site-per-month
+        // records, already fetched into this page for the MoM per-store overlay feature, task #373, so
+        // this needs no new API call) and: 1) anchoring the trailing-12-month window at
+        // monthKeyOf(monthTo) instead of the latest stored month — same anchor convention already used
+        // by the Marketing YoY series (curMonthKey) and the MoM per-store overlay (selectedMonthKey)
+        // elsewhere on this page, so it now moves with the period selector; 2) filtering each month's
+        // per-site records by the same `selected` store-checkbox state `liveSites` above already uses,
+        // so picking a store now actually changes the result. Legacy formula itself is unchanged
+        // (confirmed 2 Jul 2026): Σ move-outs ÷ average occupied units over the trailing 12 months × 100.
         (() => {
-          const h12 = (liveHistory && liveHistory.length >= 12) ? liveHistory.slice(-12) : null;
-          if (h12) {
-            const moveOutsSum = h12.reduce((a, m) => a + (m.moveOuts || 0), 0);
-            const avgOcc = h12.reduce((a, m) => a + (m.occ || 0), 0) / h12.length;
+          const anchorKey = monthKeyOf(monthTo);
+          const monthKeys = liveMonthly ? Object.keys(liveMonthly).sort().filter((mk) => mk <= anchorKey) : [];
+          const last12Keys = monthKeys.length >= 12 ? monthKeys.slice(-12) : null;
+          const anySel = Object.values(selected).some(Boolean);
+          const scoped = (recs) => (!recs) ? [] : (anySel ? recs.filter((r) => selected[r.name]) : recs);
+          if (last12Keys) {
+            let moveOutsSum = 0, occSum = 0;
+            for (const mk of last12Keys) {
+              const recs = scoped(liveMonthly[mk]);
+              moveOutsSum += recs.reduce((a, r) => a + (r.moveOuts || 0), 0);
+              occSum += recs.reduce((a, r) => a + (r.occ || 0), 0);
+            }
+            const avgOcc = occSum / last12Keys.length;
             const churnPct = avgOcc ? R2(moveOutsSum / avgOcc * 100) : 0;
-            return { title: 'Customer Churn', live: true, tiles: [{ value: churnPct.toFixed(1) + '%', label: 'Rolling 12-month', delta: null, dir: null }], hasViz: true, el: <Donut pct={churnPct} color={C.teal} /> };
+            return { title: 'Customer Churn', live: true, tip: 'Report: OccupancyStatistics (occupied units); MoveInsAndMoveOuts (move-outs).\nCalculation: Σ move-outs ÷ average occupied units, over the trailing 12 months ending at the selected period, × 100. Respects the store filter and moves with the period selector.', tiles: [{ value: churnPct.toFixed(1) + '%', label: 'Rolling 12-month', delta: null, dir: null }], hasViz: true, el: <Donut pct={churnPct} color={C.teal} /> };
           }
-          if (liveHistory) debugWarn(`[portal-v2] Customer Churn still mock — only ${liveHistory.length} month(s) of history stored (need 12). Run npm run backfill 12 (or more).`);
+          if (liveMonthly) debugWarn(`[portal-v2] Customer Churn still mock — only ${monthKeys.length} month(s) of history stored at/before ${anchorKey} (need 12). Run npm run backfill 12 (or more).`);
           return { title: 'Customer Churn', tiles: [{ value: '78.88%', label: 'Rolling 12-month', delta: '1%', dir: 'down' }], hasViz: true, el: <Donut pct={78.88} color={C.teal} /> };
         })(),
       ];
