@@ -38,23 +38,26 @@ const inWindow = (dateVal, start, end) => {
 
 const locations = process.env.SITELINK_LOCATIONS.split(',').map((s) => s.trim()).filter(Boolean);
 
-// Wide query window: far enough back that a June-converted row placed in an earlier month is still
-// captured, far enough forward (today) that we're not truncating anything mid-conversion.
+// Query start: far enough back that a June-converted row placed in an earlier month is still captured.
 const wideStart = new Date(2026, 3, 1);  // 1 Apr 2026
-const wideEnd = new Date();              // today
 
-// BUG FIXED 23 Jul 2026 (2nd bug caught before reporting, this time by checking my own CURRENT-method
-// output against the ALREADY-KNOWN-GOOD baseline before trusting the PROPOSED comparison at all): this
-// previously counted EVERY row placed in window as an "enquiry", with no channel classification --
-// production's actual total_enquiries (reportMap.js's lead_funnel parser) is `phone+walkin+web+email`,
-// EXPLICITLY EXCLUDING "other"-classified rows. Inflating the denominator with "other" rows deflates the
-// computed ratio relative to production's true one -- likely why CURRENT read 10.5% here instead of the
-// already-validated 23.9%. Rewritten to mirror reportMap.js's lead_funnel classification EXACTLY (same
-// str()/toLowerCase() logic, same 4-bucket-plus-other split), so `enquiries` here means the same thing
-// production's total_enquiries does. Only the ONE thing actually under test -- which date field gates
-// reservation_stage_count -- is allowed to differ from production.
-async function siteCounts(site, monthStart, monthEnd) {
-  const { raw } = await callReport('InquiryTracking', site, wideStart, wideEnd);
+// BUG FIXED 23 Jul 2026 (3rd bug, caught by the self-check added after the 2nd): CURRENT still read
+// 10.5% after fixing the enquiries channel-classification bug, and the totals barely moved (4433->4432
+// enquiries, 466 reservations BOTH times) -- meaning that fix wasn't the real explanation. Root cause:
+// this was calling callReport() with the SOAP end-date set to TODAY for every query, including the June
+// test, then filtering client-side by dPlaced/dConverted_ToRsv falling in June. But SiteLink's
+// InquiryTracking returns "current state AS OF THE QUERY'S OWN dReportDateEnd parameter", not "as of
+// whenever you happen to run it" -- confirmed via lib/pull.js's endOf() (`new Date(y, m+1, 0)`, capped
+// at `now` only for the CURRENT month), which is the exact convention production used to generate the
+// already-validated 23.9% June figure: dReportDateEnd=30 Jun, not today. Querying with dReportDateEnd=
+// today for a query about JUNE risks records that were open as of 30 Jun but have since been fully
+// resolved (and dropped out of what a today-dated report returns) -- a genuinely different row SET, not
+// just different filtering. Fixed by giving siteCounts() its own `queryEnd` param: today for Abingdon's
+// live-July check (correct, matching how the CURRENT in-progress month is always queried), but 30 Jun
+// specifically for the June portfolio test -- matching pull.js's own historical convention exactly, warts
+// (the exclusive-end-date quirk) and all, since that's what actually produced the 23.9% baseline.
+async function siteCounts(site, monthStart, monthEnd, queryEnd) {
+  const { raw } = await callReport('InquiryTracking', site, wideStart, queryEnd);
   const rows = extractNamedTable(raw, 'Activity');
   let phone = 0, walkin = 0, web = 0, email = 0; // "other" deliberately NOT counted into enquiries, same as production
   let resCurrent = 0;               // CURRENT (production) method: isPlacedInWindow(dPlaced) && isReservationStage
@@ -82,7 +85,8 @@ async function siteCounts(site, monthStart, monthEnd) {
 console.log(`${'='.repeat(90)}\nSTEP 1: direct re-check -- Abingdon (L029), 22 Jul specifically\n${'='.repeat(90)}`);
 {
   const day = new Date(2026, 6, 22);
-  const c = await siteCounts('L029', day, day);
+  const today = new Date(); // July is the live/in-progress month -- query end = today, same as pull.js's endOf() does for the current month
+  const c = await siteCounts('L029', day, day, today);
   console.log(`Abingdon 22 Jul: enquiries=${c.enquiries}  reservations CURRENT(dPlaced)=${c.resCurrent}  reservations PROPOSED(dConverted_ToRsv)=${c.resProposed}  (rows scanned=${c.rowCount})`);
   console.log(c.resProposed >= 1 ? '*** PROPOSED method recovers the missing reservation ***' : 'Proposed method still shows 0 -- needs more digging.');
 }
@@ -90,9 +94,10 @@ console.log(`${'='.repeat(90)}\nSTEP 1: direct re-check -- Abingdon (L029), 22 J
 console.log(`\n${'='.repeat(90)}\nSTEP 2: portfolio-wide June 2026 -- does switching the date field move the already-\nvalidated 23.9%-vs-legacy's-19.8% ratio closer or further away?\n${'='.repeat(90)}`);
 {
   const juneStart = new Date(2026, 5, 1), juneEnd = new Date(2026, 5, 30);
+  const juneQueryEnd = new Date(2026, 5, 30); // matches lib/pull.js's endOf() for June exactly -- NOT today
   let totalEnq = 0, totalResCurrent = 0, totalResProposed = 0;
   for (const site of locations) {
-    const c = await siteCounts(site, juneStart, juneEnd);
+    const c = await siteCounts(site, juneStart, juneEnd, juneQueryEnd);
     totalEnq += c.enquiries; totalResCurrent += c.resCurrent; totalResProposed += c.resProposed;
     console.log(`  ${site}: enq=${c.enquiries} resCurrent=${c.resCurrent} resProposed=${c.resProposed}`);
   }
