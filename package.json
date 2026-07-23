@@ -89,7 +89,8 @@
     "probe:realrate-nocredit-all-sites": "node --env-file=.env scripts/probe-realrate-nocredit-all-sites.js",
     "probe:transfer-row-shape": "node --env-file=.env scripts/probe-transfer-row-shape.js",
     "probe:realrate-fixed-all-sites": "node --env-file=.env scripts/probe-realrate-fixed-all-sites.js",
-    "probe:abingdon-snapshot-reservations": "node --env-file=.env scripts/probe-abingdon-snapshot-reservations.js"
+    "probe:abingdon-snapshot-reservations": "node --env-file=.env scripts/probe-abingdon-snapshot-reservations.js",
+    "probe:daily-window-boundary": "node --env-file=.env scripts/probe-daily-window-boundary.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
