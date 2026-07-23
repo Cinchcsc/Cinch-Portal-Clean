@@ -100,7 +100,8 @@
     "probe:mio-single-row-shape": "node --env-file=.env scripts/probe-mio-single-row-shape.js",
     "probe:mio-single-row-fields": "node --env-file=.env scripts/probe-mio-single-row-fields.js",
     "probe:reservation-converted-date": "node --env-file=.env scripts/probe-reservation-converted-date.js",
-    "probe:reservation-reparse-check": "node --env-file=.env scripts/probe-reservation-reparse-check.js"
+    "probe:reservation-reparse-check": "node --env-file=.env scripts/probe-reservation-reparse-check.js",
+    "probe:realrate-current-vs-rentonly": "node --env-file=.env scripts/probe-realrate-current-vs-rentonly.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
