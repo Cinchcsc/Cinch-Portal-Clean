@@ -22,19 +22,20 @@ if (!reportKey || !monthArg) {
 }
 const [y, m] = monthArg.split('-').map(Number);
 const monthStart = new Date(y, m - 1, 1);
-// FIXED 7 Jul 2026: cap the end date at TODAY when re-pulling the CURRENT in-progress month — same
-// rule lib/pull.js's endOf() applies for regular cron pulls. Point-in-time/snapshot-style reports
-// (confirmed for PastDueBalances, likely true for others) return a DIFFERENT, inflated result when
-// asked for a range that extends into the future vs. one capped at "now" — using the full calendar
-// month-end unconditionally here would have silently corrupted any current-month re-pull.
+// FIXED 7 Jul 2026, then tightened 24 Jul 2026: cap the CURRENT in-progress month at the START of
+// TODAY, not "right now", so manual healing matches the portal's "last complete day only" rule from
+// lib/pull.js. Using the literal current timestamp here would let a mid-day repull silently pull a
+// partial current day back into the live month even after the main production pull path was fixed.
 // FIXED 23 Jul 2026 (production-readiness audit): for CLOSED months, SiteLink's end bound is
 // exclusive of the calendar day it lands on, so `new Date(y, m, 0)` would drop the month's final
 // day exactly like the old lib/pull.js bug did. Historical healing must therefore end at the START
 // of the following day, not midnight at the start of the last day itself.
 const now = new Date();
+const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
 const closedMonthEndExclusive = new Date(y, m, 1);
-const monthEnd = isCurrentMonth ? now : closedMonthEndExclusive;
+const monthEnd = isCurrentMonth ? startOfToday : closedMonthEndExclusive;
+const parseEndDate = new Date(monthEnd.getTime() - 1);
 const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
 const locations = (process.env.SITELINK_LOCATIONS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -49,7 +50,7 @@ let ok = 0, failed = 0;
 for (const loc of locations) {
   try {
     // raw ADDED 7 Jul 2026 (raw-storage change) — see schema.sql / scripts/reparse-report.js.
-    const { data, raw } = await pullReport(reportKey, loc, monthStart, monthEnd);
+    const { data, raw } = await pullReport(reportKey, loc, monthStart, monthEnd, { parseEndDate });
     const { error } = await admin.from('raw_report').upsert(
       { site_code: loc, month: monthKey, report: reportKey, data, raw_response: raw ?? null, pulled_at: new Date().toISOString() },
       { onConflict: 'site_code,month,report' });

@@ -62,6 +62,7 @@ for (const month of targets) {
   // bound as exclusive. The old `new Date(y, m + 1, 0)` silently dropped each target month's last
   // day from every dated report in this backfill path.
   const mk = ymd(month).slice(0, 7), end = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+  const parseEndDate = new Date(end.getTime() - 1);
   for (const loc of locations) {
     let occEmpty = false;
     for (const key of ordered) {
@@ -70,7 +71,7 @@ for (const month of targets) {
       try {
         let data, raw;
         for (let attempt = 1; ; attempt++) {
-          try { ({ data, raw } = await pullReport(key, loc, month, end)); break; }
+          try { ({ data, raw } = await pullReport(key, loc, month, end, { parseEndDate })); break; }
           catch (e) { if (attempt >= 3) throw e; await sleep(2000 * attempt); }
         }
         if (key === 'occupancy' && !(data && data.total_units > 0)) occEmpty = true;

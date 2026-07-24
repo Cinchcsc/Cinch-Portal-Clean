@@ -26,8 +26,9 @@ if (!locations.length) { console.error('SITELINK_LOCATIONS not set'); process.ex
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function tryPull(key, loc, start, end) {
   const backoff = [0, 2000, 5000];
+  const parseEndDate = new Date(end.getTime() - 1);
   for (let attempt = 1; ; attempt++) {
-    try { return await pullReport(key, loc, start, end); }
+    try { return await pullReport(key, loc, start, end, { parseEndDate }); }
     catch (e) { if (attempt >= backoff.length) throw e; await sleep(backoff[attempt]); }
   }
 }
@@ -36,18 +37,16 @@ const months = await listStoredMonths();
 console.log(`Re-pulling '${reportKey}' for ${months.length} stored months x ${locations.length} sites = ${months.length * locations.length} calls.`);
 console.log('This runs sequentially and will take a while — progress is logged per month.\n');
 
-// FIXED 7 Jul 2026: cap the end date at TODAY when re-pulling the CURRENT in-progress month — same
-// rule lib/pull.js's endOf() applies for regular cron pulls, and the same fix already applied to
-// repull-report-month.js. Point-in-time/snapshot-style data (confirmed for PastDueBalances, and for
-// ManagementSummary's Delinquency/Unpaid tables used by the Debtor Levels fix) returns a DIFFERENT,
-// inflated/wrong result when asked for a range that extends into the future — this matters here
-// specifically because `management` is now one of the reports this script re-pulls historically, and
-// its OWN current month (July) must not be corrupted by using July 31 (a future date) as the end.
+// FIXED 7 Jul 2026, then tightened 24 Jul 2026: cap the CURRENT in-progress month at the START of
+// TODAY, not "right now", so a manual full-history healing run cannot reintroduce partial-current-day
+// data into the live month after lib/pull.js was fixed to stop at the last complete day. This still
+// prevents the older "future date" corruption too.
 // FIXED 23 Jul 2026 (production-readiness audit): for CLOSED months, SiteLink's end bound is
 // exclusive of the calendar day it lands on, so `new Date(y, m, 0)` would re-import every past month
 // with its final day missing — the exact bug this script is often used to heal. Closed months must
 // therefore end at the start of the FOLLOWING day instead.
 const now0 = new Date();
+const startOfToday = new Date(now0.getFullYear(), now0.getMonth(), now0.getDate());
 let totalOk = 0, totalFailed = 0;
 const startedAt = Date.now();
 for (let i = 0; i < months.length; i++) {
@@ -56,7 +55,7 @@ for (let i = 0; i < months.length; i++) {
   const monthStart = new Date(y, m - 1, 1);
   const isCurrentMonth = y === now0.getFullYear() && m === now0.getMonth() + 1;
   const closedMonthEndExclusive = new Date(y, m, 1);
-  const monthEnd = isCurrentMonth ? now0 : closedMonthEndExclusive;
+  const monthEnd = isCurrentMonth ? startOfToday : closedMonthEndExclusive;
   const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
   const { error: delErr } = await admin.from('raw_report').delete().eq('report', reportKey).eq('month', monthKey);

@@ -64,8 +64,9 @@ try {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   async function tryPull(key, loc, start, end) {
     const backoff = [0, 2000, 5000];
+    const parseEndDate = new Date(end.getTime() - 1);
     for (let attempt = 1; ; attempt++) {
-      try { return await pullReport(key, loc, start, end); }
+      try { return await pullReport(key, loc, start, end, { parseEndDate }); }
       catch (e) { if (attempt >= backoff.length) throw e; await sleep(backoff[attempt]); }
     }
   }
@@ -75,14 +76,16 @@ try {
   for (const mk of missing) {
     const [y, m] = mk.split('-').map(Number);
     const monthStart = new Date(y, m - 1, 1);
-    // Same "cap the in-progress current month at today" rule as pull.js/repull-report-month.js — a
-    // gap this old is very unlikely to BE the current month, but keep the guard for correctness anyway.
+    // Same "cap the in-progress current month at the start of today" rule as pull.js/repull-report-
+    // month.js — a gap this old is very unlikely to BE the current month, but keep the guard for
+    // correctness anyway so a manual gap-heal can't reintroduce partial-day data into the live month.
     // FIXED 23 Jul 2026 (production-readiness audit): closed months must end at the START of the
     // following day, not midnight on their final calendar day, because SiteLink treats the end bound
     // as exclusive. Otherwise this backfill path would recreate the same missing-last-day bug.
     const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const closedMonthEndExclusive = new Date(y, m, 1);
-    const monthEnd = isCurrentMonth ? now : closedMonthEndExclusive;
+    const monthEnd = isCurrentMonth ? startOfToday : closedMonthEndExclusive;
     const monthKey = `${y}-${String(m).padStart(2, '0')}-01`;
 
     for (const loc of locations) {
