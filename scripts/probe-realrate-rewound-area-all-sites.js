@@ -71,8 +71,19 @@ async function liveOccupiedToday(site) {
 // --- Net moved-in-minus-moved-out area/units from julyStart through today (Total store only --
 // same field names probe-realrate-rewind-occupied-area.js already established: MoveIn/MoveOut flags,
 // MovedInArea/MovedOutArea) ---
+// FIXED 24 Jul 2026 (post-hoc, after first live run): this originally destructured `{ rows }` from
+// callReport(), i.e. plain extractRows() — the EXACT SAME bare-single-row blind spot already found
+// and fixed in production's own move_ins_outs parser (lib/reportMap.js, task #406/#409): node-soap/
+// xml2js does not array-wrap a repeated element that occurs exactly once, so a window with exactly 1
+// real move event would silently parse as a bare object and vanish from a plain array walk, not throw
+// or warn. Production works around this by re-deriving rows from `raw` via
+// extractNamedTable(raw, 'UnitMoveInsAndMoveOuts'), which explicitly also matches the bare-object
+// shape — switched to the identical call here so this probe can't inherit a bug already confirmed and
+// fixed elsewhere in this codebase. Also now returns/prints rowCount per site so a suspiciously thin
+// move window is visible rather than silently indistinguishable from "this site just didn't move much."
 async function netMovesSinceJuly1(site) {
-  const { rows } = await callReport('MoveInsAndMoveOuts', site, julyStart, now);
+  const { raw } = await callReport('MoveInsAndMoveOuts', site, julyStart, now);
+  const rows = extractNamedTable(raw, 'UnitMoveInsAndMoveOuts');
   let netUnits = 0, netArea = 0;
   for (const r of rows) {
     const inFlag = yes(r.MoveIn), outFlag = yes(r.MoveOut);
@@ -121,8 +132,8 @@ for (const [code, [name, target]] of Object.entries(SITES)) {
     const gapFrozen = R2(rateFrozen - target), gapRewound = R2(rateRewound - target);
     const flag = KNOWN_OUTLIERS.has(code) ? ' <-- known >£1 miss (frozen area)' : '';
 
-    results.push({ code, name, target, frozen, rewoundArea, rewoundUnits, rateFrozen, rateRewound, gapFrozen, gapRewound });
-    console.log(`${code} ${name.padEnd(18)} target=£${target.toFixed(2)}  area frozen=${frozen.occArea}(${frozen.occUnits}u) rewound=${rewoundArea}(${rewoundUnits}u) diff=${R2(rewoundArea - frozen.occArea)}sqft/${rewoundUnits - frozen.occUnits}u  |  Rate frozen=£${rateFrozen.toFixed(2)}(gap ${gapFrozen}) rewound=£${rateRewound.toFixed(2)}(gap ${gapRewound})${flag}`);
+    results.push({ code, name, target, frozen, rewoundArea, rewoundUnits, rateFrozen, rateRewound, gapFrozen, gapRewound, moveRows: net.rowCount });
+    console.log(`${code} ${name.padEnd(18)} target=£${target.toFixed(2)}  area frozen=${frozen.occArea}(${frozen.occUnits}u) rewound=${rewoundArea}(${rewoundUnits}u) diff=${R2(rewoundArea - frozen.occArea)}sqft/${rewoundUnits - frozen.occUnits}u  moveRows=${net.rowCount}  |  Rate frozen=£${rateFrozen.toFixed(2)}(gap ${gapFrozen}) rewound=£${rateRewound.toFixed(2)}(gap ${gapRewound})${flag}`);
   } catch (e) {
     console.log(`${code} ${name.padEnd(18)} FAILED: ${e.message}`);
   }

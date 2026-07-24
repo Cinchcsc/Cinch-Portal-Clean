@@ -106,7 +106,8 @@
     "probe:billing-frequency-breakdown-all-sites": "node --env-file=.env scripts/probe-billing-frequency-breakdown-all-sites.js",
     "probe:realrate-basis-gap-diagnosis": "node --env-file=.env scripts/probe-realrate-basis-gap-diagnosis.js",
     "probe:realrate-truerevenue-minus-discounts-only": "node --env-file=.env scripts/probe-realrate-truerevenue-minus-discounts-only.js",
-    "probe:realrate-rewound-area-all-sites": "node --env-file=.env scripts/probe-realrate-rewound-area-all-sites.js"
+    "probe:realrate-rewound-area-all-sites": "node --env-file=.env scripts/probe-realrate-rewound-area-all-sites.js",
+    "probe:enfield-movedetail-july": "node --env-file=.env scripts/probe-enfield-movedetail-july.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
