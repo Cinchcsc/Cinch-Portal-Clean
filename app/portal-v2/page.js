@@ -1877,7 +1877,23 @@ export default function PortalV2Page() {
     const livePrevSites = (() => {
       if (!livePrevSitesRaw) return null;
       if (!pageHasSelectedStores) return livePrevSitesRaw;
-      return livePrevSitesRaw.filter((s) => pageSelectedNames.has(s.name));
+      const filtered = livePrevSitesRaw.filter((s) => pageSelectedNames.has(s.name));
+      // FIXED 24 Jul 2026 (task #433, found via a sweep for the same silent-wrong-data bug class as
+      // the MoM/Cockpit chart fixes above): a store filter matching NO rows in last month's snapshot
+      // (e.g. a just-onboarded site like Edmonton/Abingdon that didn't exist yet last month) used to
+      // return `[]` here — truthy, so every "vs last month" delta consumer below (prevT/kpiPrevT/
+      // finTPrev/ancTPrev/umTPrev/enqSumPrev and the raw prevMoveIns/etc. reduces — all of them only
+      // null-check livePrevSites, never its .length) ran computeTotals([]) and got back a fully
+      // populated ALL-ZERO object, not null. That sailed straight past deltaTick()'s `prev == null`
+      // guard and rendered a fabricated (often large) "up" delta arrow — current value vs a phantom
+      // "0 last month" — instead of no-arrow/N/A. The exact same hazard was already caught and fixed
+      // once upstream, at the raw-fetch step (see this file's own comment a few hundred lines up), but
+      // was never patched here at the per-store name-filter step. Now returns null in that case too, so
+      // every downstream `livePrevSites ? X : null` consumer correctly shows no delta instead of a fake
+      // one. Every direct (non-ternary-guarded) livePrevSites.reduce()/.find() call site elsewhere in
+      // this file was checked and confirmed to sit inside a block already conditioned on this same
+      // ternary-guarded variable (or a value derived from it), so this can't newly throw on null.
+      return filtered.length ? filtered : null;
     })();
     // Same store-checkbox rule as liveSites above, but applied to the independent floor-occupancy
     // dataset. Region-only filtering still can't narrow live floor data (no region field in the
@@ -4277,7 +4293,7 @@ export default function PortalV2Page() {
       // substituting unrelated portfolio data -- the stat tile and chart below both handle that null
       // explicitly (an honest "N/A" / an omitted pace line, rather than a fabricated number).
       const cockpitAvgRate = (() => {
-        if (!cockpitSelectedCodes) return cockpitOk ? liveCockpit.avgDailyRate : (haveCockpitDataset ? 0 : 3400);
+        if (!cockpitSelectedCodes) return haveCockpitDataset ? liveCockpit?.avgDailyRate ?? null : 3400;
         if (!liveMonthly) return null;
         const prevKeys = [1, 2, 3].map((n) => monthKeyOf(indexOfMonthKey(cockpitMonthKey) - n));
         const dailyRates = prevKeys.map((mk) => {
@@ -4289,7 +4305,7 @@ export default function PortalV2Page() {
           const [yy, mm] = mk.split('-').map(Number);
           return revenue / new Date(yy, mm, 0).getDate();
         }).filter((v) => v != null);
-        return dailyRates.length ? dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length : null;
+        return dailyRates.length === 3 ? dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length : null;
       })();
       // FIXED 16 Jul 2026 (deep re-audit #4): was `cockpitAvgRate * (i + 1)` -- i is this row's
       // POSITION in cockpitCurve, not the real day-of-month. daily_financial_snapshot doesn't
@@ -4301,15 +4317,17 @@ export default function PortalV2Page() {
       // the array index so a sparse curve doesn't understate the pace line.
       const cockpitPace = cockpitAvgRate == null ? null : cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? new Date(c.date).getDate() : (i + 1))));
       const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
-      const cockpitToDate = cockpitActual[cockpitActual.length - 1] || 0;
-      const cockpitPaceToDate = cockpitPace ? (cockpitPace[cockpitPace.length - 1] || 0) : null;
+      const cockpitToDate = cockpitOk ? (cockpitActual[cockpitActual.length - 1] || 0) : null;
+      const cockpitPaceToDate = cockpitOk && cockpitPace ? (cockpitPace[cockpitPace.length - 1] || 0) : null;
       const [cockpitYear, cockpitMonth] = cockpitMonthKey.split('-').map(Number);
       const cockpitMonthLabel = new Date(cockpitYear, cockpitMonth - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' });
       out.statCards.push({
         title: `Cockpit — ${cockpitMonthLabel}`, live: cockpitOk,
         tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge across the selected stores from the selected end month\'s first day through the last complete stored day for that month (not intraday today). 3-month avg pace = mean(each of the 3 closed months before that selected month\'s total_charge ÷ days in that month) for that same store scope × the same day-of-month.\nNote: pace shows N/A when the selected store(s) have no billing history in all 3 lookback months (24 Jul 2026 fix — previously silently substituted the portfolio-wide average instead).',
         tiles: [
-          { value: money(cockpitToDate), label: 'Actual', delta: null, dir: null },
+          cockpitToDate == null
+            ? { value: 'N/A', label: 'No rows for selected month yet', delta: null, dir: null }
+            : { value: money(cockpitToDate), label: 'Actual', delta: null, dir: null },
           cockpitPaceToDate == null
             ? { value: 'N/A', label: 'No history for 3-month pace', delta: null, dir: null }
             : { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
