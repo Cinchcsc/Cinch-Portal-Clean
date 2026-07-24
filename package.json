@@ -107,7 +107,8 @@
     "probe:realrate-basis-gap-diagnosis": "node --env-file=.env scripts/probe-realrate-basis-gap-diagnosis.js",
     "probe:realrate-truerevenue-minus-discounts-only": "node --env-file=.env scripts/probe-realrate-truerevenue-minus-discounts-only.js",
     "probe:realrate-rewound-area-all-sites": "node --env-file=.env scripts/probe-realrate-rewound-area-all-sites.js",
-    "probe:enfield-movedetail-july": "node --env-file=.env scripts/probe-enfield-movedetail-july.js"
+    "probe:enfield-movedetail-july": "node --env-file=.env scripts/probe-enfield-movedetail-july.js",
+    "probe:realrate-unit-inventory-stability": "node --env-file=.env scripts/probe-realrate-unit-inventory-stability.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
