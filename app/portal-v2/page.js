@@ -4268,8 +4268,17 @@ export default function PortalV2Page() {
           });
         })()
         : cockpitCurve.map((c) => (c.total_charge || 0));
+      // FIXED 24 Jul 2026 (task #432, same bug class as the MoM fix, task #427/#430): previously fell
+      // back to the PORTFOLIO-WIDE liveCockpit.avgDailyRate whenever the selected store(s) had zero
+      // revenue in all 3 lookback months (e.g. a newly-added site with no history that far back) --
+      // silently mixing a real, correctly store-scoped "Actual" line/tile with a portfolio-wide "pace"
+      // one, with no note or visual distinction between them. Now returns null when a store filter is
+      // active and there's no usable store-scoped history for the lookback window, instead of
+      // substituting unrelated portfolio data -- the stat tile and chart below both handle that null
+      // explicitly (an honest "N/A" / an omitted pace line, rather than a fabricated number).
       const cockpitAvgRate = (() => {
-        if (!cockpitSelectedCodes || !liveMonthly) return cockpitOk ? liveCockpit.avgDailyRate : (haveCockpitDataset ? 0 : 3400);
+        if (!cockpitSelectedCodes) return cockpitOk ? liveCockpit.avgDailyRate : (haveCockpitDataset ? 0 : 3400);
+        if (!liveMonthly) return null;
         const prevKeys = [1, 2, 3].map((n) => monthKeyOf(indexOfMonthKey(cockpitMonthKey) - n));
         const dailyRates = prevKeys.map((mk) => {
           const recs = liveMonthly[mk] || [];
@@ -4280,7 +4289,7 @@ export default function PortalV2Page() {
           const [yy, mm] = mk.split('-').map(Number);
           return revenue / new Date(yy, mm, 0).getDate();
         }).filter((v) => v != null);
-        return dailyRates.length ? dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length : (cockpitOk ? liveCockpit.avgDailyRate : (haveCockpitDataset ? 0 : 3400));
+        return dailyRates.length ? dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length : null;
       })();
       // FIXED 16 Jul 2026 (deep re-audit #4): was `cockpitAvgRate * (i + 1)` -- i is this row's
       // POSITION in cockpitCurve, not the real day-of-month. daily_financial_snapshot doesn't
@@ -4290,28 +4299,30 @@ export default function PortalV2Page() {
       // curve only had 2 rows so far this month, not 15). The label line right below this already
       // derives the true day-of-month from c.date for the same reason -- reuse that here instead of
       // the array index so a sparse curve doesn't understate the pace line.
-      const cockpitPace = cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? new Date(c.date).getDate() : (i + 1))));
+      const cockpitPace = cockpitAvgRate == null ? null : cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? new Date(c.date).getDate() : (i + 1))));
       const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
       const cockpitToDate = cockpitActual[cockpitActual.length - 1] || 0;
-      const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
+      const cockpitPaceToDate = cockpitPace ? (cockpitPace[cockpitPace.length - 1] || 0) : null;
       const [cockpitYear, cockpitMonth] = cockpitMonthKey.split('-').map(Number);
       const cockpitMonthLabel = new Date(cockpitYear, cockpitMonth - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' });
       out.statCards.push({
         title: `Cockpit — ${cockpitMonthLabel}`, live: cockpitOk,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge across the selected stores from the selected end month\'s first day through the last complete stored day for that month (not intraday today). 3-month avg pace = mean(each of the 3 closed months before that selected month\'s total_charge ÷ days in that month) for that same store scope × the same day-of-month.',
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge across the selected stores from the selected end month\'s first day through the last complete stored day for that month (not intraday today). 3-month avg pace = mean(each of the 3 closed months before that selected month\'s total_charge ÷ days in that month) for that same store scope × the same day-of-month.\nNote: pace shows N/A when the selected store(s) have no billing history in all 3 lookback months (24 Jul 2026 fix — previously silently substituted the portfolio-wide average instead).',
         tiles: [
           { value: money(cockpitToDate), label: 'Actual', delta: null, dir: null },
-          { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
+          cockpitPaceToDate == null
+            ? { value: 'N/A', label: 'No history for 3-month pace', delta: null, dir: null }
+            : { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
         ],
       });
       out.chartCards.push({
         title: `Cockpit — ${cockpitMonthLabel} vs 3-Month Average Pace`, wide: true,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge for the selected stores in the selected end month, day by day, through the last complete stored day only. Pace = mean(the 3 closed months before that selected month\'s total_charge ÷ days in month) for that same store scope × day-of-month — a reference line, not real history.',
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge for the selected stores in the selected end month, day by day, through the last complete stored day only. Pace = mean(the 3 closed months before that selected month\'s total_charge ÷ days in month) for that same store scope × day-of-month — a reference line, not real history.\nNote: pace line is omitted when the selected store(s) have no billing history in all 3 lookback months.',
         el: cockpitOk
-          ? <LineChart series={[{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />
+          ? <LineChart series={cockpitPace ? [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }] : [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }]} opts={{ labels: cockpitLabels, zero: true }} />
           : haveCockpitDataset
             ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No cockpit daily rows for the selected month yet.</div>
-            : <LineChart series={[{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
+            : <LineChart series={cockpitPace ? [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }] : [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }]} opts={{ labels: cockpitLabels, zero: true }} />,
       });
     }
 
