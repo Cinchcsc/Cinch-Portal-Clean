@@ -1127,7 +1127,6 @@ export default function PortalV2Page() {
   const [builderOps, setBuilderOps] = useState(['/']);
   const [builderName, setBuilderName] = useState('');
   const [customWidgets, setCustomWidgets] = useState([]);
-  const [updated, setUpdated] = useState('just now');
   const [spin, setSpin] = useState(false);
   // lastPullAt (15 Jul 2026, Michael: "check if the auto updates are working a different way, so we
   // can be certain") — the REAL last-successful-cron timestamp (portal_payload.generated_at, written
@@ -1196,6 +1195,13 @@ export default function PortalV2Page() {
   const seqAReset = useRef(null);
   const seqBIdx = useRef(0);
   const seqBReset = useRef(null);
+  const liveTotalsRequestId = useRef(0);
+  const liveRangeRequestId = useRef(0);
+  const livePrevRequestId = useRef(0);
+  const liveSnapshotRequestId = useRef(0);
+  const liveFloorOccRequestId = useRef(0);
+  const liveCockpitRequestId = useRef(0);
+  const liveMomCockpitRequestId = useRef(0);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
   const storeFilterRef = useRef(null);
   const periodFilterRef = useRef(null);
@@ -1213,12 +1219,30 @@ export default function PortalV2Page() {
   // idx's sign.
   const monthKeyOf = (idx) => { const y = 2025 + Math.floor(idx / 12), m = idx - Math.floor(idx / 12) * 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
   const indexOfMonthKey = (mk) => { const [y, m] = mk.split('-').map(Number); return (y - 2025) * 12 + (m - 1); };
-  const padDailyMonthCurve = (curve, monthKey, makeEmpty) => {
-    if (!curve || !curve.length || !monthKey) return null;
+  const lastVisibleDayOfMonth = (monthKey, curve, freshnessAt) => {
+    if (!monthKey) return null;
     const [yy, mm] = monthKey.split('-').map(Number);
     const today = new Date();
     const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
-    const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
+    if (!isCurrentMonth) return new Date(yy, mm, 0).getDate();
+    const freshnessDate = freshnessAt ? new Date(freshnessAt) : null;
+    const freshnessCap = freshnessDate && !Number.isNaN(freshnessDate.getTime())
+      ? Math.max(1, freshnessDate.getDate() - 1)
+      : null;
+    const fallback = freshnessCap != null ? Math.min(Math.max(1, today.getDate() - 1), freshnessCap) : Math.max(1, today.getDate() - 1);
+    if (!Array.isArray(curve) || !curve.length) return fallback;
+    const prefix = `${monthKey}-`;
+    const maxSeen = curve.reduce((max, row) => {
+      const date = String(row?.date || '');
+      if (!date.startsWith(prefix)) return max;
+      const day = Number(date.slice(8, 10));
+      return Number.isFinite(day) ? Math.max(max, day) : max;
+    }, 0);
+    return maxSeen > 0 ? Math.min(maxSeen, fallback) : fallback;
+  };
+  const padDailyMonthCurve = (curve, monthKey, makeEmpty, freshnessAt) => {
+    if (!curve || !curve.length || !monthKey) return null;
+    const lastDay = lastVisibleDayOfMonth(monthKey, curve, freshnessAt);
     const byDate = new Map(curve.map((row) => [row.date, row]));
     const out = [];
     let carry = makeEmpty();
@@ -1230,12 +1254,9 @@ export default function PortalV2Page() {
     }
     return out;
   };
-  const monthDayLabels = (monthKey) => {
+  const monthDayLabels = (monthKey, curve, freshnessAt) => {
     if (!monthKey) return null;
-    const [yy, mm] = monthKey.split('-').map(Number);
-    const today = new Date();
-    const isCurrentMonth = yy === today.getFullYear() && mm === (today.getMonth() + 1);
-    const lastDay = isCurrentMonth ? Math.max(1, today.getDate() - 1) : new Date(yy, mm, 0).getDate();
+    const lastDay = lastVisibleDayOfMonth(monthKey, curve, freshnessAt);
     return Array.from({ length: lastDay }, (_, i) => String(i + 1));
   };
 
@@ -1246,9 +1267,17 @@ export default function PortalV2Page() {
   // does NOT touch liveMonthly/liveMonths/liveHistory — those stay as the full unscoped history so
   // Month-on-Month and the selector's own dropdown options are unaffected by what's currently picked.
   const fetchLiveRange = (fromKey, toKey, onSettled) => {
+    // FIXED 24 Jul 2026 (production audit): overlapping range fetches could resolve out of order and
+    // let an older slower response overwrite a newer selection. This can happen if someone clicks
+    // period presets quickly, changes the custom month range twice in succession, or hits Refresh
+    // while a previous range load is still in flight. Guard both the main range payload and the
+    // single-month "previous month" comparator payload with request ids so only the newest still-
+    // intended response is allowed to write state.
+    const requestId = ++liveRangeRequestId.current;
     fetch(`/api/portfolio?from=${fromKey}&to=${toKey}`)
       .then((res) => res.json())
       .then((data) => {
+        if (requestId !== liveRangeRequestId.current) return;
         if (!data || !data.configured || !data.totals) {
           debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
           onSettled && onSettled();
@@ -1259,7 +1288,11 @@ export default function PortalV2Page() {
         setViewLive(fromKey === toKey && toKey === (liveMonths && liveMonths[liveMonths.length - 1]));
         onSettled && onSettled();
       })
-      .catch((err) => { debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err); onSettled && onSettled(); });
+      .catch((err) => {
+        if (requestId !== liveRangeRequestId.current) return;
+        debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err);
+        onSettled && onSettled();
+      });
 
     // "vs last month" delta ticks (8 Jul 2026, Michael: "put the ticks that show the net changes with
     // arrows... on the 29 pull one") — only meaningful for a single selected month, compared against
@@ -1267,6 +1300,7 @@ export default function PortalV2Page() {
     // period" (previous equal-length range? previous single month?), so we deliberately don't guess —
     // livePrevSitesRaw just goes null, which makes the delta ticks disappear rather than mislead.
     if (fromKey === toKey) {
+      const prevRequestId = ++livePrevRequestId.current;
       const prevKey = monthKeyOf(indexOfMonthKey(fromKey) - 1);
       fetch(`/api/portfolio?from=${prevKey}&to=${prevKey}`)
         .then((res) => res.json())
@@ -1275,17 +1309,26 @@ export default function PortalV2Page() {
         // already the earliest stored month) — without this, an empty-but-truthy [] would flow through
         // to computeTotals([]), which returns all-zero totals instead of null, and deltaTick() would
         // then render a fake "100% up" arrow against that phantom zero instead of correctly hiding it.
-        .then((data) => setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) ? data.sites : null))
-        .catch(() => setLivePrevSitesRaw(null));
+        .then((data) => {
+          if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
+          setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) ? data.sites : null);
+        })
+        .catch(() => {
+          if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
+          setLivePrevSitesRaw(null);
+        });
     } else {
+      livePrevRequestId.current += 1;
       setLivePrevSitesRaw(null);
     }
   };
 
   const fetchLiveTotals = (onInitialSettled) => {
+    const requestId = ++liveTotalsRequestId.current;
     fetch('/api/portfolio')
       .then((res) => res.json())
       .then((data) => {
+        if (requestId !== liveTotalsRequestId.current) return;
         if (!data || !data.configured || !data.totals) {
           debugWarn('[portal-v2] /api/portfolio not configured — dashboard KPI row + rate table + trend charts are using mock data.');
           // FIXED 14 Jul 2026 (Michael: District Manager page shows real data for a few seconds then
@@ -1350,6 +1393,7 @@ export default function PortalV2Page() {
         }
       })
       .catch((err) => {
+        if (requestId !== liveTotalsRequestId.current) return;
         debugWarn('[portal-v2] /api/portfolio fetch failed — dashboard KPI row + rate table + trend charts are using mock data.', err);
         // Same fix as the "not configured" branch above: don't erase already-loaded good data just
         // because THIS particular re-fetch (triggered by reload() on a nav click) failed.
@@ -1368,52 +1412,77 @@ export default function PortalV2Page() {
   // only happen in lib/pullSnapshot.js). Independent of fetchLiveTotals/fetchLiveRange above, so a
   // slow or failed snapshot fetch never blocks or flickers the rest of the app.
   const fetchSnapshot = () => {
-    fetch('/api/snapshot')
+    const requestId = ++liveSnapshotRequestId.current;
+    return fetch('/api/snapshot')
       .then((res) => res.json())
       .then((data) => {
+        if (requestId !== liveSnapshotRequestId.current) return;
         if (!data || !data.configured || !data.daily) {
           debugWarn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
-          setLiveSnapshot(null);
+          setLiveSnapshot((prev) => prev);
           return;
         }
         setLiveSnapshot({ daily: data.daily, weekly: data.weekly, quarterly: data.quarterly, generatedAt: data.generated_at });
       })
-      .catch((err) => { debugWarn('[portal-v2] /api/snapshot fetch failed.', err); setLiveSnapshot(null); });
+      // FIXED 24 Jul 2026 (deep audit): this independent fetch path still used the old "clear to
+      // null on any transient failure" behavior that was already removed from fetchLiveTotals on 14
+      // Jul. Result: a one-off cold start / network hiccup while switching back to the Snapshot page
+      // could wipe a perfectly good previously-loaded snapshot payload and make the page fall back to
+      // mock data, even though nothing was actually wrong with the stored snapshot row. Keep the last
+      // good payload on failure/not-configured responses; first load still naturally shows mock/null
+      // because prev is null in that case.
+      .catch((err) => {
+        if (requestId !== liveSnapshotRequestId.current) return;
+        debugWarn('[portal-v2] /api/snapshot fetch failed.', err);
+        setLiveSnapshot((prev) => prev);
+      });
   };
 
   // Occupancy by Floor fetch — reads unit_floor_status via /api/floor-occupancy (no live SiteLink
   // calls here; that table is written by the import scripts). Independent of every other live
   // fetch, same reasoning as fetchSnapshot above.
   const fetchFloorOccupancy = () => {
-    fetch('/api/floor-occupancy')
+    const requestId = ++liveFloorOccRequestId.current;
+    return fetch('/api/floor-occupancy')
       .then((res) => res.json())
       .then((data) => {
+        if (requestId !== liveFloorOccRequestId.current) return;
         if (!data || !data.configured || !data.floors || !data.floors.length) {
           debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run pull:floor-occupancy`. Occupancy by Floor will show mock data.');
-          setLiveFloorOcc(null);
+          setLiveFloorOcc((prev) => prev);
           return;
         }
         setLiveFloorOcc({ sites: data.sites, floors: data.floors, siteFloors: data.site_floors || {}, generatedAt: data.generated_at });
       })
-      .catch((err) => { debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err); setLiveFloorOcc(null); });
+      .catch((err) => {
+        if (requestId !== liveFloorOccRequestId.current) return;
+        debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err);
+        setLiveFloorOcc((prev) => prev);
+      });
   };
 
   // Cockpit Charting fetch — reads the accumulated daily_financial_snapshot rows via /api/cockpit (no
   // live SiteLink calls; those only happen in lib/pullCockpit.js). Independent of every other live
   // fetch, same reasoning as fetchSnapshot/fetchFloorOccupancy above.
-  const fetchCockpit = (monthKey, setter = setLiveCockpit) => {
+  const fetchCockpit = (monthKey, setter = setLiveCockpit, requestRef = liveCockpitRequestId) => {
+    const requestId = ++requestRef.current;
     const qs = monthKey ? `?month=${monthKey}` : '';
-    fetch(`/api/cockpit${qs}`)
+    return fetch(`/api/cockpit${qs}`)
       .then((res) => res.json())
       .then((data) => {
+        if (requestId !== requestRef.current) return;
         if (!data || !data.configured) {
           debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will show mock data.`);
-          setter(null);
+          setter((prev) => prev);
           return;
         }
-        setter({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate });
+        setter({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate, generatedAt: data.generated_at || null });
       })
-      .catch((err) => { debugWarn(`[portal-v2] /api/cockpit${qs} fetch failed.`, err); setter(null); });
+      .catch((err) => {
+        if (requestId !== requestRef.current) return;
+        debugWarn(`[portal-v2] /api/cockpit${qs} fetch failed.`, err);
+        setter((prev) => prev);
+      });
   };
 
   // reload(): mirrors the original DCLogic method — toggles the loading skeleton
@@ -1444,8 +1513,26 @@ export default function PortalV2Page() {
   const reload = () => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
-    reloadTimer.current = setTimeout(() => setLoading(false), 15000);
-    fetchLiveTotals(() => { clearTimeout(reloadTimer.current); setLoading(false); });
+    reloadTimer.current = setTimeout(() => { setLoading(false); setSpin(false); }, 15000);
+    // FIXED 24 Jul 2026 (deep audit): after the initial mount, the generic reload path only
+    // re-fetched /api/portfolio. Snapshot/Floor/Cockpit each have their OWN persisted payloads and
+    // fetch helpers, but none of them were called here — so clicking Refresh, or navigating away and
+    // back via the sidebar (which also calls reload()), could leave those pages showing whatever was
+    // loaded the very first time the app mounted, even if newer stored data existed by then. Refresh
+    // all independent persisted datasets here too so every page reflects the latest available stored
+    // payload after a manual refresh or a navigation-triggered reload.
+    const pending = [
+      new Promise((resolve) => fetchLiveTotals(resolve)),
+      fetchSnapshot(),
+      fetchFloorOccupancy(),
+      fetchCockpit(),
+      monthFrom === monthTo ? fetchCockpit(monthKeyOf(monthTo), setLiveMomCockpit, liveMomCockpitRequestId) : Promise.resolve((liveMomCockpitRequestId.current += 1, setLiveMomCockpit(null))),
+    ];
+    Promise.allSettled(pending).finally(() => {
+      clearTimeout(reloadTimer.current);
+      setLoading(false);
+      setSpin(false);
+    });
   };
 
   useEffect(() => {
@@ -1542,10 +1629,15 @@ export default function PortalV2Page() {
 
   useEffect(() => {
     if (monthFrom !== monthTo) {
+      liveMomCockpitRequestId.current += 1;
       setLiveMomCockpit(null);
       return;
     }
-    fetchCockpit(monthKeyOf(monthTo), setLiveMomCockpit);
+    // FIXED 24 Jul 2026 (deep audit): this single-month MoM cockpit fetch could still resolve after
+    // the user had already switched to a different month or to a multi-month range, and then write
+    // the old month's daily cockpit curve back into state. fetchCockpit() now accepts a request-ref
+    // guard, so just route this path through that same "latest request wins" mechanism.
+    fetchCockpit(monthKeyOf(monthTo), setLiveMomCockpit, liveMomCockpitRequestId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthFrom, monthTo]);
 
@@ -1591,9 +1683,14 @@ export default function PortalV2Page() {
     setMonthFrom(fromIdx); setMonthTo(toIdx);
     // FIXED 8 Jul 2026 — same fixed-timer-races-the-real-fetch bug as reload() above, same fix:
     // wait for fetchLiveRange's own completion callback instead of guessing 550ms is always enough.
+    // BUMPED 24 Jul 2026 (deep audit): this path still had the older 4000ms safety cutoff even after
+    // reload()/initial load had already been widened to 15000ms for the same cold-start race. A slow
+    // range fetch could therefore still clear the skeleton early and expose stale/mock content mid-
+    // transition, just by changing the month range instead of clicking Refresh. Keep the same generous
+    // "last resort only" timeout here too so all three entry points behave consistently.
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
-    reloadTimer.current = setTimeout(() => setLoading(false), 4000);
+    reloadTimer.current = setTimeout(() => setLoading(false), 15000);
     fetchLiveRange(monthKeyOf(fromIdx), monthKeyOf(toIdx), () => { clearTimeout(reloadTimer.current); setLoading(false); });
   };
 
@@ -2052,7 +2149,7 @@ export default function PortalV2Page() {
         // global date-range picker is set to a past month, by design (there's no historical concept of
         // "how many reservations were open on a past date" — SiteLink doesn't track that).
         liveSites
-          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList); dSchedOut (ScheduledMoveOuts).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts rows with dSchedOut not yet passed (excludes stale past-dated rows SiteLink never clears from this report). Live snapshot only — always today\'s pipeline, not the selected period.', tiles: [
+          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList); dSchedOut (ScheduledMoveOuts).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts rows with dSchedOut not yet passed (excludes stale past-dated rows SiteLink never clears from this report).\nFreshness: latest stored snapshot from the most recent portal pull, not the selected period and not real-time intraday.', tiles: [
               { value: intFmt(liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0)), label: 'Reservations', delta: null, dir: null },
               { value: intFmt(liveSites.reduce((a, s) => a + (s.scheduledOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
               { value: (() => { const n = liveSites.reduce((a, s) => a + (s.activeReservations || 0) - (s.scheduledOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
@@ -2086,7 +2183,7 @@ export default function PortalV2Page() {
         (() => {
           if (liveSites && liveSites.length) {
             const sqft = liveSites.reduce((a, s) => a + (s.reservedSqftEstimate || 0), 0);
-            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Σ active reservations per UnitTypeID × that type\'s average unit area across the site. Estimate only — ReservationList has no area field of its own.', tiles: [{ value: intFmt(sqft) + ' ft²', label: 'Reserved', delta: null, dir: null }] };
+            return { title: 'Reserved Scheduled Sqft', live: true, tip: 'Reports: ReservationList (reservation count by UnitTypeID); RentRoll (avg area per UnitTypeID).\nFields: UnitTypeID (ReservationList); Area/Area1, UnitTypeID (RentRoll).\nCalculation: Σ active reservations per UnitTypeID × that type\'s average unit area across the site. Estimate only — ReservationList has no area field of its own.\nFreshness: latest stored reservation snapshot from the most recent portal pull, not a real-time intraday figure.', tiles: [{ value: intFmt(sqft) + ' ft²', label: 'Reserved', delta: null, dir: null }] };
           }
           return { title: 'Reserved Scheduled Sqft', tiles: [{ value: intFmt(2600 * f) + ' ft²', label: 'Reserved', delta: '140', dir: 'up' }] };
         })(),
@@ -2549,7 +2646,7 @@ export default function PortalV2Page() {
         const stayWeighted = liveSites.reduce((a, s) => a + (s.avgStayDays || 0) * (s.occ || 0), 0);
         const avgStay = finT.occ ? Math.round(stayWeighted / finT.occ) : 0;
         const avgCustValue = finT.occ ? R2((finT.rent / finT.occ) * (avgStay / 30.43)) : 0;
-        custInsights = { title: 'Customer Insights', live: true, tip: 'Report: RentRoll.\nFields: dLeaseDate, dcRent, bRented.\nCalculation: Avg Stay = Σ(today − dLeaseDate) ÷ occupied units. Avg Customer Value = (Σ dcRent ÷ occupied units) × (Avg Stay ÷ 30.43) — a lifetime value estimate, not just monthly rent.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary (days occupied)", but avg length of stay is actually sourced from RentRoll\'s dLeaseDate (lib/reportMap.js\'s rent_roll parser).', tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] };
+        custInsights = { title: 'Customer Insights', live: true, tip: 'Report: RentRoll.\nFields: dLeaseDate, dcRent, bRented.\nCalculation: Avg Stay = Σ(days since dLeaseDate as of the stored pull snapshot) ÷ occupied units. Avg Customer Value = (Σ dcRent ÷ occupied units) × (Avg Stay ÷ 30.43) — a lifetime value estimate, not just monthly rent.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary (days occupied)", but avg length of stay is actually sourced from RentRoll\'s dLeaseDate (lib/reportMap.js\'s rent_roll parser).', tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] };
       } else {
         debugWarn('[portal-v2] Financials Customer Insights rendering with mock data (no live totals available).');
         custInsights = { title: 'Customer Insights', tiles: [{ value: money(3921), label: 'Avg customer value', delta: '£38', dir: 'down' }, { value: '721 days', label: 'Avg length of stay', delta: '2 days', dir: 'down' }] };
@@ -3115,8 +3212,15 @@ export default function PortalV2Page() {
       // migration comment).
       const selectedMonthKey = monthKeyOf(monthTo);
       const isSingleSelectedMonth = monthFrom === monthTo;
-      const selectedMonthDayLabels = monthDayLabels(selectedMonthKey);
       const momCockpit = (liveMomCockpit && liveMomCockpit.month === selectedMonthKey) ? liveMomCockpit : null;
+      // selectedMonthDayLabels (24 Jul 2026, freshness audit): the five "static repeated across the
+      // month" MoM charts (Rent Roll / Insurance Roll / Occupied Area / SS Occupied Area / SS Rate)
+      // should stop at the MAIN portfolio payload's last completed day, not the browser date. But
+      // Revenue Collected is sourced from the separate cockpit daily snapshot and can legitimately be
+      // fresher than the main payload. Keep two caps: one for the main monthly payload-backed charts,
+      // one for the cockpit daily curve itself.
+      const selectedMonthDayLabels = monthDayLabels(selectedMonthKey, null, lastPullAt);
+      const revenueMonthDayLabels = monthDayLabels(selectedMonthKey, momCockpit && momCockpit.curve, null);
       // Fill the selected month's daily curve out to one point per calendar day: before the first
       // available snapshot, values are 0; after that, any missing dates carry the most recent
       // cumulative total forward. For the CURRENT month, stop at yesterday (the last complete day).
@@ -3126,7 +3230,7 @@ export default function PortalV2Page() {
         total_credit: 0,
         total_payment: 0,
         sites: [],
-      }));
+      }), null);
       const cockpitOk = !!(paddedDailyCurve && paddedDailyCurve.length);
       const dailyOk = isSingleSelectedMonth && cockpitOk;
       if (isSingleSelectedMonth && !cockpitOk) debugWarn(`[portal-v2] Month-on-Month: single-month view selected for ${selectedMonthKey} but no daily_financial_snapshot rows exist for that month yet — showing full history meanwhile.`);
@@ -3173,7 +3277,7 @@ export default function PortalV2Page() {
         }));
       };
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through the last complete day. Missing snapshot dates are filled by carrying the most recent cumulative total forward.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: paddedDailyCurve.map(dailyRevenue) }]} opts={{ labels: paddedDailyCurve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through the last complete day. Missing snapshot dates are filled by carrying the most recent cumulative total forward.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: paddedDailyCurve.map(dailyRevenue) }]} opts={{ labels: revenueMonthDayLabels || paddedDailyCurve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
         : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: <LineChart series={momSeriesFor((r) => r.revenue && r.revenue.collected) || [{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }]} opts={{ labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
@@ -3492,7 +3596,7 @@ export default function PortalV2Page() {
         (() => {
           const avgSqftPerRes = normalizedReservationSqftPerReservation(liveSites);
           const estSqft = Math.round(totals.reservations * avgSqftPerRes);
-          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries); sRentalType (Reservations = rows where sRentalType = "Reservation").\nCalculation: Count of rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Always as of yesterday, not real-time.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × a blended average reservation size. The portal now prefers current-month move-in area per customer (closest available dated proxy), falling back to the live reservation-book estimate only when that looks plausible. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
+          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced (Enquiries, Activity table); iConverted, sInquiryType (Reservations, InquirySource aggregate table).\nCalculation: Enquiries = count of placed enquiry rows within the selected window (' + periodLabel.toLowerCase() + '), summed across sites. Reservations = Σ iConverted for the same window, from SiteLink\'s aggregate conversion table. Always as of yesterday, not real-time.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × a blended average reservation size. The portal now prefers current-month move-in area per customer (closest available dated proxy), falling back to the live reservation-book estimate only when that looks plausible. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
         })(),
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
@@ -3513,7 +3617,7 @@ export default function PortalV2Page() {
       out.tables = [
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         { title: `Per-Store Breakdown — ${periodLabel} (${fmtRange(range)})`, live: !!snap, pageSize: 29,
-          tip: 'Report: InquiryTracking; MoveInsAndMoveOuts.\nFields: dPlaced, sRentalType (InquiryTracking — Enquiries, Reservations); MoveIn, MovedInArea, MovedOutArea (MoveInsAndMoveOuts — Move-ins, Sqft In/Out).\nCalculation: Per-site counts/sums for the selected window, refreshed via the daily snapshot pull (npm run pull:snapshot).',
+          tip: 'Report: InquiryTracking; MoveInsAndMoveOuts.\nFields: dPlaced (Enquiries, InquiryTracking Activity table); iConverted, sInquiryType (Reservations, InquirySource aggregate table); MoveIn, MovedInArea, MovedOutArea (MoveInsAndMoveOuts — Move-ins, Sqft In/Out).\nCalculation: Per-site counts/sums for the selected window, refreshed via the daily snapshot pull (npm run pull:snapshot).',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'enquiries', label: 'Enquiries', type: 'int', align: 'right' },
@@ -3710,7 +3814,7 @@ export default function PortalV2Page() {
         },
         // NARROWED 21 Jul 2026 — pairs with Watchdog — Discounted Units above.
         { title: 'Unit Groups — Stay & Re-Lease', live: haveData, pageSize: 20, collapsible: true,
-          tip: 'Report: RentalActivity; RentRoll.\nFields: TotalUnits, Occupied, StandardRate, OccupiedDollarPerArea (RentalActivity); dLeaseDate (RentRoll, per unit).\nCalculation: Occupied % = Occupied ÷ TotalUnits × 100. Standard Rate = StandardRate (list rate, no concessions). Effective Rate = OccupiedDollarPerArea (reflects concessions). Avg Stay = mean(today − dLeaseDate) across the group\'s units, in days — excludes re-lease/vacancy time (not tracked by SiteLink). Use the filters above to narrow this down.',
+          tip: 'Report: RentalActivity; RentRoll.\nFields: TotalUnits, Occupied, StandardRate, OccupiedDollarPerArea (RentalActivity); dLeaseDate (RentRoll, per unit).\nCalculation: Occupied % = Occupied ÷ TotalUnits × 100. Standard Rate = StandardRate (list rate, no concessions). Effective Rate = OccupiedDollarPerArea (reflects concessions). Avg Stay = mean(days since dLeaseDate as of the stored pull snapshot) across the group\'s units, in days — excludes re-lease/vacancy time (not tracked by SiteLink). Use the filters above to narrow this down.',
           headerExtra: dmGroupFilterControls,
           // CONDENSED 15 Jul 2026: same Type+Area merge as the Watchdog table above.
           columns: [
@@ -3809,8 +3913,27 @@ export default function PortalV2Page() {
       const cockpitCurve = cockpitOk
         ? padDailyMonthCurve(liveCockpit.curve, cockpitMonthKey, () => ({ total_charge: 0 }))
         : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
-      const cockpitAvgRate = cockpitOk ? liveCockpit.avgDailyRate : 3400;
-      const cockpitActual = cockpitCurve.map((c) => c.total_charge);
+      const cockpitSelectedCodes = (() => {
+        const anySel = Object.values(selected).some(Boolean);
+        return (anySel && liveSites && liveSites.length) ? new Set(liveSites.map((s) => s.code)) : null;
+      })();
+      const cockpitActual = cockpitCurve.map((c) => cockpitSelectedCodes
+        ? (c.sites || []).filter((s) => cockpitSelectedCodes.has(s.code)).reduce((sum, s) => sum + (s.total_charge || 0), 0)
+        : (c.total_charge || 0));
+      const cockpitAvgRate = (() => {
+        if (!cockpitSelectedCodes || !liveMonthly) return cockpitOk ? liveCockpit.avgDailyRate : 3400;
+        const prevKeys = [1, 2, 3].map((n) => monthKeyOf(indexOfMonthKey(cockpitMonthKey) - n));
+        const dailyRates = prevKeys.map((mk) => {
+          const recs = liveMonthly[mk] || [];
+          const revenue = recs
+            .filter((r) => cockpitSelectedCodes.has(r.code))
+            .reduce((sum, r) => sum + (r.revenue ? r.revenue.collected || 0 : 0), 0);
+          if (!revenue) return null;
+          const [yy, mm] = mk.split('-').map(Number);
+          return revenue / new Date(yy, mm, 0).getDate();
+        }).filter((v) => v != null);
+        return dailyRates.length ? dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length : (cockpitOk ? liveCockpit.avgDailyRate : 3400);
+      })();
       // FIXED 16 Jul 2026 (deep re-audit #4): was `cockpitAvgRate * (i + 1)` -- i is this row's
       // POSITION in cockpitCurve, not the real day-of-month. daily_financial_snapshot doesn't
       // necessarily get a row every single calendar day (confirmed live via
@@ -3825,7 +3948,7 @@ export default function PortalV2Page() {
       const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
       out.statCards.push({
         title: 'Cockpit — Month to Date', live: cockpitOk,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual so far = today\'s cumulative Σ Charge across sites, this month. 3-month avg pace = mean(each of the last 3 closed months\' total_charge ÷ days in that month) × today\'s day-of-month.',
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual so far = cumulative Σ Charge across the selected stores from this month\'s first day through the last complete day stored for this month (not intraday today). 3-month avg pace = mean(each of the last 3 closed months\' total_charge ÷ days in that month) for that same store scope × the same day-of-month.',
         tiles: [
           { value: money(cockpitToDate), label: 'Actual so far', delta: null, dir: null },
           { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
@@ -3833,7 +3956,7 @@ export default function PortalV2Page() {
       });
       out.chartCards.push({
         title: 'Cockpit — Income vs 3-Month Average Pace', wide: true,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge this month, day by day. Pace = mean(prior 3 closed months\' total_charge ÷ days in month) × day-of-month — a reference line, not real history.',
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge for the selected stores this month, day by day, through the last complete stored day only. Pace = mean(prior 3 closed months\' total_charge ÷ days in month) for that same store scope × day-of-month — a reference line, not real history.',
         el: <LineChart series={[{ name: 'This month (cumulative)', color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
       });
     }
@@ -4155,6 +4278,33 @@ export default function PortalV2Page() {
     }
     return null;
   }
+  function chartCardExportAoa(card) {
+    const el = card && card.el;
+    if (!el || !el.type || !el.props) return null;
+    if (el.type === LineChart) {
+      const labels = el.props.opts?.labels || [];
+      const series = el.props.series || [];
+      const maxLen = Math.max(labels.length, ...series.map((s) => (s.values || []).length), 0);
+      const header = ['Label', ...series.map((s) => s.name || 'Series')];
+      const rows = Array.from({ length: maxLen }, (_, i) => [
+        labels[i] ?? String(i + 1),
+        ...series.map((s) => (s.values || [])[i] ?? ''),
+      ]);
+      return [header, ...rows];
+    }
+    if (el.type === VBars || el.type === HBars || el.type === StoreBarChart) {
+      const items = el.props.items || [];
+      return [
+        ['Label', 'Value', 'Display'],
+        ...items.map((it) => [it.label ?? '', it.value ?? '', it.disp ?? '']),
+      ];
+    }
+    if (el.type === Donut || el.type === Gauge) {
+      const pct = el.props.pct ?? '';
+      return [['Metric', 'Value'], ['Percent', pct]];
+    }
+    return null;
+  }
   // FIXED 10 Jul 2026 (pre-go-live audit): this used to always `return pageData` regardless of `pk`,
   // silently mislabeling every non-active-page group in the "export everything" Excel file with the
   // CURRENTLY-VIEWED page's data instead of the page named in each group's header — e.g. exporting
@@ -4195,6 +4345,10 @@ export default function PortalV2Page() {
       d.statCards.forEach((c, i) => items.push({
         id: pk + '_s' + i, page: pages[pk], label: c.title, icon: chartIcon,
         aoa: () => statCardExportAoa(pk, c) || [['Metric', 'Value', 'Change'], ...c.tiles.filter((t) => !t.rowBreak).map((t) => [t.label, t.value, t.delta ? (t.dir === 'up' ? '+' : t.dir === 'down' ? '-' : '') + t.delta : ''])],
+      }));
+      d.chartCards.forEach((c, i) => items.push({
+        id: pk + '_c' + i, page: pages[pk], label: c.title, icon: chartIcon,
+        aoa: () => chartCardExportAoa(c) || [['Metric', 'Value'], ['Chart export unavailable', c.title]],
       }));
     });
     const groups = {};
@@ -4259,16 +4413,50 @@ export default function PortalV2Page() {
   // hours, so a stuck/failed overnight cron reads as a big, obvious "14h ago" instead of quietly
   // rolling over to a vague day count. Beyond that: an absolute date+time, since "3d ago" alone
   // would bury exactly how stale the portal actually is.
-  const lastPullLabel = (() => {
-    if (!lastPullAt) return null;
-    const ms = Date.now() - new Date(lastPullAt).getTime();
+  const freshnessAt = (() => {
+    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || lastPullAt;
+    if (page === 'districtManager') {
+      const candidates = [lastPullAt, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && liveCockpit.generatedAt]
+        .filter(Boolean)
+        .map((v) => new Date(v).getTime())
+        .filter((v) => !Number.isNaN(v));
+      return candidates.length ? new Date(Math.min(...candidates)).toISOString() : null;
+    }
+    return lastPullAt;
+  })();
+  const freshnessLabel = (() => {
+    if (!freshnessAt) return null;
+    const ms = Date.now() - new Date(freshnessAt).getTime();
     if (ms < 0) return 'just now';
     const mins = Math.round(ms / 60000);
     if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.round(mins / 60);
     if (hrs < 36) return `${hrs}h ago`;
-    return new Date(lastPullAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return new Date(freshnessAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  })();
+  // FIXED 24 Jul 2026 (freshness/status audit): the header badge used to say "Live data" for every
+  // non-snapshot page, even though the portal is deliberately frozen to the last COMPLETE day and
+  // the District Manager page mixes three independently refreshed sources (main payload, floor
+  // occupancy import, cockpit daily financials). That overstated both immediacy and source shape.
+  // Make the badge honest per page instead of reusing one label everywhere.
+  const dataStatus = (() => {
+    if (page === 'snapshot') {
+      return {
+        label: 'Snapshot data',
+        title: 'Stored snapshot data for completed periods, not real-time intraday activity.',
+      };
+    }
+    if (page === 'districtManager') {
+      return {
+        label: 'Mixed data',
+        title: 'This page combines stored month payload data with separately refreshed floor-occupancy and cockpit snapshot data. Figures are not real-time intraday.',
+      };
+    }
+    return {
+      label: 'Stored data',
+      title: 'Stored portal data for completed periods, refreshed by the daily pull. Not real-time intraday activity.',
+    };
   })();
   // FIXED 8 Jul 2026: fs.length was always the mock STORES count (27), even in live mode — with 29
   // real sites now configured, the subtitle would keep showing the stale "27" regardless. Can't
@@ -4555,20 +4743,28 @@ export default function PortalV2Page() {
 
               <div style={{ flex: 1 }} />
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: '#08875D', background: '#E7F6EF', borderRadius: '8px', padding: '6px 10px', fontWeight: 600 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#08875D' }} />Live data
+              <div
+                title={dataStatus.title}
+                style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: '#08875D', background: '#E7F6EF', borderRadius: '8px', padding: '6px 10px', fontWeight: 600 }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#08875D' }} />
+                {dataStatus.label}
               </div>
-              {lastPullLabel && (
+              {freshnessLabel && (
                 <span
-                  title="When the daily auto-update (SiteLink pull) last actually completed — not when you last refreshed this page."
+                  title={page === 'snapshot'
+                    ? 'When the snapshot pull for this page last actually completed — not when you last refreshed this page.'
+                    : page === 'districtManager'
+                      ? 'Oldest refresh among the data sources shown on this page — main payload, floor occupancy import, and cockpit daily financials — not when you last refreshed this page.'
+                      : 'When the daily auto-update (SiteLink pull) last actually completed — not when you last refreshed this page.'}
                   style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}
                 >
                   <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><circle cx={12} cy={12} r={9} stroke="#98A2B3" strokeWidth={2} /><path d="M12 7v5l3 2" stroke="#98A2B3" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  Auto-updated {lastPullLabel}
+                  {page === 'snapshot' ? 'Snapshot updated ' : page === 'districtManager' ? 'Oldest source updated ' : 'Auto-updated '}{freshnessLabel}
                 </span>
               )}
-              <span style={{ fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}>Updated {updated}</span>
-              <button onClick={() => { setSpin(true); setUpdated('just now'); reload(); setTimeout(() => setSpin(false), 650); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
+              {spin && <span style={{ fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}>Refreshing…</span>}
+              <button onClick={() => { setSpin(true); reload(); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', animation: spin ? 'spin .65s linear' : 'none' }}>
                   <svg width={15} height={15} viewBox="0 0 24 24" fill="none"><path d="M20 11a8 8 0 1 0-.6 3" stroke="#667085" strokeWidth={2} strokeLinecap="round" /><path d="M20 4v5h-5" stroke="#667085" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </span>
