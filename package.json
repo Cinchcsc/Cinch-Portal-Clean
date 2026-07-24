@@ -110,7 +110,8 @@
     "probe:enfield-movedetail-july": "node --env-file=.env scripts/probe-enfield-movedetail-july.js",
     "probe:realrate-unit-inventory-stability": "node --env-file=.env scripts/probe-realrate-unit-inventory-stability.js",
     "probe:snapshot-reservation-daycompare": "node --env-file=.env scripts/probe-snapshot-reservation-daycompare.js",
-    "probe:insurance-roll-iactive-stability": "node --env-file=.env scripts/probe-insurance-roll-iactive-stability.js"
+    "probe:insurance-roll-iactive-stability": "node --env-file=.env scripts/probe-insurance-roll-iactive-stability.js",
+    "probe:marketing-ratio-stability": "node --env-file=.env scripts/probe-marketing-ratio-stability.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.1",
