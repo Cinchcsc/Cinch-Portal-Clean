@@ -15,6 +15,14 @@ import { supabaseBrowser } from '../../lib/supabaseBrowser.js';
 import { BG_IMG } from '../../lib/uiAssets.js';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
+const SITE_NAME_BY_CODE = {
+  L001: 'Bicester', L002: 'Leighton Buzzard', L003: 'Letchworth', L004: 'Chippenham', L005: 'Brighton',
+  L006: 'Huntingdon', L007: 'Newmarket', L008: 'Enfield', L009: 'Newbury', L010: 'Mitcham',
+  L011: 'Sittingbourne', L012: 'Gillingham', L013: 'Brentwood', L014: 'Earlsfield', L015: 'Watford',
+  L016: 'Seaford', L017: 'Southend', L018: 'Woking', L019: 'Sidcup', L020: 'Dunstable',
+  L021: 'Bedford', L022: 'Swindon', L023: 'Wisbech', L024: 'Newcastle', L025: 'Shoreham-By-Sea',
+  L026: 'Paulton', L027: 'Exeter', L028: 'Edmonton', L029: 'Abingdon',
+};
 const debugWarn = (...args) => {
   if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
     console.warn(...args);
@@ -326,11 +334,11 @@ const FIELD_CATALOG = [
     { value: 'insuranceActivity.cancellations', label: 'Insurance: Cancellations', live: (s) => (s.insuranceActivity && s.insuranceActivity.cancellations) || 0, mock: () => 0 },
   ]},
   { group: 'Enquiries', items: [
-    { value: 'enquiries.total', label: 'Enquiries: Total', live: (s) => (s.enquiries && s.enquiries.total) || 0, mock: () => 0 },
+    { value: 'enquiries.total', label: 'Enquiries: Total', live: (s) => ((s.enquiries && ((s.enquiries.phone || 0) + (s.enquiries.walkin || 0) + ((s.enquiries.webOnly ?? s.enquiries.web) || 0))) || 0), mock: () => 0 },
     { value: 'enquiries.conversions', label: 'Enquiries: Conversions', live: (s) => (s.enquiries && s.enquiries.conversions) || 0, mock: () => 0 },
     { value: 'enquiries.phone', label: 'Enquiries: Phone', live: (s) => (s.enquiries && s.enquiries.phone) || 0, mock: () => 0 },
     { value: 'enquiries.walkin', label: 'Enquiries: Walk-ins', live: (s) => (s.enquiries && s.enquiries.walkin) || 0, mock: () => 0 },
-    { value: 'enquiries.web', label: 'Enquiries: Web (+Email)', live: (s) => (s.enquiries && s.enquiries.web) || 0, mock: () => 0 },
+    { value: 'enquiries.web', label: 'Enquiries: Web', live: (s) => (s.enquiries && (s.enquiries.webOnly ?? s.enquiries.web)) || 0, mock: () => 0 },
     { value: 'enquiries.webOnly', label: 'Enquiries: Web only', live: (s) => (s.enquiries && s.enquiries.webOnly) || 0, mock: () => 0 },
     { value: 'enquiries.email', label: 'Enquiries: Email only', live: (s) => (s.enquiries && s.enquiries.email) || 0, mock: () => 0 },
   ]},
@@ -1135,6 +1143,7 @@ export default function PortalV2Page() {
   // came back. This gives anyone looking at the portal a genuine, at-a-glance answer to "did the
   // overnight cron actually run" with no script/dashboard-digging required.
   const [lastPullAt, setLastPullAt] = useState(null);
+  const [rangePullAt, setRangePullAt] = useState(null);
 
   // Live data (dashboard KPI row + Rates per ft² table only so far). Everything else on every
   // page continues to read from the RAW_STORES-derived mock data above.
@@ -1185,7 +1194,11 @@ export default function PortalV2Page() {
   const [dmWatchType, setDmWatchType] = useState('All');
   // Cockpit Charting (14 Jul 2026, task #174/#207) — same independent-fetch pattern as liveSnapshot/
   // liveFloorOcc above: its own accumulating table (daily_financial_snapshot), refreshed by its own
-  // daily cron (lib/pullCockpit.js), not part of the global month/range selector.
+  // daily cron (lib/pullCockpit.js). FIXED 24 Jul 2026 (deep audit): this used to stay on the
+  // unscoped/default month even while the District Manager page's PERIOD selector moved the rest of
+  // the page, so one widget could silently show a different month from the subtitle and neighboring
+  // tables. It now follows the selected month (or the end month of a selected range), same as the
+  // rest of the page.
   const [liveCockpit, setLiveCockpit] = useState(null); // { month, curve, avgDailyRate } or null if unavailable
   const [liveMomCockpit, setLiveMomCockpit] = useState(null); // selected single month's daily_financial_snapshot curve for MoM's 1M daily chart
 
@@ -1259,6 +1272,24 @@ export default function PortalV2Page() {
     const lastDay = lastVisibleDayOfMonth(monthKey, curve, freshnessAt);
     return Array.from({ length: lastDay }, (_, i) => String(i + 1));
   };
+  const enquiryWebVisible = (e) => Number(e?.webOnly ?? e?.web ?? 0) || 0;
+  const enquiryTotalVisible = (e) => (Number(e?.phone) || 0) + (Number(e?.walkin) || 0) + enquiryWebVisible(e);
+  const enquiryVisibleConversionBase = (e) => {
+    const channels = e?.channels || {};
+    const fromChannels = Object.entries(channels).reduce((sum, [label, row]) => {
+      const k = String(label || '').trim().toLowerCase();
+      return (k === 'phone' || k === 'walkin' || k === 'web') ? sum + (Number(row?.enquiries) || 0) : sum;
+    }, 0);
+    return fromChannels || enquiryTotalVisible(e);
+  };
+  const enquiryVisibleConversionNumerator = (e) => {
+    const channels = e?.channels || {};
+    const fromChannels = Object.entries(channels).reduce((sum, [label, row]) => {
+      const k = String(label || '').trim().toLowerCase();
+      return (k === 'phone' || k === 'walkin' || k === 'web') ? sum + (Number(row?.converted) || 0) : sum;
+    }, 0);
+    return fromChannels || (Number(e?.reservationConversions) || 0);
+  };
 
   // Global PERIOD selector (Michael, 6 Jul 2026): fetches the FULL detail for a specific from/to
   // month range from /api/portfolio's ?from/?to params (server computes this live from already-
@@ -1285,6 +1316,7 @@ export default function PortalV2Page() {
         }
         setLiveTotals(data.totals);
         setLiveSitesRaw(Array.isArray(data.sites) ? data.sites : null);
+        if (data.generated_at) setRangePullAt(data.generated_at);
         setViewLive(fromKey === toKey && toKey === (liveMonths && liveMonths[liveMonths.length - 1]));
         onSettled && onSettled();
       })
@@ -1473,7 +1505,7 @@ export default function PortalV2Page() {
         if (requestId !== requestRef.current) return;
         if (!data || !data.configured) {
           debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will show mock data.`);
-          setter((prev) => prev);
+          setter(null);
           return;
         }
         setter({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate, generatedAt: data.generated_at || null });
@@ -1481,7 +1513,7 @@ export default function PortalV2Page() {
       .catch((err) => {
         if (requestId !== requestRef.current) return;
         debugWarn(`[portal-v2] /api/cockpit${qs} fetch failed.`, err);
-        setter((prev) => prev);
+        setter((prev) => (monthKey && prev?.month !== monthKey ? null : prev));
       });
   };
 
@@ -1525,7 +1557,7 @@ export default function PortalV2Page() {
       new Promise((resolve) => fetchLiveTotals(resolve)),
       fetchSnapshot(),
       fetchFloorOccupancy(),
-      fetchCockpit(),
+      fetchCockpit(monthKeyOf(monthTo)),
       monthFrom === monthTo ? fetchCockpit(monthKeyOf(monthTo), setLiveMomCockpit, liveMomCockpitRequestId) : Promise.resolve((liveMomCockpitRequestId.current += 1, setLiveMomCockpit(null))),
     ];
     Promise.allSettled(pending).finally(() => {
@@ -1558,7 +1590,6 @@ export default function PortalV2Page() {
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
       fetchSnapshot();
       fetchFloorOccupancy();
-      fetchCockpit();
     }
     // FIXED 21 Jul 2026 (Rich's portal review, task #362): "Clicking off dropdown on store selection
     // to move on. Not having to click back on drop down." Root cause: this listener is registered on
@@ -1628,6 +1659,13 @@ export default function PortalV2Page() {
   }, []);
 
   useEffect(() => {
+    if (!rangeInitialized.current) return;
+    fetchCockpit(monthKeyOf(monthTo), setLiveCockpit, liveCockpitRequestId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthTo]);
+
+  useEffect(() => {
+    if (!rangeInitialized.current) return;
     if (monthFrom !== monthTo) {
       liveMomCockpitRequestId.current += 1;
       setLiveMomCockpit(null);
@@ -1642,8 +1680,15 @@ export default function PortalV2Page() {
   }, [monthFrom, monthTo]);
 
   useEffect(() => {
-    if (!liveSitesRaw) return;
-    const liveNames = new Set(liveSitesRaw.map((s) => s.name));
+    const scopedLiveNames = liveSitesRaw ? liveSitesRaw.map((s) => s.name) : [];
+    const snapshotNames = (liveSnapshot && liveSnapshot[snapshotPeriod] && Array.isArray(liveSnapshot[snapshotPeriod].sites))
+      ? liveSnapshot[snapshotPeriod].sites.map((s) => s.store || SITE_NAME_BY_CODE[s.code] || (liveSitesRaw || []).find((site) => site.code === s.code)?.name || s.code)
+      : [];
+    const validNames = page === 'snapshot'
+      ? (snapshotNames.length ? snapshotNames : scopedLiveNames)
+      : scopedLiveNames;
+    const liveNames = new Set(validNames);
+    if (!liveNames.size) return;
     setSelected((prev) => {
       let changed = false;
       const next = {};
@@ -1654,7 +1699,7 @@ export default function PortalV2Page() {
       }
       return changed ? next : prev;
     });
-  }, [liveSitesRaw]);
+  }, [liveSitesRaw, liveSnapshot, snapshotPeriod, page]);
 
   // Live mode currently has no authoritative region metadata, so any stale mock-only region choice
   // must be neutralized consistently everywhere, including mock fallback scaling paths.
@@ -1680,7 +1725,9 @@ export default function PortalV2Page() {
   // monthFrom/monthTo state back out — React state updates are async, so a handler that calls
   // setMonthFrom(x) then immediately reads monthFrom would still see the OLD value.
   const selectRange = (fromIdx, toIdx) => {
-    setMonthFrom(fromIdx); setMonthTo(toIdx);
+    const lo = Math.min(fromIdx, toIdx);
+    const hi = Math.max(fromIdx, toIdx);
+    setMonthFrom(lo); setMonthTo(hi);
     // FIXED 8 Jul 2026 — same fixed-timer-races-the-real-fetch bug as reload() above, same fix:
     // wait for fetchLiveRange's own completion callback instead of guessing 550ms is always enough.
     // BUMPED 24 Jul 2026 (deep audit): this path still had the older 4000ms safety cutoff even after
@@ -1691,7 +1738,7 @@ export default function PortalV2Page() {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     setLoading(true);
     reloadTimer.current = setTimeout(() => setLoading(false), 15000);
-    fetchLiveRange(monthKeyOf(fromIdx), monthKeyOf(toIdx), () => { clearTimeout(reloadTimer.current); setLoading(false); });
+    fetchLiveRange(monthKeyOf(lo), monthKeyOf(hi), () => { clearTimeout(reloadTimer.current); setLoading(false); });
   };
 
   const applyPreset = (pl) => {
@@ -2011,11 +2058,12 @@ export default function PortalV2Page() {
           // ALL live sites — same "no region filter on live data" caveat as the rate table/charts.
           if (liveSites) {
             const sum = (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0);
-            return { title: 'Enquiries', tip: 'Report: InquiryTracking.\nFields: sInquiryType (Phone/WalkIn/Web/EMail), dPlaced.\nCalculation: Phone/Walk-ins/Web = counts where sInquiryType matches and dPlaced falls in the selected period (Web tile includes EMail). Total = sum of all four channels.', tiles: [
+            const enquiryRows = liveSites.map((s) => s.enquiries || {});
+            return { title: 'Enquiries', tip: 'Report: InquiryTracking.\nFields: sInquiryType (Phone/WalkIn/Web/EMail), dPlaced.\nCalculation: Phone/Walk-ins/Web = counts where sInquiryType matches and dPlaced falls in the selected period. The displayed Web and Total counts follow the live legacy Marketing page and exclude EMail; EMail remains available separately in the widget builder.', tiles: [
               { value: intFmt(sum('phone')), label: 'Phone', delta: null, dir: null },
               { value: intFmt(sum('walkin')), label: 'Walk-ins', delta: null, dir: null },
-              { value: intFmt(sum('web')), label: 'Web', delta: null, dir: null },
-              { value: intFmt(sum('total')), label: 'Total', delta: null, dir: null },
+              { value: intFmt(enquiryRows.reduce((a, e) => a + enquiryWebVisible(e), 0)), label: 'Web', delta: null, dir: null },
+              { value: intFmt(enquiryRows.reduce((a, e) => a + enquiryTotalVisible(e), 0)), label: 'Total', delta: null, dir: null },
             ] };
           }
           debugWarn('[portal-v2] Enquiries stat card rendering with mock RAW_STORES data (no live sites available).');
@@ -2923,16 +2971,18 @@ export default function PortalV2Page() {
       const enqSum = liveSites ? (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
       let enquiriesByChannel, enquiryToReservation;
       if (enqSum) {
-        enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Counts where sInquiryType matches and dPlaced falls in the selected period, summed across sites (Web tile includes EMail).', tiles: [
+        enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Counts where sInquiryType matches and dPlaced falls in the selected period, summed across sites. The displayed Web and Total counts follow the live legacy Marketing page and exclude EMail.', tiles: [
           { value: intFmt(enqSum('phone')), label: 'Phone', delta: null, dir: null },
           { value: intFmt(enqSum('walkin')), label: 'Walk-ins', delta: null, dir: null },
-          { value: intFmt(enqSum('web')), label: 'Web', delta: null, dir: null },
-          { value: intFmt(enqSum('total')), label: 'Total', delta: null, dir: null },
+          { value: intFmt(liveSites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0)), label: 'Web', delta: null, dir: null },
+          { value: intFmt(liveSites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0)), label: 'Total', delta: null, dir: null },
         ] };
         // CORRECTED 6 Jul 2026: was reading `conversions` (Enquiry -> Move-In, a different metric
         // entirely — see buildPayload.js) despite the "Reservation" title. Now uses
         // `reservationConversions`, the actual Enquiry -> Reservation figure.
-        const totalEnq = enqSum('reservationConversionBase'), convPct = totalEnq ? +(enqSum('reservationConversions') / totalEnq * 100).toFixed(1) : 0;
+        const totalEnq = liveSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
+        const totalConverted = liveSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
+        const convPct = totalEnq ? +(totalConverted / totalEnq * 100).toFixed(1) : 0;
         // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
         // up has it, this one never did, so this card never showed the green LIVE badge even while
         // displaying genuine live data (statCards.map()'s `live: !!c.live` had nothing to read).
@@ -2945,7 +2995,7 @@ export default function PortalV2Page() {
         // period). So legacy isn't tracking individual leads here at all — same "sum two aggregates,
         // divide once" pattern as the Enquiry -> Move-In tile. Also fixes the live/in-progress month
         // always reading artificially low, since a period-ratio needs no cross-month data to exist yet.
-        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: iTotal, iConverted, sInquiryType (InquirySource aggregate table).\nCalculation: Σ iConverted ÷ Σ iTotal for the selected period. This follows SiteLink\'s own aggregate conversion table rather than re-counting reservation-stage Activity rows lead-by-lead.', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
+        enquiryToReservation = { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: visible converted enquiries ÷ visible enquiries for the selected period, using the same Phone/Web/Walk-in rows shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis).', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -3013,10 +3063,10 @@ export default function PortalV2Page() {
       if (!yoySeries) debugWarn('[portal-v2] Marketing YoY charts rendering with mock data (need >=13 months of stored history with a same-month-last-year match — run npm run backfill if this persists).');
       out.chartCards.push(
         yoySeries
-          ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total enquiries per stored month (sum of Phone/Walk-in/Web/Email counts). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
+          ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total visible enquiries per stored month (sum of Phone/Walk-in/Web counts; Email excluded to match the displayed legacy Marketing basis). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: iTotal, iConverted, sInquiryType (InquirySource aggregate table).\nCalculation: Σ iConverted ÷ Σ iTotal for each stored month. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: visible converted enquiries ÷ visible enquiries for each stored month, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
@@ -3026,9 +3076,10 @@ export default function PortalV2Page() {
       // table on this page), so that column is dropped for live rows.
       const liveLeadRows = liveSites ? liveSites.map((s) => {
         const e = s.enquiries || {};
-        const total = e.total || 0;
-        const convBase = e.reservationConversionBase || total;
-        return { name: s.name, phone: e.phone || 0, web: e.web || 0, walkin: e.walkin || 0, total, conv: convBase ? +((e.reservationConversions || 0) / convBase * 100).toFixed(1) : 0 };
+        const total = enquiryTotalVisible(e);
+        const convBase = enquiryVisibleConversionBase(e);
+        const converted = enquiryVisibleConversionNumerator(e);
+        return { name: s.name, phone: e.phone || 0, web: enquiryWebVisible(e), walkin: e.walkin || 0, total, conv: convBase ? +(converted / convBase * 100).toFixed(1) : 0 };
       }) : null;
       if (!liveLeadRows) debugWarn('[portal-v2] Leads by Store table rendering with mock RAW_STORES data (no live sites available).');
       const leadRowsAll = liveLeadRows || fs.map((s) => {
@@ -3046,27 +3097,35 @@ export default function PortalV2Page() {
         const web = leadRowsAll.reduce((a, r) => a + (r.web || 0), 0);
         const walkin = leadRowsAll.reduce((a, r) => a + (r.walkin || 0), 0);
         const total = leadRowsAll.reduce((a, r) => a + (r.total || 0), 0);
-        const conv = enqSum ? (enqSum('reservationConversionBase') ? +(enqSum('reservationConversions') / enqSum('reservationConversionBase') * 100).toFixed(1) : 0) : (total ? +(leadRowsAll.reduce((a, r) => a + (r.conv || 0) * (r.total || 0), 0) / total).toFixed(1) : 0);
+        const conv = enqSum ? (() => {
+          const totalBase = liveSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
+          const totalConverted = liveSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
+          return totalBase ? +((totalConverted / totalBase) * 100).toFixed(1) : 0;
+        })() : (total ? +(leadRowsAll.reduce((a, r) => a + (r.conv || 0) * (r.total || 0), 0) / total).toFixed(1) : 0);
         return { phone, web, walkin, total, conv };
       })();
       // "vs last month" totals-row delta (task #121, added 10 Jul 2026) — same enqSum() pattern, just
       // over livePrevSites instead of liveSites. s.enquiries is set outside recordFor()'s `if(full)`
       // gate (it's a flow metric, see lib/buildPayload.js), so it's present on livePrevSites too.
       const enqSumPrev = livePrevSites ? (k) => livePrevSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
-      const leadTotalsPrev = (liveLeadRows && enqSumPrev) ? {
-        phone: enqSumPrev('phone'), web: enqSumPrev('web'), walkin: enqSumPrev('walkin'), total: enqSumPrev('total'),
-        conv: enqSumPrev('reservationConversionBase') ? +(enqSumPrev('reservationConversions') / enqSumPrev('reservationConversionBase') * 100).toFixed(1) : 0,
-      } : null;
+      const leadTotalsPrev = (liveLeadRows && enqSumPrev) ? (() => {
+        const totalBase = livePrevSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
+        const totalConverted = livePrevSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
+        return {
+          phone: enqSumPrev('phone'), web: livePrevSites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0), walkin: enqSumPrev('walkin'), total: livePrevSites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0),
+          conv: totalBase ? +((totalConverted / totalBase) * 100).toFixed(1) : 0,
+        };
+      })() : null;
       // Tooltip FIXED 21 Jul 2026 (full portal audit) — still described the old per-lead email-
       // matching conversion methodology, which was fully removed 17 Jul 2026 (task #310) in favor of
       // a plain period-ratio. The sibling "Enquiry → Reservation" card's tooltip two blocks up was
-      // updated when that change landed; this table's tip was simply missed. conv is exactly the same
-      // enqSum('reservationConversions')/enqSum('reservationConversionBase') period-ratio, no
-      // sEmail matching anywhere in this calculation.
+      // updated when that change landed; this table's tip was simply missed. conv is the same visible
+      // Phone/Web/Walk-in period-ratio the Marketing KPI above uses, excluding Email from the legacy-
+      // parity displayed basis.
       out.tables.push({
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         title: 'Leads by Store (All Stores)', live: !!liveLeadRows, pageSize: 12, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced (channel counts from Activity table); iTotal, iConverted (conversion % from InquirySource aggregate table).\nCalculation: Inquiry counts by channel per site. Conversion % = Σ iConverted ÷ Σ iTotal for that site and period. Totals row is sum-then-divide.',
+        tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: Inquiry counts by visible channel per site. Conversion % = visible converted enquiries ÷ visible enquiries for that site and period, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). Totals row is sum-then-divide.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -3219,7 +3278,7 @@ export default function PortalV2Page() {
       // Revenue Collected is sourced from the separate cockpit daily snapshot and can legitimately be
       // fresher than the main payload. Keep two caps: one for the main monthly payload-backed charts,
       // one for the cockpit daily curve itself.
-      const selectedMonthDayLabels = monthDayLabels(selectedMonthKey, null, lastPullAt);
+      const selectedMonthDayLabels = monthDayLabels(selectedMonthKey, null, rangePullAt || lastPullAt);
       const revenueMonthDayLabels = monthDayLabels(selectedMonthKey, momCockpit && momCockpit.curve, null);
       // Fill the selected month's daily curve out to one point per calendar day: before the first
       // available snapshot, values are 0; after that, any missing dates carry the most recent
@@ -3538,7 +3597,7 @@ export default function PortalV2Page() {
       };
       const rawTotals = snap ? snap.totals : mockSnap.totals;
       const range = snap ? snap.range : mockSnap.range;
-      const nameForCode = (code) => (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
+      const nameForCode = (code, fallbackName = null) => fallbackName || SITE_NAME_BY_CODE[code] || (liveSitesRaw || []).find((s) => s.code === code)?.name || code;
       // FIXED 23 Jul 2026 (production-readiness audit): the Snapshot page's per-store table already
       // respected the global store filter via name→code mapping, but the headline cards and the
       // table's totals row still read snap.totals (the FULL unfiltered portfolio payload) directly.
@@ -3550,8 +3609,8 @@ export default function PortalV2Page() {
       const anySelectedSnapshot = selectedNames.size > 0;
       const snapshotSiteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
         .slice().sort((a, b) => a.code.localeCompare(b.code))
-        .filter((s) => !anySelectedSnapshot || selectedNames.has(nameForCode(s.code)))
-        .map((s) => ({ store: nameForCode(s.code), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, moveOuts: s.moveOuts, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
+        .filter((s) => !anySelectedSnapshot || selectedNames.has(nameForCode(s.code, s.store)))
+        .map((s) => ({ store: nameForCode(s.code, s.store), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, moveOuts: s.moveOuts, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
       const totals = snapshotSiteRows.length
         ? {
             enquiries: snapshotSiteRows.reduce((a, r) => a + (r.enquiries || 0), 0),
@@ -3903,7 +3962,8 @@ export default function PortalV2Page() {
         },
       );
 
-      // Cockpit Charting (task #174/#207) — day-by-day cumulative income this month vs a 3-month-
+      // Cockpit Charting (task #174/#207) — day-by-day cumulative income for the selected end month
+      // vs a 3-month-
       // average pace line. See lib/pullCockpit.js/lib/cockpitData.js for why this needed a whole new
       // daily pull (a real growing time series), unlike every other District Manager widget above,
       // which reuse data that was already being pulled monthly.
@@ -3946,18 +4006,20 @@ export default function PortalV2Page() {
       const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
       const cockpitToDate = cockpitActual[cockpitActual.length - 1] || 0;
       const cockpitPaceToDate = cockpitPace[cockpitPace.length - 1] || 0;
+      const [cockpitYear, cockpitMonth] = cockpitMonthKey.split('-').map(Number);
+      const cockpitMonthLabel = new Date(cockpitYear, cockpitMonth - 1, 1).toLocaleString('en-GB', { month: 'short', year: 'numeric' });
       out.statCards.push({
-        title: 'Cockpit — Month to Date', live: cockpitOk,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual so far = cumulative Σ Charge across the selected stores from this month\'s first day through the last complete day stored for this month (not intraday today). 3-month avg pace = mean(each of the last 3 closed months\' total_charge ÷ days in that month) for that same store scope × the same day-of-month.',
+        title: `Cockpit — ${cockpitMonthLabel}`, live: cockpitOk,
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge across the selected stores from the selected end month\'s first day through the last complete stored day for that month (not intraday today). 3-month avg pace = mean(each of the 3 closed months before that selected month\'s total_charge ÷ days in that month) for that same store scope × the same day-of-month.',
         tiles: [
-          { value: money(cockpitToDate), label: 'Actual so far', delta: null, dir: null },
+          { value: money(cockpitToDate), label: 'Actual', delta: null, dir: null },
           { value: money(cockpitPaceToDate), label: '3-month avg pace', delta: null, dir: null },
         ],
       });
       out.chartCards.push({
-        title: 'Cockpit — Income vs 3-Month Average Pace', wide: true,
-        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge for the selected stores this month, day by day, through the last complete stored day only. Pace = mean(prior 3 closed months\' total_charge ÷ days in month) for that same store scope × day-of-month — a reference line, not real history.',
-        el: <LineChart series={[{ name: 'This month (cumulative)', color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
+        title: `Cockpit — ${cockpitMonthLabel} vs 3-Month Average Pace`, wide: true,
+        tip: 'Report: FinancialSummary.\nFields: Charge (summed to total_charge) — pulled daily for Actual, from the last 3 closed months\' monthly pull for Pace.\nCalculation: Actual = cumulative Σ Charge for the selected stores in the selected end month, day by day, through the last complete stored day only. Pace = mean(the 3 closed months before that selected month\'s total_charge ÷ days in month) for that same store scope × day-of-month — a reference line, not real history.',
+        el: <LineChart series={[{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }]} opts={{ labels: cockpitLabels, zero: true }} />,
       });
     }
 
@@ -3984,9 +4046,10 @@ export default function PortalV2Page() {
     const selectedNames = new Set(Object.entries(selected).filter(([, on]) => on).map(([name]) => name));
     const siteMap = exportLiveSiteMap();
     const anySelected = selectedNames.size > 0;
-    const rows = snap.sites.filter((r) => !anySelected || selectedNames.has((siteMap[r.code] && siteMap[r.code].name) || r.code));
-    return rows.slice().sort((a, b) => ((siteMap[a.code] && siteMap[a.code].name) || a.code).localeCompare((siteMap[b.code] && siteMap[b.code].name) || b.code));
+    const rows = snap.sites.filter((r) => !anySelected || selectedNames.has(exportSnapshotStoreName(r, siteMap)));
+    return rows.slice().sort((a, b) => exportSnapshotStoreName(a, siteMap).localeCompare(exportSnapshotStoreName(b, siteMap)));
   }
+  const exportSnapshotStoreName = (row, siteMap) => row.store || (siteMap[row.code] && siteMap[row.code].name) || SITE_NAME_BY_CODE[row.code] || row.code;
   function toSheet(columns, rows, totals, totalsLabel = 'Total') {
     const keys = columns.map((c) => c.key);
     const aoa = [columns.map((c) => c.label), ...rows.map((r) => keys.map((k) => r[k]))];
@@ -4022,7 +4085,13 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'dashboard' && title === 'Enquiries' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, phone: s.enquiries?.phone || 0, walkins: s.enquiries?.walkin || 0, web: s.enquiries?.web || 0, total: s.enquiries?.total || 0 }));
+      const rows = sites.map((s) => ({
+        store: s.name,
+        phone: s.enquiries?.phone || 0,
+        walkins: s.enquiries?.walkin || 0,
+        web: enquiryWebVisible(s.enquiries),
+        total: enquiryTotalVisible(s.enquiries),
+      }));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Total' }],
         rows,
@@ -4206,7 +4275,13 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'marketing' && title === 'Enquiries by Channel' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, phone: s.enquiries?.phone || 0, walkins: s.enquiries?.walkin || 0, web: s.enquiries?.web || 0, total: s.enquiries?.total || 0 }));
+      const rows = sites.map((s) => ({
+        store: s.name,
+        phone: s.enquiries?.phone || 0,
+        walkins: s.enquiries?.walkin || 0,
+        web: enquiryWebVisible(s.enquiries),
+        total: enquiryTotalVisible(s.enquiries),
+      }));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Total' }],
         rows,
@@ -4215,11 +4290,12 @@ export default function PortalV2Page() {
     }
     if (pk === 'marketing' && title === 'Enquiry → Reservation' && sites) {
       const rows = sites.map((s) => {
-        const conversionBase = s.enquiries?.reservationConversionBase ?? s.enquiries?.total ?? 0;
-        return { store: s.name, conversionPct: conversionBase ? +(((s.enquiries?.reservationConversions || 0) / conversionBase) * 100).toFixed(1) : 0, reservations: s.enquiries?.reservationConversions || 0, enquiries: conversionBase };
+        const conversionBase = enquiryVisibleConversionBase(s.enquiries);
+        const converted = enquiryVisibleConversionNumerator(s.enquiries);
+        return { store: s.name, conversionPct: conversionBase ? +((converted / conversionBase) * 100).toFixed(1) : 0, reservations: converted, enquiries: conversionBase };
       });
-      const totalEnquiries = sumBy(sites, (s) => s.enquiries?.reservationConversionBase ?? s.enquiries?.total ?? 0);
-      const totalReservations = sumBy(sites, (s) => s.enquiries?.reservationConversions || 0);
+      const totalEnquiries = sumBy(sites, (s) => enquiryVisibleConversionBase(s.enquiries));
+      const totalReservations = sumBy(sites, (s) => enquiryVisibleConversionNumerator(s.enquiries));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion rate %' }, { key: 'reservations', label: 'Converted enquiries' }, { key: 'enquiries', label: 'Enquiries' }],
         rows,
@@ -4248,7 +4324,7 @@ export default function PortalV2Page() {
         const liveSite = siteMap[r.code];
         const localAvg = normalizedReservationSqftPerReservationForSite(liveSite, blendedSqftPerReservation);
         return {
-          store: (liveSite && liveSite.name) || r.code,
+          store: exportSnapshotStoreName(r, siteMap),
           enquiries: r.enquiries || 0,
           reservations: r.reservations || 0,
           reservedSqftEst: Math.round((r.reservations || 0) * (localAvg || blendedSqftPerReservation || 70)),
@@ -4261,7 +4337,7 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'snapshot' && title === 'Move-ins / Move-outs' && snapshotRows) {
-      const rows = snapshotRows.map((r) => ({ store: (siteMap[r.code] && siteMap[r.code].name) || r.code, moveIns: r.moveIns || 0, moveOuts: r.moveOuts || 0 }));
+      const rows = snapshotRows.map((r) => ({ store: exportSnapshotStoreName(r, siteMap), moveIns: r.moveIns || 0, moveOuts: r.moveOuts || 0 }));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'moveIns', label: 'Move-ins' }, { key: 'moveOuts', label: 'Move-outs' }],
         rows,
@@ -4269,7 +4345,7 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'snapshot' && title === 'Sqft In / Out' && snapshotRows) {
-      const rows = snapshotRows.map((r) => ({ store: (siteMap[r.code] && siteMap[r.code].name) || r.code, sqftIn: r.sqftIn || 0, sqftOut: r.sqftOut || 0 }));
+      const rows = snapshotRows.map((r) => ({ store: exportSnapshotStoreName(r, siteMap), sqftIn: r.sqftIn || 0, sqftOut: r.sqftOut || 0 }));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'sqftIn', label: 'Sqft In' }, { key: 'sqftOut', label: 'Sqft Out' }],
         rows,
@@ -4389,15 +4465,14 @@ export default function PortalV2Page() {
     });
     // Filename reflects whatever month/range is currently selected via the PERIOD selector (Michael,
     // 6 Jul 2026) — sanitized since rangeLabel can contain "→" and spaces for a multi-month range.
-    const safeRange = rangeLabel.replace(/\s*→\s*/g, ' to ').replace(/[^\w -]/g, '');
+    const exportScopeLabel = chosen.every((it) => it.page === 'Weekly/Daily Snapshot') ? snapshotViewLabel : rangeLabel;
+    const safeRange = exportScopeLabel.replace(/\s*→\s*/g, ' to ').replace(/[^\w -]/g, '');
     XLSX.writeFile(wb, `Cinch Portal Export - ${safeRange}.xlsx`);
     setExportOpen(false);
   }
 
   // ---------- derived render values ----------
   const fs = filteredStores();
-  const anySel = Object.values(selected).some(Boolean);
-  const storeSummary = effectiveRegion !== 'All' ? effectiveRegion : anySel ? Object.values(selected).filter(Boolean).length + ' stores' : 'All stores';
   // FIXED 7 Jul 2026 (Michael: "the date picker only lets me see up to Jan 2025"): this used to look
   // labels up in the fixed 24-entry MONTHS placeholder array (buildMonths(), Jan 2025 -> Dec 2026
   // only), so any real stored month outside that window — real history goes back to 2016-06 — got an
@@ -4414,15 +4489,16 @@ export default function PortalV2Page() {
   // rolling over to a vague day count. Beyond that: an absolute date+time, since "3d ago" alone
   // would bury exactly how stale the portal actually is.
   const freshnessAt = (() => {
-    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || lastPullAt;
+    const mainFreshness = rangePullAt || lastPullAt;
+    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || null;
     if (page === 'districtManager') {
-      const candidates = [lastPullAt, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && liveCockpit.generatedAt]
+      const candidates = [mainFreshness, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && liveCockpit.generatedAt]
         .filter(Boolean)
         .map((v) => new Date(v).getTime())
         .filter((v) => !Number.isNaN(v));
       return candidates.length ? new Date(Math.min(...candidates)).toISOString() : null;
     }
-    return lastPullAt;
+    return mainFreshness;
   })();
   const freshnessLabel = (() => {
     if (!freshnessAt) return null;
@@ -4442,15 +4518,33 @@ export default function PortalV2Page() {
   // Make the badge honest per page instead of reusing one label everywhere.
   const dataStatus = (() => {
     if (page === 'snapshot') {
+      if (!liveSnapshot) {
+        return {
+          label: 'Mock data',
+          title: 'No stored snapshot payload is available yet, so this page is showing fallback mock values.',
+        };
+      }
       return {
         label: 'Snapshot data',
         title: 'Stored snapshot data for completed periods, not real-time intraday activity.',
       };
     }
     if (page === 'districtManager') {
+      if (!liveTotals && !liveFloorOcc && !liveCockpit) {
+        return {
+          label: 'Mock data',
+          title: 'Live district-manager data is unavailable right now, so this page is showing fallback mock values.',
+        };
+      }
       return {
         label: 'Mixed data',
         title: 'This page combines stored month payload data with separately refreshed floor-occupancy and cockpit snapshot data. Figures are not real-time intraday.',
+      };
+    }
+    if (!liveTotals) {
+      return {
+        label: 'Mock data',
+        title: 'Live portal data is unavailable right now, so this page is showing fallback mock values.',
       };
     }
     return {
@@ -4463,8 +4557,21 @@ export default function PortalV2Page() {
   // reuse buildPage()'s own `liveSites` const here — this block is a SEPARATE, outer scope (that
   // ReferenceError is exactly why the first version of this fix broke the page) — so the same
   // liveSitesRaw+selected filter logic is inlined here instead.
-  const liveSiteCount = liveSitesRaw ? (anySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : null;
-  const subtitle = storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
+  const snapshotStoreRows = (liveSnapshot && liveSnapshot[snapshotPeriod] && Array.isArray(liveSnapshot[snapshotPeriod].sites))
+    ? liveSnapshot[snapshotPeriod].sites.map((s) => ({ name: s.store || SITE_NAME_BY_CODE[s.code] || (liveSitesRaw || []).find((site) => site.code === s.code)?.name || s.code, code: s.code }))
+    : null;
+  const visibleSelectedCount = page === 'snapshot'
+    ? (snapshotStoreRows ? snapshotStoreRows.filter((s) => selected[s.name]).length : 0)
+    : (liveSitesRaw ? liveSitesRaw.filter((s) => selected[s.name]).length : 0);
+  const pageAnySel = visibleSelectedCount > 0;
+  const storeSummary = effectiveRegion !== 'All' ? effectiveRegion : pageAnySel ? visibleSelectedCount + ' stores' : 'All stores';
+  const liveSiteCount = page === 'snapshot'
+    ? (snapshotStoreRows ? (pageAnySel ? snapshotStoreRows.filter((s) => selected[s.name]).length : snapshotStoreRows.length) : null)
+    : (liveSitesRaw ? (pageAnySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : null);
+  const snapshotViewLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod] || 'Snapshot';
+  const subtitle = page === 'snapshot'
+    ? storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + snapshotViewLabel
+    : storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
@@ -4545,7 +4652,12 @@ export default function PortalV2Page() {
   // falling back to the original mock STORES behavior only when live data isn't configured/available.
   // Region grouping has no live equivalent (no region field anywhere in the real data model — see
   // liveSites' own comment above), so live mode lists names flat with no region chip beyond "All".
-  const storeOptions = liveSitesRaw
+  const storeOptions = page === 'snapshot' && snapshotStoreRows
+    ? snapshotStoreRows.map((s) => ({
+        name: s.name, region: null, checked: !!selected[s.name],
+        onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); setStorePopOpen(false); reload(); },
+      }))
+    : liveSitesRaw
     ? liveSitesRaw.map((s) => ({
         name: s.name, region: null, checked: !!selected[s.name],
         onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); setStorePopOpen(false); reload(); },
