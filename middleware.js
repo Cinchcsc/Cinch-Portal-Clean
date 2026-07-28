@@ -69,7 +69,36 @@ export async function middleware(request) {
     },
   });
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // ADDED 28 Jul 2026: observed live, repeated 504 GATEWAY_TIMEOUT / Vercel's own
+  // MIDDLEWARE_INVOCATION_TIMEOUT on /portal-v2 (3 of 4 attempts in a row) with Supabase's own status
+  // page showing all-green — almost certainly the same class of transient Supabase/Cloudflare edge
+  // flakiness already seen repeatedly against the database today (520/521/525/statement-timeouts),
+  // just hitting the Auth endpoint this call makes instead of Postgres. supabase.auth.getUser() had
+  // no timeout of its own, so a hung (not even a fast-failing) call blocks until VERCEL's own
+  // platform-level middleware timeout kills the function outright — bypassing every bit of this
+  // file's own error handling and showing the visitor a bare, unbranded Vercel error page instead of
+  // a normal "please sign in again". Racing it against a short local timeout turns a hang into an
+  // ordinary catchable rejection, so a slow/stuck auth check now fails the same CLOSED way an
+  // explicit auth error does (redirect to /login, or 401 for /api/*), same as the !user branch just
+  // below, rather than hanging until Vercel gives up on our behalf. 8s is comfortably above the
+  // sub-second latency a healthy getUser() call actually takes, and comfortably under Vercel's own
+  // middleware execution ceiling, so this should only ever fire when something is already unhealthy.
+  const AUTH_CHECK_TIMEOUT_MS = 8000;
+  let user;
+  try {
+    const authTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`supabase.auth.getUser() timed out after ${AUTH_CHECK_TIMEOUT_MS}ms`)), AUTH_CHECK_TIMEOUT_MS);
+    });
+    const { data } = await Promise.race([supabase.auth.getUser(), authTimeout]);
+    user = data?.user ?? null;
+  } catch (error) {
+    console.error('[middleware] supabase.auth.getUser failed or timed out — failing closed:', error?.message || error);
+    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    const loginUrl = new URL('/login', request.url);
+    if (pathname !== '/') loginUrl.searchParams.set('redirectTo', pathname);
+    loginUrl.searchParams.set('error', 'Your session could not be verified — please sign in again.');
+    return NextResponse.redirect(loginUrl);
+  }
 
   if (!user) {
     if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
