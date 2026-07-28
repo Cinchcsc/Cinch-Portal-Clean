@@ -12,7 +12,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabaseBrowser } from '../../lib/supabaseBrowser.js';
-import { formatLocalYmd, lastCompleteDay, londonCalendarParts } from '../../lib/reportingPeriod.js';
 import { BG_IMG } from '../../lib/uiAssets.js';
 
 const C = { blue: '#2757E8', blue2: '#7CA0F4', teal: '#12B5A5', slate: '#94A3B8', green: '#08875D', red: '#D92D20', amber: '#F79009', track: '#EEF1F5' };
@@ -72,100 +71,6 @@ function intFmt(n) { return Math.round(n).toLocaleString('en-GB'); }
 // values whose binary float representation sits just under the true .xx5 boundary (e.g. 28.005
 // stored as 28.00499999999999...), which is why rates were sometimes showing a penny low.
 function R2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
-function derivedTotalRealRate(rec) {
-  if (!rec || typeof rec !== 'object') return null;
-  if ((rec.realRateArea || 0) > 0) return rec.realRate || 0;
-  if ((rec.areaTotalAll || 0) > 0) return R2(((rec.trueRevenueNumerator || 0) / rec.areaTotalAll) * 12);
-  return Number.isFinite(rec.realRate) && rec.realRate > 0 ? rec.realRate : null;
-}
-function derivedSelfStorageRealRate(rec) {
-  if (!rec || typeof rec !== 'object') return null;
-  const direct = rec.ssReal ?? rec.ss?.real;
-  if ((rec.ssRealArea || 0) > 0) return direct || 0;
-  if ((rec.ssAreaTotalAll || 0) > 0) return R2((((rec.ssTrueRevenueNumerator || 0) / rec.ssAreaTotalAll) * 12));
-  return Number.isFinite(direct) && direct > 0 ? direct : null;
-}
-function enquiryChannelKey(label) { return String(label ?? '').trim().toLowerCase().replace(/[^a-z]/g, ''); }
-function enquiryChannelEntries(e) {
-  const channels = e?.channels && typeof e.channels === 'object' ? e.channels : null;
-  if (channels && Object.keys(channels).length) return Object.entries(channels);
-  const legacyChannels = e?.inquiry_source_channels && typeof e.inquiry_source_channels === 'object' ? e.inquiry_source_channels : null;
-  if (legacyChannels && Object.keys(legacyChannels).length) return Object.entries(legacyChannels);
-  return [];
-}
-function enquiryVisibleCounts(e) {
-  const allChannelRows = enquiryChannelEntries(e);
-  const visibleChannelRows = allChannelRows.filter(([label]) => {
-    const k = enquiryChannelKey(label);
-    return k === 'phone' || k === 'walkin' || k === 'web';
-  });
-  if (visibleChannelRows.length) {
-    return visibleChannelRows.reduce((acc, [label, row]) => {
-      const key = enquiryChannelKey(label);
-      const count = Number(row?.enquiries) || 0;
-      if (key === 'phone') acc.phone += count;
-      else if (key === 'walkin') acc.walkin += count;
-      else if (key === 'web') acc.web += count;
-      return acc;
-    }, { phone: 0, walkin: 0, web: 0 });
-  }
-  if (allChannelRows.length) return { phone: 0, walkin: 0, web: 0 };
-  return {
-    phone: Number(e?.phone) || 0,
-    walkin: Number(e?.walkin) || 0,
-    web: Number(e?.webOnly ?? e?.web) || 0,
-  };
-}
-function enquiryPhoneVisible(e) { return enquiryVisibleCounts(e).phone; }
-function enquiryWalkinVisible(e) { return enquiryVisibleCounts(e).walkin; }
-function enquiryWebVisible(e) { return enquiryVisibleCounts(e).web; }
-function enquiryEmailOnly(e) {
-  const allChannelRows = enquiryChannelEntries(e);
-  const emailRows = allChannelRows.filter(([label]) => enquiryChannelKey(label) === 'email');
-  if (emailRows.length) return emailRows.reduce((sum, [, row]) => sum + (Number(row?.enquiries) || 0), 0);
-  return Number(e?.email) || 0;
-}
-function enquiryTotalVisible(e) {
-  const counts = enquiryVisibleCounts(e);
-  return counts.phone + counts.walkin + counts.web;
-}
-function enquiryVisibleConversionBase(e) {
-  const allChannelRows = enquiryChannelEntries(e);
-  const visibleChannelRows = allChannelRows.filter(([label]) => {
-    const k = enquiryChannelKey(label);
-    return k === 'phone' || k === 'walkin' || k === 'web';
-  });
-  if (visibleChannelRows.length) {
-    return visibleChannelRows.reduce((sum, [, row]) => sum + (Number(row?.enquiries) || 0), 0);
-  }
-  if (allChannelRows.length) return 0;
-  return Number(e?.reservationConversionBase ?? e?.inquiry_source_total) || enquiryTotalVisible(e);
-}
-function enquiryVisibleConversionNumerator(e) {
-  const allChannelRows = enquiryChannelEntries(e);
-  const visibleChannelRows = allChannelRows.filter(([label]) => {
-    const k = enquiryChannelKey(label);
-    return k === 'phone' || k === 'walkin' || k === 'web';
-  });
-  if (visibleChannelRows.length) {
-    return visibleChannelRows.reduce((sum, [, row]) => sum + (Number(row?.converted) || 0), 0);
-  }
-  if (allChannelRows.length) return 0;
-  return Number(e?.reservationConversions ?? e?.inquiry_source_converted) || 0;
-}
-function ymdDay(ymd) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ''));
-  return m ? Number(m[3]) : null;
-}
-function londonDateTimeLabel(ts) {
-  return new Date(ts).toLocaleString('en-GB', {
-    timeZone: 'Europe/London',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 // Client-side re-aggregation of /api/portfolio's `sites[]` array, mirroring lib/buildPayload.js's
 // `totals` block field-for-field (same sum-then-divide rule everywhere — never average per-site
@@ -175,18 +80,8 @@ function londonDateTimeLabel(ts) {
 function computeTotals(sites) {
   const sum = (k) => sites.reduce((a, s) => a + (s[k] || 0), 0);
   const occA = sum('occA'), claA = sum('claA'), totA = sum('totA'), occ = sum('occ'), tot = sum('tot'), rent = sum('rent');
-  const areaSum = sum('areaSum');
-  const realRateArea = sum('realRateArea');
-  const ssAreaSum = sum('ssAreaSum');
-  const ssRealArea = sum('ssRealArea');
-  const areaTotalAll = sum('areaTotalAll');
-  const ssAreaTotalAll = sum('ssAreaTotalAll');
-  const trueRevenueNumerator = sum('trueRevenueNumerator');
-  const ssTrueRevenueNumerator = sum('ssTrueRevenueNumerator');
-  const ssOccA = sites.reduce((a, s) => a + (s.ss ? s.ss.occA || 0 : 0), 0);
   const t = {
     n: sites.length, occ, tot, occA, claA, totA, rent, gpot: sum('gpot'), grossOcc: sum('grossOcc'), occActualRent: sum('occActualRent'),
-    areaSum, realRateArea, ssAreaSum, ssRealArea, areaTotalAll, ssAreaTotalAll, trueRevenueNumerator, ssTrueRevenueNumerator, ssOccA,
     occPC: tot ? +(occ / tot * 100).toFixed(1) : 0,
     // Mirror lib/buildPayload.js exactly: `areaPC` is the CLA-basis occupancy figure, with
     // `areaPCmla`/`claPC` covering the MLA and explicit aggregate variants separately.
@@ -214,16 +109,16 @@ function computeTotals(sites) {
     // or-frozen occupied area). Both new fields are always populated on every site record (each falls
     // back to the pre-24-Jul figures whenever the newer inputs aren't available), so this stays
     // correct for a store-filtered subset exactly like the unfiltered server-side total does.
-    rate: areaSum ? R2(sum('adjRentSum') / areaSum * 12) : 0,
-    realRate: realRateArea ? R2(sum('rentTruePeriod') / realRateArea * 12) : (areaTotalAll ? R2(trueRevenueNumerator / areaTotalAll * 12) : 0),
-    ssRate: ssAreaSum ? R2(sum('ssAdjRentSum') / ssAreaSum * 12) : 0,
+    rate: sum('areaSum') ? R2(sum('adjRentSum') / sum('areaSum') * 12) : 0,
+    realRate: sum('realRateArea') ? R2(sum('rentTruePeriod') / sum('realRateArea') * 12) : 0,
+    ssRate: sum('ssAreaSum') ? R2(sum('ssAdjRentSum') / sum('ssAreaSum') * 12) : 0,
     // ssReal SWITCHED 24 Jul 2026 (task #308 follow-up, Michael: "self storage is the same rate but
     // you [need to] put a filter on the type to only be self storage not everything") from
     // ssTrueRevenueNumerator/ssAreaTotalAll to ssRentTruePeriod/ssRealArea, mirroring
     // lib/buildPayload.js's aggregateTotals() exactly — see recordFor()'s ssReal comment for the
     // full explanation (Self-Storage-scoped Rent-only ÷ Self Storage's occupied area — NOT rewound,
     // unlike Total realRate above, since move_ins_outs doesn't split moves by unit type).
-    ssReal: ssRealArea ? R2(sum('ssRentTruePeriod') / ssRealArea * 12) : (ssAreaTotalAll ? R2(ssTrueRevenueNumerator / ssAreaTotalAll * 12) : 0),
+    ssReal: sum('ssRealArea') ? R2(sum('ssRentTruePeriod') / sum('ssRealArea') * 12) : 0,
     ssOcc: sites.reduce((a, s) => a + (s.ss ? s.ss.occ : 0), 0), ssTot: sites.reduce((a, s) => a + (s.ss ? s.ss.tot : 0), 0),
     officesOcc: sites.reduce((a, s) => a + (s.offices ? s.offices.occ : 0), 0), officesTot: sites.reduce((a, s) => a + (s.offices ? s.offices.tot : 0), 0),
     officesRate: sum('officesAreaSum') ? R2(sum('officesRentSum') / sum('officesAreaSum') * 12) : 0,
@@ -252,45 +147,21 @@ function computeTotals(sites) {
   t.stayCount = sites.reduce((a, s) => a + ((s.stayCount ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.occ : 0)) || 0), 0);
   t.stayRentSum = sites.reduce((a, s) => a + ((s.stayRentSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.rent : 0)) || 0), 0);
   t.avgStayDays = t.stayCount ? Math.round(t.stayDaysSum / t.stayCount) : 0;
-  const autobillCountSum = sum('autobillCount'), tenantsCountSum = sum('tenantsCount');
-  t.autobillPC_allTenants = tenantsCountSum ? +(autobillCountSum / tenantsCountSum * 100).toFixed(1) : 0;
   const custSum = (seg, k) => sites.reduce((a, s) => a + ((s.customerType && s.customerType[seg] && s.customerType[seg][k]) || 0), 0);
   const bizUnits = custSum('business', 'units'), resUnits = custSum('residential', 'units');
   const bizArea = custSum('business', 'area'), resArea = custSum('residential', 'area');
   const bizRent = custSum('business', 'rent'), resRent = custSum('residential', 'rent');
   const custTotUnits = bizUnits + resUnits;
-  t.customerTypeAreaSum = bizArea + resArea;
   t.customerType = {
-    business: { units: bizUnits, area: bizArea, pct: custTotUnits ? +(bizUnits / custTotUnits * 100).toFixed(1) : 0, rate: bizArea ? R2(bizRent / bizArea * 12) : 0 },
-    residential: { units: resUnits, area: resArea, pct: custTotUnits ? +(resUnits / custTotUnits * 100).toFixed(1) : 0, rate: resArea ? R2(resRent / resArea * 12) : 0 },
+    business: { units: bizUnits, pct: custTotUnits ? +(bizUnits / custTotUnits * 100).toFixed(1) : 0, rate: bizArea ? R2(bizRent / bizArea * 12) : 0 },
+    residential: { units: resUnits, pct: custTotUnits ? +(resUnits / custTotUnits * 100).toFixed(1) : 0, rate: resArea ? R2(resRent / resArea * 12) : 0 },
   };
-  t.reservations = sum('reservations');
   t.reservationsActive = sum('activeReservations');
   t.scheduledOuts = sum('scheduledOuts');
   t.reservationsNet = t.reservationsActive - t.scheduledOuts;
   // Mirrors lib/buildPayload.js's aggregateTotals() — client-side recompute for the store filter.
-  t.moveIns = sum('moveIns');
-  t.moveOuts = sum('moveOuts');
-  t.netArea = sum('netArea');
-  t.moveInAreaSum = sum('moveInAreaSum');
-  t.moveOutAreaSum = sum('moveOutAreaSum');
-  t.moveInRateSum = sum('moveInRateSum');
   t.reservationsMade = sum('reservationsMade');
   t.reservationsMadeNet = t.reservationsMade - sum('moveOuts');
-  // Keep the client-side store-filter recompute on the same shape as lib/buildPayload.js's
-  // aggregateTotals(): enquiry metrics exist both on each site row and at the portfolio-total level.
-  // Without this, filtered subsets expose a different object contract than the unfiltered payload.
-  t.enquiries = {
-    total: sites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0),
-    conversions: sites.reduce((a, s) => a + ((s.enquiries && s.enquiries.conversions) || 0), 0),
-    reservationConversions: sites.reduce((a, s) => a + ((s.enquiries && s.enquiries.reservationConversions) || 0), 0),
-    reservationConversionBase: sites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0),
-    phone: sites.reduce((a, s) => a + enquiryPhoneVisible(s.enquiries), 0),
-    walkin: sites.reduce((a, s) => a + enquiryWalkinVisible(s.enquiries), 0),
-    web: sites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0),
-    webOnly: sites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0),
-    email: sites.reduce((a, s) => a + ((s.enquiries && s.enquiries.email) || 0), 0),
-  };
   const insurancePremiumSum = sum('insurancePremiumSum'), insuredUnitsSum = sum('insuredUnitsSum');
   t.insurancePremium = insurancePremiumSum;
   t.insurancePctRoll = t.rent ? +(insurancePremiumSum / t.rent * 100).toFixed(1) : 0;
@@ -432,12 +303,12 @@ const FIELD_CATALOG = [
   { group: 'Occupancy & Area', items: [
     { value: 'occ', label: 'Occupied Units', live: (s) => s.occ || 0, mock: (s) => s.occupied || 0 },
     { value: 'tot', label: 'Total Units', live: (s) => s.tot || 0, mock: (s) => s.total || 0 },
-    { value: 'occPC', label: 'Occupancy %', live: (s) => (s.tot ? ((s.occ || 0) / s.tot * 100) : null), mock: (s) => s.occPct || 0 },
+    { value: 'occPC', label: 'Occupancy %', live: (s) => s.occPC || 0, mock: (s) => s.occPct || 0 },
     { value: 'occA', label: 'Occupied Area (ft²)', live: (s) => s.occA || 0, mock: (s) => s.area || 0 },
     { value: 'claA', label: 'CLA Area (ft²)', live: (s) => s.claA || 0, mock: () => 0 },
     { value: 'totA', label: 'Total Area / MLA (ft²)', live: (s) => s.totA || 0, mock: () => 0 },
-    { value: 'areaPC', label: 'Occupied Area % of CLA', live: (s) => (s.claA ? ((s.occA || 0) / s.claA * 100) : (s.totA ? ((s.occA || 0) / s.totA * 100) : null)), mock: (s) => s.claPct || 0 },
-    { value: 'areaPCmla', label: 'Occupied Area % of MLA', live: (s) => (s.totA ? ((s.occA || 0) / s.totA * 100) : null), mock: () => 0 },
+    { value: 'areaPC', label: 'Occupied Area % of CLA', live: (s) => s.areaPC || 0, mock: (s) => s.claPct || 0 },
+    { value: 'areaPCmla', label: 'Occupied Area % of MLA', live: (s) => s.areaPCmla || 0, mock: () => 0 },
     { value: 'vacant', label: 'Vacant Units', live: (s) => s.vacant || 0, mock: () => 0 },
     { value: 'unrentable', label: 'Unrentable Units', live: (s) => s.unrentable || 0, mock: () => 0 },
   ]},
@@ -445,26 +316,26 @@ const FIELD_CATALOG = [
     { value: 'rent', label: 'Rent Roll (£)', live: (s) => s.rent || 0, mock: (s) => s.rentRoll || 0 },
     { value: 'gpot', label: 'Gross Potential (£)', live: (s) => s.gpot || 0, mock: () => 0 },
     { value: 'grossOcc', label: 'Gross Occupied (£)', live: (s) => s.grossOcc || 0, mock: () => 0 },
-    { value: 'rpu', label: 'Rent per Unit (£)', live: (s) => (s.occ ? ((s.rent || 0) / s.occ) : null), mock: () => 0 },
-    { value: 'rate', label: 'Rate per ft² (£)', live: (s) => ((s.areaSum || 0) > 0 ? (s.rate || 0) : null), mock: () => 0 },
-    { value: 'realRate', label: 'Total Real Rate per ft² (£)', live: (s) => derivedTotalRealRate(s), mock: () => 0 },
+    { value: 'rpu', label: 'Rent per Unit (£)', live: (s) => s.rpu || 0, mock: () => 0 },
+    { value: 'rate', label: 'Rate per ft² (£)', live: (s) => s.rate || 0, mock: () => 0 },
+    { value: 'realRate', label: 'Total Real Rate per ft² (£)', live: (s) => s.realRate || 0, mock: () => 0 },
     { value: 'occActualRent', label: 'Actual Occupied Unit Rates (£)', live: (s) => s.occActualRent || 0, mock: () => 0 },
   ]},
   { group: 'Indoor Self Storage', items: [
     { value: 'ss.occ', label: 'Self Storage Occupied Units', live: (s) => (s.ss && s.ss.occ) || 0, mock: () => 0 },
     { value: 'ss.tot', label: 'Self Storage Total Units', live: (s) => (s.ss && s.ss.tot) || 0, mock: () => 0 },
-    { value: 'ss.occPC', label: 'Self Storage Occupancy %', live: (s) => ((s.ss && s.ss.tot) ? (((s.ss && s.ss.occ) || 0) / s.ss.tot * 100) : null), mock: () => 0 },
+    { value: 'ss.occPC', label: 'Self Storage Occupancy %', live: (s) => (s.ss && s.ss.occPC) || 0, mock: () => 0 },
     { value: 'ss.occA', label: 'Self Storage Occupied Area (ft²)', live: (s) => (s.ss && s.ss.occA) || 0, mock: () => 0 },
-    { value: 'ss.rate', label: 'Self Storage Rate per ft² (£)', live: (s) => ((s.ssAreaSum || 0) > 0 ? ((s.ss && s.ss.rate) ?? 0) : null), mock: () => 0 },
-    { value: 'ss.real', label: 'Self Storage Real Rate per ft² (£)', live: (s) => derivedSelfStorageRealRate(s), mock: () => 0 },
-    { value: 'ss.rent', label: 'Self Storage Rent Roll (£)', live: (s) => ((s.ss && s.ss.tot) ? ((s.ss && s.ss.rent) || 0) : null), mock: () => 0 },
-    { value: 'ss.gpot', label: 'Self Storage Gross Potential (£)', live: (s) => ((s.ss && s.ss.tot) ? ((s.ss && s.ss.gpot) || 0) : null), mock: () => 0 },
+    { value: 'ss.rate', label: 'Self Storage Rate per ft² (£)', live: (s) => (s.ss && s.ss.rate) || 0, mock: () => 0 },
+    { value: 'ss.real', label: 'Self Storage Real Rate per ft² (£)', live: (s) => (s.ss && s.ss.real) || 0, mock: () => 0 },
+    { value: 'ss.rent', label: 'Self Storage Rent Roll (£)', live: (s) => (s.ss && s.ss.rent) || 0, mock: () => 0 },
+    { value: 'ss.gpot', label: 'Self Storage Gross Potential (£)', live: (s) => (s.ss && s.ss.gpot) || 0, mock: () => 0 },
   ]},
   { group: 'Offices', items: [
     { value: 'offices.occ', label: 'Offices Occupied Units', live: (s) => (s.offices && s.offices.occ) || 0, mock: () => 0 },
     { value: 'offices.tot', label: 'Offices Total Units', live: (s) => (s.offices && s.offices.tot) || 0, mock: () => 0 },
-    { value: 'offices.occPC', label: 'Offices Occupancy %', live: (s) => ((s.offices && s.offices.tot) ? (((s.offices && s.offices.occ) || 0) / s.offices.tot * 100) : null), mock: () => 0 },
-    { value: 'offices.rate', label: 'Offices Rate per ft² (£)', live: (s) => ((s.officesAreaSum || 0) > 0 ? ((s.offices && s.offices.rate) ?? 0) : null), mock: () => 0 },
+    { value: 'offices.occPC', label: 'Offices Occupancy %', live: (s) => (s.offices && s.offices.occPC) || 0, mock: () => 0 },
+    { value: 'offices.rate', label: 'Offices Rate per ft² (£)', live: (s) => (s.offices && s.offices.rate) || 0, mock: () => 0 },
   ]},
   { group: 'Move-ins, Move-outs & Reservations', items: [
     { value: 'moveIns', label: 'Move-ins', live: (s) => s.moveIns || 0, mock: () => 0 },
@@ -479,25 +350,25 @@ const FIELD_CATALOG = [
     { value: 'debtors.total', label: 'Debtors: Total Overdue (£, 30+ days)', live: (s) => (s.debtors && s.debtors.total) || 0, mock: () => 0 },
     { value: 'debtors.accounts', label: 'Debtors: Accounts Overdue (30+ days)', live: (s) => (s.debtors && s.debtors.accounts) || 0, mock: () => 0 },
     { value: 'debtors.allOverdue', label: 'Debtors: All Overdue (£, any age)', live: (s) => (s.debtors && s.debtors.allOverdue) || 0, mock: () => 0 },
-    { value: 'debtors.tenantPct', label: 'Debtor Levels: % Tenants', live: (s) => s.occ ? ((((s.debtors && s.debtors.accounts) || 0) / s.occ) * 100) : null, mock: () => 0 },
-    { value: 'debtors.rentRollPct', label: 'Debtor Levels: % Rent Roll', live: (s) => s.occActualRent ? ((((s.debtors && s.debtors.total) || 0) / s.occActualRent) * 100) : null, mock: () => 0 },
+    { value: 'debtors.tenantPct', label: 'Debtor Levels: % Tenants', live: (s) => (s.debtors && s.debtors.tenantPct) || 0, mock: () => 0 },
+    { value: 'debtors.rentRollPct', label: 'Debtor Levels: % Rent Roll', live: (s) => s.occActualRent ? ((s.debtors && s.debtors.rentRollPct) || 0) : null, mock: () => 0 },
   ]},
   { group: 'Insurance', items: [
     { value: 'insurance.insured', label: 'Insurance: Insured Units (stored book snapshot)', live: (s) => (s.insurance && s.insurance.insured) || 0, mock: () => 0 },
     { value: 'insurance.premium', label: 'Insurance: Monthly Premium (£, stored book snapshot)', live: (s) => (s.insurance && s.insurance.premium) || 0, mock: () => 0 },
-    { value: 'insurance.penetration', label: 'Insurance: Penetration %', live: (s) => s.occ ? ((((s.insurance && s.insurance.insured) || 0) / s.occ) * 100) : null, mock: () => 0 },
+    { value: 'insurance.penetration', label: 'Insurance: Penetration %', live: (s) => s.occ ? ((s.insurance && s.insurance.penetration) || 0) : null, mock: () => 0 },
     { value: 'insuranceActivity.newPolicies', label: 'Insurance: New Policy Activity (raw)', live: (s) => (s.insuranceActivity && s.insuranceActivity.newPolicies) || 0, mock: () => 0 },
     { value: 'insuranceActivity.newPremium', label: 'Insurance: New Policy Premium (£, raw)', live: (s) => (s.insuranceActivity && s.insuranceActivity.newPremium) || 0, mock: () => 0 },
     { value: 'insuranceActivity.cancellations', label: 'Insurance: Cancellations', live: (s) => (s.insuranceActivity && s.insuranceActivity.cancellations) || 0, mock: () => 0 },
   ]},
   { group: 'Enquiries', items: [
-    { value: 'enquiries.total', label: 'Enquiries: Visible Total (Phone + Walk-ins + Web)', live: (s) => enquiryTotalVisible(s.enquiries), mock: () => 0 },
-    { value: 'enquiries.conversions', label: 'Enquiries: Enquiry -> Move-in Conversions', live: (s) => (s.enquiries && s.enquiries.conversions) || 0, mock: () => 0 },
-    { value: 'enquiries.phone', label: 'Enquiries: Phone', live: (s) => enquiryPhoneVisible(s.enquiries), mock: () => 0 },
-    { value: 'enquiries.walkin', label: 'Enquiries: Walk-ins', live: (s) => enquiryWalkinVisible(s.enquiries), mock: () => 0 },
-    { value: 'enquiries.web', label: 'Enquiries: Web', live: (s) => enquiryWebVisible(s.enquiries), mock: () => 0 },
-    { value: 'enquiries.webOnly', label: 'Enquiries: Web only', live: (s) => enquiryWebVisible(s.enquiries), mock: () => 0 },
-    { value: 'enquiries.email', label: 'Enquiries: Email only', live: (s) => enquiryEmailOnly(s.enquiries), mock: () => 0 },
+    { value: 'enquiries.total', label: 'Enquiries: Visible Total (Phone + Walk-ins + Web)', live: (s) => ((s.enquiries && ((s.enquiries.phone || 0) + (s.enquiries.walkin || 0) + ((s.enquiries.webOnly ?? s.enquiries.web) || 0))) || 0), mock: () => 0 },
+    { value: 'enquiries.conversions', label: 'Enquiries: Conversions', live: (s) => (s.enquiries && s.enquiries.conversions) || 0, mock: () => 0 },
+    { value: 'enquiries.phone', label: 'Enquiries: Phone', live: (s) => (s.enquiries && s.enquiries.phone) || 0, mock: () => 0 },
+    { value: 'enquiries.walkin', label: 'Enquiries: Walk-ins', live: (s) => (s.enquiries && s.enquiries.walkin) || 0, mock: () => 0 },
+    { value: 'enquiries.web', label: 'Enquiries: Web', live: (s) => (s.enquiries && (s.enquiries.webOnly ?? s.enquiries.web)) || 0, mock: () => 0 },
+    { value: 'enquiries.webOnly', label: 'Enquiries: Web only', live: (s) => (s.enquiries && s.enquiries.webOnly) || 0, mock: () => 0 },
+    { value: 'enquiries.email', label: 'Enquiries: Email only', live: (s) => (s.enquiries && s.enquiries.email) || 0, mock: () => 0 },
   ]},
   { group: 'Merchandise & Revenue', items: [
     // Keep both merchandise sources visible in the custom widget builder, but label them honestly:
@@ -523,17 +394,12 @@ const FIELD_CATALOG = [
     { value: 'marketing.avgRent', label: 'Marketing: Avg Rent (£)', live: (s) => (s.marketing && s.marketing.avgRent) || 0, mock: () => 0 },
   ]},
   { group: 'Autobill & Tenancy', items: [
-    { value: 'autobillRate', label: 'Autobill Rate % (whole book snapshot)', live: (s) => (s.tenantsCount ? (((s.autobillCount || 0) / s.tenantsCount) * 100) : null), mock: () => 0 },
+    { value: 'autobillRate', label: 'Autobill Rate % (whole book snapshot)', live: (s) => s.autobillRate || 0, mock: () => 0 },
     { value: 'autobillCount', label: 'Autobill Tenants (whole book snapshot)', live: (s) => s.autobillCount || 0, mock: () => 0 },
     { value: 'tenantsCount', label: 'Total Tenants (whole book snapshot)', live: (s) => s.tenantsCount || 0, mock: () => 0 },
-    { value: 'autobillNewCount', label: 'Autobill: Avg New Autobilled Tenants (selected period, est.)', live: (s) => (s.autobillNewTotal ? ((s.autobillNewCountExact ?? s.autobillNewCount) || 0) : null), mock: () => 0 },
-    { value: 'autobillNewTotal', label: 'Autobill: New Tenants (selected period)', live: (s) => (s.autobillNewTotal || 0), mock: () => 0 },
-    { value: 'avgStayDays', label: 'Average Length of Stay (days, valid lease dates only)', live: (s) => {
-      const stayCount = (s.stayCount ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.occ : 0)) || 0;
-      return stayCount > 0
-        ? (((s.stayDaysSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.avgStayDays * s.occ : 0)) || 0) / stayCount)
-        : null;
-    }, mock: () => 0 },
+    { value: 'autobillNewCount', label: 'Autobill: Avg New Autobilled Tenants (selected period, est.)', live: (s) => s.autobillNewCount || 0, mock: () => 0 },
+    { value: 'autobillNewTotal', label: 'Autobill: New Tenants (selected period)', live: (s) => s.autobillNewTotal || 0, mock: () => 0 },
+    { value: 'avgStayDays', label: 'Average Length of Stay (days, valid lease dates only)', live: (s) => ((s.stayCount || 0) > 0 && (s.avgStayDays > 0)) ? s.avgStayDays : null, mock: () => 0 },
   ]},
 ];
 const FIELD_INDEX = Object.fromEntries(FIELD_CATALOG.flatMap((g) => g.items).map((f) => [f.value, f]));
@@ -566,28 +432,14 @@ function evalWidget(s, w, isLive) {
 // Small chart primitives (verbatim ports of hbars/vbars/lineChart/donut/gauge)
 // ---------------------------------------------------------------------------
 function HBars({ items, opts = {} }) {
-  const vals = items.map((i) => i.value);
-  const min = Math.min(...vals, 0);
-  const max = Math.max(...vals, 0);
-  const range = (max - min) || 1;
-  const zeroPct = ((0 - min) / range) * 100;
+  const max = opts.max || Math.max(...items.map((i) => i.value), 1);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {items.map((it, i) => (
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '104px 1fr minmax(70px, auto)', alignItems: 'center', gap: '12px' }}>
           <div style={{ fontSize: '12.5px', color: '#475467', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</div>
-          <div style={{ position: 'relative', height: '10px', borderRadius: '6px', background: C.track, overflow: 'hidden' }}>
-            {min < 0 && max > 0 && <div style={{ position: 'absolute', top: 0, bottom: 0, left: zeroPct + '%', width: '1px', background: '#CBD5E1' }} />}
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              bottom: 0,
-              left: (it.value >= 0 ? zeroPct : zeroPct - (Math.abs(it.value) / range * 100)) + '%',
-              width: Math.min(100, (Math.abs(it.value) / range) * 100) + '%',
-              borderRadius: '6px',
-              background: it.color || C.blue,
-              transition: 'left .6s cubic-bezier(.2,.8,.2,1), width .6s cubic-bezier(.2,.8,.2,1)',
-            }} />
+          <div style={{ height: '10px', borderRadius: '6px', background: C.track, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: Math.min(100, (it.value / max) * 100) + '%', borderRadius: '6px', background: it.color || C.blue, transition: 'width .6s cubic-bezier(.2,.8,.2,1)' }} />
           </div>
           <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#101828', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{it.disp}</div>
         </div>
@@ -701,20 +553,6 @@ function niceAxisTicks(dataMin, dataMax, targetCount = 4) {
   return { min, max, step, ticks };
 }
 
-function makeValueFormatter(cfg = {}) {
-  return (v) => {
-    if (v == null || Number.isNaN(v)) return '—';
-    const decimals = cfg.axisDecimals;
-    const abs = Math.abs(v);
-    const body = decimals != null
-      ? abs.toLocaleString('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-      : (abs >= 1000 ? Math.round(abs).toLocaleString('en-GB') : (Number.isInteger(v) ? String(abs) : abs.toFixed(2)));
-    const signed = (v < 0 ? '-' : '') + body;
-    if (!cfg.unit) return signed;
-    return cfg.unitPrefix ? (v < 0 ? '-' : '') + cfg.unit + body : signed + (cfg.unit === '%' ? '' : ' ') + cfg.unit;
-  };
-}
-
 function LineChart({ series, opts = {} }) {
   // opts.height — ADDED 21 Jul 2026 (Rich's portal review, task #354: "MoM: Need to make these
   // smaller like in the portal to see more in a single fold"). Was a hardcoded 150 for every
@@ -759,13 +597,17 @@ function LineChart({ series, opts = {} }) {
   // it (£ style: "-£20,000", not "£-20,000"); without it, the unit is a suffix (ft²/% style:
   // "-20,000 ft²", "45%" — no space before %). Both fully backward compatible: no caller passing these
   // new opts fields sees any change, so the other 8 LineChart call sites are unaffected.
-  const hostFmt = opts.tooltipFormat || makeValueFormatter(opts);
-  const fmtForSeries = (s) => s.tooltipFormat || makeValueFormatter({
-    unit: s.unit,
-    unitPrefix: s.unitPrefix,
-    axisDecimals: s.axisDecimals,
+  const fmt = opts.tooltipFormat || ((v) => {
+    if (v == null || Number.isNaN(v)) return '—';
+    const decimals = opts.axisDecimals;
+    const abs = Math.abs(v);
+    const body = decimals != null
+      ? abs.toLocaleString('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : (abs >= 1000 ? Math.round(abs).toLocaleString('en-GB') : (Number.isInteger(v) ? String(abs) : abs.toFixed(2)));
+    const signed = (v < 0 ? '-' : '') + body;
+    if (!opts.unit) return signed;
+    return opts.unitPrefix ? (v < 0 ? '-' : '') + opts.unit + body : signed + (opts.unit === '%' ? '' : ' ') + opts.unit;
   });
-  const rightFmt = rightSeries.length ? fmtForSeries(rightSeries[0]) : hostFmt;
   const idxFor = (s, frac) => Math.round(Math.max(0, Math.min(1, frac)) * Math.max(s.values.length - 1, 1));
   const handleMove = (e) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -813,10 +655,10 @@ function LineChart({ series, opts = {} }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
         <div style={{ position: 'relative', width: leftGutterW + 'px', flex: 'none', height: H + 'px' }}>
           {leftNice ? leftNice.ticks.map((t, i) => (
-            <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, leftMin, leftMax) * 100) + '%', left: 0, transform: 'translateY(-50%)' }}>{hostFmt(t)}</span>
+            <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, leftMin, leftMax) * 100) + '%', left: 0, transform: 'translateY(-50%)' }}>{fmt(t)}</span>
           )) : (<>
-            <span style={{ ...axisLabelStyle, top: 0, left: 0 }}>{hostFmt(leftMax)}</span>
-            <span style={{ ...axisLabelStyle, bottom: 0, left: 0 }}>{hostFmt(leftMin)}</span>
+            <span style={{ ...axisLabelStyle, top: 0, left: 0 }}>{fmt(leftMax)}</span>
+            <span style={{ ...axisLabelStyle, bottom: 0, left: 0 }}>{fmt(leftMin)}</span>
           </>)}
         </div>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
@@ -868,7 +710,7 @@ function LineChart({ series, opts = {} }) {
                 return (
                   <div key={si} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, display: 'inline-block', flex: 'none' }} />
-                    <span>{lbl ? lbl + ': ' : ''}{s.name}: {fmtForSeries(s)(s.values[i])}</span>
+                    <span>{lbl ? lbl + ': ' : ''}{s.name}: {fmt(s.values[i])}</span>
                   </div>
                 );
               })}
@@ -881,10 +723,10 @@ function LineChart({ series, opts = {} }) {
         {rightSeries.length > 0 && (
           <div style={{ position: 'relative', width: rightGutterW + 'px', flex: 'none', height: H + 'px' }}>
             {rightNice ? rightNice.ticks.map((t, i) => (
-              <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, rightMin, rightMax) * 100) + '%', right: 0, transform: 'translateY(-50%)' }}>{rightFmt(t)}</span>
+              <span key={i} style={{ ...axisLabelStyle, top: (fracFor(t, rightMin, rightMax) * 100) + '%', right: 0, transform: 'translateY(-50%)' }}>{fmt(t)}</span>
             )) : (<>
-              <span style={{ ...axisLabelStyle, top: 0, right: 0 }}>{rightFmt(rightMax)}</span>
-              <span style={{ ...axisLabelStyle, bottom: 0, right: 0 }}>{rightFmt(rightMin)}</span>
+              <span style={{ ...axisLabelStyle, top: 0, right: 0 }}>{fmt(rightMax)}</span>
+              <span style={{ ...axisLabelStyle, bottom: 0, right: 0 }}>{fmt(rightMin)}</span>
             </>)}
           </div>
         )}
@@ -1007,12 +849,6 @@ function InfoTip({ text }) {
   );
 }
 
-function formatPctVisual(pct) {
-  const n = Number(pct);
-  if (!Number.isFinite(n)) return '';
-  return (Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n).toString() : n.toFixed(1)) + '%';
-}
-
 function Donut({ pct, color }) {
   const r = 42, circ = 2 * Math.PI * r, dash = (Math.max(0, Math.min(100, pct)) / 100) * circ;
   return (
@@ -1021,7 +857,7 @@ function Donut({ pct, color }) {
         <circle cx={52} cy={52} r={r} fill="none" stroke={C.track} strokeWidth={11} />
         <circle cx={52} cy={52} r={r} fill="none" stroke={color} strokeWidth={11} strokeLinecap="round" strokeDasharray={`${dash} ${circ}`} transform="rotate(-90 52 52)" style={{ transition: 'stroke-dasharray .7s cubic-bezier(.2,.8,.2,1)' }} />
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 700, color: '#0C1425' }}>{formatPctVisual(pct)}</div>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 700, color: '#0C1425' }}>{Math.round(pct)}%</div>
     </div>
   );
 }
@@ -1037,7 +873,7 @@ function Gauge({ pct }) {
         <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={C.track} strokeWidth={11} strokeLinecap="round" />
         <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${ex} ${ey}`} fill="none" stroke={color} strokeWidth={11} strokeLinecap="round" style={{ transition: 'all .7s cubic-bezier(.2,.8,.2,1)' }} />
       </svg>
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: '2px', textAlign: 'center', fontSize: '18px', fontWeight: 700, color: '#0C1425' }}>{formatPctVisual(pct)}</div>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: '2px', textAlign: 'center', fontSize: '18px', fontWeight: 700, color: '#0C1425' }}>{Math.round(pct)}%</div>
     </div>
   );
 }
@@ -1160,34 +996,6 @@ function normalizedReservationSqftPerReservationForSite(site, fallback) {
     if (avg >= 25 && avg <= 400) return avg;
   }
   return fallback;
-}
-
-function normalizedSnapshotReservationSqftPerReservation(rows, fallback) {
-  if (!rows || !rows.length) return fallback;
-  const sqftIn = rows.reduce((a, r) => a + (r.sqftIn || 0), 0);
-  const moveIns = rows.reduce((a, r) => a + (r.moveIns || 0), 0);
-  if (sqftIn > 0 && moveIns > 0) {
-    const avg = sqftIn / moveIns;
-    if (avg >= 25 && avg <= 400) return avg;
-  }
-  return fallback;
-}
-
-function normalizedSnapshotReservationSqftPerReservationForRow(row, fallback) {
-  if (!row) return fallback;
-  if ((row.sqftIn || 0) > 0 && (row.moveIns || 0) > 0) {
-    const avg = row.sqftIn / row.moveIns;
-    if (avg >= 25 && avg <= 400) return avg;
-  }
-  return fallback;
-}
-
-function snapshotReservedSqftEstimateForRow(row, liveSite, blendedSnapshotSqftPerReservation, blendedLiveSqftPerReservation) {
-  const localAvg = normalizedSnapshotReservationSqftPerReservationForRow(
-    row,
-    normalizedReservationSqftPerReservationForSite(liveSite, blendedSnapshotSqftPerReservation),
-  );
-  return Math.round((row?.reservations || 0) * (localAvg || blendedSnapshotSqftPerReservation || blendedLiveSqftPerReservation || 70));
 }
 // `totals` (optional): object keyed by column key with pre-computed portfolio totals/averages for
 // this table — rendered as a pinned footer row (visible on every pagination page), matching the
@@ -1447,7 +1255,6 @@ export default function PortalV2Page() {
   const liveFloorOccRequestId = useRef(0);
   const liveCockpitRequestId = useRef(0);
   const liveMomCockpitRequestId = useRef(0);
-  const authRedirected = useRef(false);
   const initialFetchStarted = useRef(false); // FIXED 7 Jul 2026 (Michael: "total units is 51 less than legacy portal... go through and double check July"): Next.js dev runs in React StrictMode, which double-invokes mount effects — the mount useEffect below was calling fetchLiveTotals() TWICE in quick succession. Both calls' async .then() callbacks saw rangeInitialized.current still false-then-true in a race: call A correctly snapped monthFrom/monthTo to the latest month (July) and fetched it, but call B's callback closed over the STALE pre-snap monthFrom/monthTo (still 17 = June) and re-fetched June AFTER call A, silently clobbering the correct July data back to June on every single page load — not just occasionally. This guard makes the second StrictMode invocation a no-op so only one fetch chain ever runs.
   const storeFilterRef = useRef(null);
   const periodFilterRef = useRef(null);
@@ -1465,21 +1272,23 @@ export default function PortalV2Page() {
   // idx's sign.
   const monthKeyOf = (idx) => { const y = 2025 + Math.floor(idx / 12), m = idx - Math.floor(idx / 12) * 12 + 1; return `${y}-${String(m).padStart(2, '0')}`; };
   const indexOfMonthKey = (mk) => { const [y, m] = mk.split('-').map(Number); return (y - 2025) * 12 + (m - 1); };
-  const reportingAnchorDate = () => lastCompleteDay(new Date());
+  const reportingAnchorDate = () => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  };
   const completedDayForMonth = (monthKey, freshnessAt) => {
     const [yy, mm] = String(monthKey || '').split('-').map(Number);
     if (!yy || !mm) return 1;
     const anchor = reportingAnchorDate();
     const monthEndDay = new Date(yy, mm, 0).getDate();
     const freshnessDate = freshnessAt ? new Date(freshnessAt) : null;
-    const freshnessParts = freshnessDate && !Number.isNaN(freshnessDate.getTime()) ? londonCalendarParts(freshnessDate) : null;
-    if (!freshnessParts) {
+    if (!freshnessDate || Number.isNaN(freshnessDate.getTime())) {
       return yy === anchor.getFullYear() && mm === (anchor.getMonth() + 1) ? anchor.getDate() : monthEndDay;
     }
-    const freshnessKey = `${freshnessParts.year}-${String(freshnessParts.month).padStart(2, '0')}`;
+    const freshnessKey = `${freshnessDate.getFullYear()}-${String(freshnessDate.getMonth() + 1).padStart(2, '0')}`;
     if (freshnessKey > monthKey) return monthEndDay;
     if (freshnessKey < monthKey) return Math.min(anchor.getDate(), monthEndDay);
-    return Math.min(monthEndDay, Math.max(1, freshnessParts.day - 1));
+    return Math.min(monthEndDay, Math.max(1, freshnessDate.getDate() - 1));
   };
   const lastVisibleDayOfMonth = (monthKey, curve, freshnessAt) => {
     if (!monthKey) return null;
@@ -1498,26 +1307,13 @@ export default function PortalV2Page() {
     }, 0);
     return maxSeen > 0 ? Math.min(maxSeen, fallback) : fallback;
   };
-  const firstVisibleDayOfMonth = (monthKey, curve) => {
-    if (!monthKey || !Array.isArray(curve) || !curve.length) return 1;
-    const prefix = `${monthKey}-`;
-    const minSeen = curve.reduce((min, row) => {
-      const date = String(row?.date || '');
-      if (!date.startsWith(prefix)) return min;
-      const day = Number(date.slice(8, 10));
-      if (!Number.isFinite(day) || day < 1) return min;
-      return min == null ? day : Math.min(min, day);
-    }, null);
-    return minSeen || 1;
-  };
   const padDailyMonthCurve = (curve, monthKey, makeEmpty, freshnessAt) => {
     if (!curve || !curve.length || !monthKey) return null;
-    const firstDay = firstVisibleDayOfMonth(monthKey, curve);
     const lastDay = lastVisibleDayOfMonth(monthKey, curve, freshnessAt);
     const byDate = new Map(curve.map((row) => [row.date, row]));
     const out = [];
     let carry = makeEmpty();
-    for (let day = firstDay; day <= lastDay; day++) {
+    for (let day = 1; day <= lastDay; day++) {
       const date = `${monthKey}-${String(day).padStart(2, '0')}`;
       const hit = byDate.get(date);
       if (hit) carry = hit;
@@ -1527,27 +1323,37 @@ export default function PortalV2Page() {
   };
   const monthDayLabels = (monthKey, curve, freshnessAt) => {
     if (!monthKey) return null;
-    const firstDay = firstVisibleDayOfMonth(monthKey, curve);
     const lastDay = lastVisibleDayOfMonth(monthKey, curve, freshnessAt);
-    return Array.from({ length: Math.max(0, lastDay - firstDay + 1) }, (_, i) => String(firstDay + i));
+    return Array.from({ length: lastDay }, (_, i) => String(i + 1));
   };
-  const redirectToLogin = () => {
-    if (authRedirected.current) return;
-    authRedirected.current = true;
-    const next = `${window.location.pathname || '/portal-v2'}${window.location.search || ''}`;
-    window.location.href = `/login?redirectTo=${encodeURIComponent(next)}`;
-  };
-  const fetchJsonAuthed = async (url) => {
-    const res = await fetch(url);
-    let data = null;
-    try { data = await res.json(); } catch {}
-    if (res.status === 401) {
-      redirectToLogin();
-      const err = new Error('unauthorized');
-      err.status = 401;
-      throw err;
+  const enquiryChannelKey = (label) => String(label ?? '').trim().toLowerCase().replace(/[^a-z]/g, '');
+  const enquiryWebVisible = (e) => Number(e?.webOnly ?? e?.web ?? 0) || 0;
+  const enquiryTotalVisible = (e) => (Number(e?.phone) || 0) + (Number(e?.walkin) || 0) + enquiryWebVisible(e);
+  const enquiryVisibleConversionBase = (e) => {
+    const channels = e?.channels || {};
+    const allChannelRows = Object.entries(channels);
+    const visibleChannelRows = allChannelRows.filter(([label]) => {
+      const k = enquiryChannelKey(label);
+      return k === 'phone' || k === 'walkin' || k === 'web';
+    });
+    if (visibleChannelRows.length) {
+      return visibleChannelRows.reduce((sum, [, row]) => sum + (Number(row?.enquiries) || 0), 0);
     }
-    return data;
+    if (allChannelRows.length) return 0;
+    return enquiryTotalVisible(e);
+  };
+  const enquiryVisibleConversionNumerator = (e) => {
+    const channels = e?.channels || {};
+    const allChannelRows = Object.entries(channels);
+    const visibleChannelRows = allChannelRows.filter(([label]) => {
+      const k = enquiryChannelKey(label);
+      return k === 'phone' || k === 'walkin' || k === 'web';
+    });
+    if (visibleChannelRows.length) {
+      return visibleChannelRows.reduce((sum, [, row]) => sum + (Number(row?.converted) || 0), 0);
+    }
+    if (allChannelRows.length) return 0;
+    return Number(e?.reservationConversions) || 0;
   };
 
   // Global PERIOD selector (Michael, 6 Jul 2026): fetches the FULL detail for a specific from/to
@@ -1564,31 +1370,19 @@ export default function PortalV2Page() {
     // single-month "previous month" comparator payload with request ids so only the newest still-
     // intended response is allowed to write state.
     const requestId = ++liveRangeRequestId.current;
-    fetchJsonAuthed(`/api/portfolio?from=${fromKey}&to=${toKey}`)
+    fetch(`/api/portfolio?from=${fromKey}&to=${toKey}`)
+      .then((res) => res.json())
       .then((data) => {
         if (requestId !== liveRangeRequestId.current) return;
-        const rangedSites = Array.isArray(data?.sites) ? data.sites : null;
         if (!data || !data.configured || !data.totals) {
           livePrevRequestId.current += 1;
           debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
           onSettled && onSettled(false);
           return;
         }
-        // A ranged payload with portfolio totals but zero site rows is internally inconsistent:
-        // every widget below narrows or cross-checks against sites[], so accepting an empty array
-        // here would silently turn some widgets into blank charts and others into all-zero
-        // "portfolio" summaries. Fail closed and keep the last known-good range instead.
-        if (!rangedSites || !rangedSites.length) {
-          livePrevRequestId.current += 1;
-          debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned totals but no site rows — keeping the current view.`);
-          onSettled && onSettled(false);
-          return;
-        }
         setLiveTotals(data.totals);
-        setLiveSitesRaw(rangedSites);
-        // A successful range refresh that doesn't carry a generated_at must clear any prior range
-        // timestamp rather than silently reusing it for a different selection.
-        setRangePullAt(data.generated_at || null);
+        setLiveSitesRaw(Array.isArray(data.sites) ? data.sites : null);
+        if (data.generated_at) setRangePullAt(data.generated_at);
         setViewLive(fromKey === toKey && toKey === latestLiveMonthKeyRef.current);
         onSettled && onSettled(true);
       })
@@ -1607,7 +1401,8 @@ export default function PortalV2Page() {
     if (fromKey === toKey) {
       const prevRequestId = ++livePrevRequestId.current;
       const prevKey = monthKeyOf(indexOfMonthKey(fromKey) - 1);
-      fetchJsonAuthed(`/api/portfolio?from=${prevKey}&to=${prevKey}`)
+      fetch(`/api/portfolio?from=${prevKey}&to=${prevKey}`)
+        .then((res) => res.json())
         // Checking data.totals (not just data.configured) matters here: buildPayloadRange() returns
         // configured:true with totals:null and sites:[] for an out-of-range month (e.g. fromKey is
         // already the earliest stored month) — without this, an empty-but-truthy [] would flow through
@@ -1615,7 +1410,7 @@ export default function PortalV2Page() {
         // then render a fake "100% up" arrow against that phantom zero instead of correctly hiding it.
         .then((data) => {
           if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
-          setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) && data.sites.length ? data.sites : null);
+          setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) ? data.sites : null);
         })
         .catch(() => {
           if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
@@ -1629,7 +1424,8 @@ export default function PortalV2Page() {
 
   const fetchLiveTotals = (onInitialSettled) => {
     const requestId = ++liveTotalsRequestId.current;
-    fetchJsonAuthed('/api/portfolio')
+    fetch('/api/portfolio')
+      .then((res) => res.json())
       .then((data) => {
         if (requestId !== liveTotalsRequestId.current) return;
         if (!data || !data.configured || !data.totals) {
@@ -1671,9 +1467,7 @@ export default function PortalV2Page() {
         latestLiveMonthKeyRef.current = (months && months.length) ? months[months.length - 1] : null;
         setLiveHistory(Array.isArray(data.history) ? data.history : null);
         // Real cron timestamp, not the client-side "just now" — see lastPullAt's declaration above.
-        // Same rule as rangePullAt above: never let a previous payload's freshness timestamp survive
-        // a newer successful metadata refresh that simply has no generated_at of its own.
-        setLastPullAt(data.generated_at || null);
+        if (data.generated_at) setLastPullAt(data.generated_at);
 
         if (months && months.length) {
           if (!rangeInitialized.current) {
@@ -1728,45 +1522,17 @@ export default function PortalV2Page() {
   // slow or failed snapshot fetch never blocks or flickers the rest of the app.
   const fetchSnapshot = () => {
     const requestId = ++liveSnapshotRequestId.current;
-    return fetchJsonAuthed('/api/snapshot')
+    return fetch('/api/snapshot')
+      .then((res) => res.json())
       .then((data) => {
         if (requestId !== liveSnapshotRequestId.current) return;
-        const normalizeSnapshotPeriod = (period) => {
-          if (!period || typeof period !== 'object') return null;
-          const totals = period.totals && typeof period.totals === 'object' ? period.totals : null;
-          const range = period.range && typeof period.range === 'object' ? period.range : null;
-          if (!totals || !range) return null;
-          const start = range.start || range.from || null;
-          const end = range.end || range.to || null;
-          return {
-            ...period,
-            totals: {
-              enquiries: Number(totals.enquiries) || 0,
-              reservations: Number(totals.reservations) || 0,
-              moveIns: Number(totals.moveIns) || 0,
-              moveOuts: Number(totals.moveOuts) || 0,
-              sqftIn: Number(totals.sqftIn) || 0,
-              sqftOut: Number(totals.sqftOut) || 0,
-            },
-            range: {
-              start,
-              end,
-              from: start,
-              to: end,
-            },
-            sites: Array.isArray(period.sites) ? period.sites : [],
-          };
-        };
-        const daily = normalizeSnapshotPeriod(data?.daily);
-        const weekly = normalizeSnapshotPeriod(data?.weekly);
-        const quarterly = normalizeSnapshotPeriod(data?.quarterly);
-        const hasAnySnapshotPeriod = !!(daily || weekly || quarterly);
+        const hasAnySnapshotPeriod = !!(data && (data.daily || data.weekly || data.quarterly));
         if (!data || !data.configured || !hasAnySnapshotPeriod) {
           debugWarn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
           setLiveSnapshot((prev) => prev);
           return;
         }
-        setLiveSnapshot({ daily, weekly, quarterly, generatedAt: data.generated_at });
+        setLiveSnapshot({ daily: data.daily || null, weekly: data.weekly || null, quarterly: data.quarterly || null, generatedAt: data.generated_at });
       })
       // FIXED 24 Jul 2026 (deep audit): this independent fetch path still used the old "clear to
       // null on any transient failure" behavior that was already removed from fetchLiveTotals on 14
@@ -1787,41 +1553,16 @@ export default function PortalV2Page() {
   // fetch, same reasoning as fetchSnapshot above.
   const fetchFloorOccupancy = () => {
     const requestId = ++liveFloorOccRequestId.current;
-    return fetchJsonAuthed('/api/floor-occupancy')
+    return fetch('/api/floor-occupancy')
+      .then((res) => res.json())
       .then((data) => {
         if (requestId !== liveFloorOccRequestId.current) return;
-        const normalizeFloorRow = (row) => {
-          if (!row || typeof row !== 'object') return null;
-          const floor = Number(row.floor);
-          const totalUnits = Number(row.totalUnits) || 0;
-          const occupiedUnits = Number(row.occupiedUnits) || 0;
-          const totalArea = Number(row.totalArea) || 0;
-          const occupiedArea = Number(row.occupiedArea) || 0;
-          const occPct = totalUnits ? +((occupiedUnits / totalUnits) * 100).toFixed(1) : 0;
-          return {
-            floor: Number.isFinite(floor) ? floor : 0,
-            totalUnits,
-            occupiedUnits,
-            totalArea,
-            occupiedArea,
-            occPct,
-          };
-        };
-        const floors = Array.isArray(data?.floors) ? data.floors.map(normalizeFloorRow).filter(Boolean) : [];
-        const sites = Array.isArray(data?.sites) ? data.sites.filter((code) => typeof code === 'string' && code) : [];
-        const rawSiteFloors = (data?.site_floors && typeof data.site_floors === 'object') ? data.site_floors : {};
-        const siteFloors = Object.fromEntries(
-          Object.entries(rawSiteFloors).map(([code, rows]) => [
-            code,
-            Array.isArray(rows) ? rows.map(normalizeFloorRow).filter(Boolean) : [],
-          ]),
-        );
-        if (!data || !data.configured || !floors.length) {
+        if (!data || !data.configured || !data.floors || !data.floors.length) {
           debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run pull:floor-occupancy`. Occupancy by Floor will show mock data.');
           setLiveFloorOcc((prev) => prev);
           return;
         }
-        setLiveFloorOcc({ sites, floors, siteFloors, generatedAt: data.generated_at || null });
+        setLiveFloorOcc({ sites: data.sites, floors: data.floors, siteFloors: data.site_floors || {}, generatedAt: data.generated_at });
       })
       .catch((err) => {
         if (requestId !== liveFloorOccRequestId.current) return;
@@ -1836,34 +1577,10 @@ export default function PortalV2Page() {
   const fetchCockpit = (monthKey, setter = setLiveCockpit, requestRef = liveCockpitRequestId) => {
     const requestId = ++requestRef.current;
     const qs = monthKey ? `?month=${monthKey}` : '';
-    return fetchJsonAuthed(`/api/cockpit${qs}`)
+    return fetch(`/api/cockpit${qs}`)
+      .then((res) => res.json())
       .then((data) => {
         if (requestId !== requestRef.current) return;
-        const normalizeCockpitSite = (site) => {
-          if (!site || typeof site !== 'object' || !site.code) return null;
-          return {
-            code: String(site.code),
-            total_charge: Number(site.total_charge) || 0,
-            total_payment: Number(site.total_payment) || 0,
-            total_credit: Number(site.total_credit) || 0,
-            categories: Array.isArray(site.categories) ? site.categories : [],
-          };
-        };
-        const curve = Array.isArray(data?.curve)
-          ? data.curve
-            .map((row) => {
-              if (!row || typeof row !== 'object' || !row.date) return null;
-              const sites = Array.isArray(row.sites) ? row.sites.map(normalizeCockpitSite).filter(Boolean) : [];
-              return {
-                date: String(row.date),
-                total_charge: Number(row.total_charge) || 0,
-                total_payment: Number(row.total_payment) || 0,
-                total_credit: Number(row.total_credit) || 0,
-                sites,
-              };
-            })
-            .filter(Boolean)
-          : [];
         if (!data || !data.configured) {
           debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will show mock data.`);
           setter((prev) => {
@@ -1874,12 +1591,7 @@ export default function PortalV2Page() {
           });
           return;
         }
-        setter({
-          month: data.month || monthKey || null,
-          curve,
-          avgDailyRate: data.avgDailyRate == null ? null : Number(data.avgDailyRate),
-          generatedAt: data.generated_at || null,
-        });
+        setter({ month: data.month, curve: data.curve, avgDailyRate: data.avgDailyRate, generatedAt: data.generated_at || null });
       })
       .catch((err) => {
         if (requestId !== requestRef.current) return;
@@ -1892,7 +1604,7 @@ export default function PortalV2Page() {
   // cockpit/floor payloads overnight while someone leaves the portal open, but before this the UI only
   // re-read them on the first mount, an explicit Refresh click, or certain navigation actions. Result:
   // a tab left open until the next morning could keep showing yesterday's stored payload even though
-  // the overnight cron chain had already succeeded. Re-read every persisted source quietly on visibility
+  // the 6-8am cron chain had already succeeded. Re-read every persisted source quietly on visibility
   // return and on a short timer so the portal can "live on its own" without needing a manual reload.
   const silentRefreshAll = () => {
     const pending = [
@@ -1996,50 +1708,47 @@ export default function PortalV2Page() {
     };
     document.addEventListener('click', onDocClick, true);
 
-    let onKeySeq = null;
-    if (process.env.NODE_ENV !== 'production') {
-      const SEQ_A = [98, 101, 110, 115, 111, 110];
-      const SEQ_B = [109, 97, 114, 116, 121];
-      onKeySeq = (e) => {
-        const tag = e.target && e.target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
-        const code = e.key.length === 1 ? e.key.toLowerCase().charCodeAt(0) : -1;
+    const SEQ_A = [98, 101, 110, 115, 111, 110];
+    const SEQ_B = [109, 97, 114, 116, 121];
+    const onKeySeq = (e) => {
+      const tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return;
+      const code = e.key.length === 1 ? e.key.toLowerCase().charCodeAt(0) : -1;
 
-        clearTimeout(seqAReset.current);
-        seqAReset.current = setTimeout(() => { seqAIdx.current = 0; }, 2000);
-        if (code === SEQ_A[seqAIdx.current]) {
-          seqAIdx.current++;
-          if (seqAIdx.current === SEQ_A.length) {
-            seqAIdx.current = 0;
-            clearTimeout(seqAReset.current);
-            setPanelAOpen(true);
-          }
-        } else {
-          seqAIdx.current = code === SEQ_A[0] ? 1 : 0;
+      clearTimeout(seqAReset.current);
+      seqAReset.current = setTimeout(() => { seqAIdx.current = 0; }, 2000);
+      if (code === SEQ_A[seqAIdx.current]) {
+        seqAIdx.current++;
+        if (seqAIdx.current === SEQ_A.length) {
+          seqAIdx.current = 0;
+          clearTimeout(seqAReset.current);
+          setPanelAOpen(true);
         }
+      } else {
+        seqAIdx.current = code === SEQ_A[0] ? 1 : 0;
+      }
 
-        clearTimeout(seqBReset.current);
-        seqBReset.current = setTimeout(() => { seqBIdx.current = 0; }, 2000);
-        if (code === SEQ_B[seqBIdx.current]) {
-          seqBIdx.current++;
-          if (seqBIdx.current === SEQ_B.length) {
-            seqBIdx.current = 0;
-            clearTimeout(seqBReset.current);
-            setPanelBOpen(true);
-          }
-        } else {
-          seqBIdx.current = code === SEQ_B[0] ? 1 : 0;
+      clearTimeout(seqBReset.current);
+      seqBReset.current = setTimeout(() => { seqBIdx.current = 0; }, 2000);
+      if (code === SEQ_B[seqBIdx.current]) {
+        seqBIdx.current++;
+        if (seqBIdx.current === SEQ_B.length) {
+          seqBIdx.current = 0;
+          clearTimeout(seqBReset.current);
+          setPanelBOpen(true);
         }
-      };
-      document.addEventListener('keydown', onKeySeq);
-    }
+      } else {
+        seqBIdx.current = code === SEQ_B[0] ? 1 : 0;
+      }
+    };
+    document.addEventListener('keydown', onKeySeq);
 
     return () => {
       clearTimeout(safety);
       clearTimeout(seqAReset.current);
       clearTimeout(seqBReset.current);
       document.removeEventListener('click', onDocClick, true);
-      if (onKeySeq) document.removeEventListener('keydown', onKeySeq);
+      document.removeEventListener('keydown', onKeySeq);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2321,20 +2030,12 @@ export default function PortalV2Page() {
       };
       const metricsFor = (g) => {
         if (!g) return null;
-        const askingRaw = g.totalArea ? (g.grossPotential / g.totalArea * 12) : null;
-        const inPlaceRaw = g.occArea ? (g.actualOccupied / g.occArea * 12) : null;
-        const discountPct = (askingRaw != null && askingRaw !== 0 && inPlaceRaw != null)
-          ? +((inPlaceRaw - askingRaw) / askingRaw * 100).toFixed(1)
-          : null;
-        const occPct = g.totalArea ? +(g.occArea / g.totalArea * 100).toFixed(1) : null;
-        const econPct = g.grossPotential ? +(g.actualOccupied / g.grossPotential * 100).toFixed(1) : null;
-        return {
-          askingPSF: askingRaw != null ? R2(askingRaw) : null,
-          inPlacePSF: inPlaceRaw != null ? R2(inPlaceRaw) : null,
-          discountPct,
-          occPct,
-          econPct,
-        };
+        const askingRaw = g.totalArea ? (g.grossPotential / g.totalArea * 12) : 0;
+        const inPlaceRaw = g.occArea ? (g.actualOccupied / g.occArea * 12) : 0;
+        const discountPct = askingRaw ? +((inPlaceRaw - askingRaw) / askingRaw * 100).toFixed(1) : 0;
+        const occPct = g.totalArea ? +(g.occArea / g.totalArea * 100).toFixed(1) : 0;
+        const econPct = g.grossPotential ? +(g.actualOccupied / g.grossPotential * 100).toFixed(1) : 0;
+        return { askingPSF: R2(askingRaw), inPlacePSF: R2(inPlaceRaw), discountPct, occPct, econPct };
       };
       const momStr = (cur, prev, isMoney) => {
         if (cur == null || prev == null || !isFinite(cur) || !isFinite(prev)) return '–';
@@ -2427,7 +2128,7 @@ export default function PortalV2Page() {
       // rule used everywhere else, e.g. recordFor() in lib/buildPayload.js), rentRoll <- rent.
       // Same "no region field on live data" gap as the Rates per ft² table below.
       const liveOccRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, occupied: s.occ || 0, total: s.tot || 0, occPct: occupancyPctForSite(s), claPct: claPctForSite(s), rentRoll: s.rent || 0,
+        name: s.name, occupied: s.occ || 0, total: s.tot || 0, occPct: s.occPC || 0, claPct: s.areaPC || 0, rentRoll: s.rent || 0,
       })) : null;
       if (!liveOccRows) debugWarn('[portal-v2] Portfolio Occupancy table rendering with mock RAW_STORES data (no live sites available).');
       // "vs last month" totals-row deltas (8 Jul 2026) — reuses the SAME `prevT` computed above for
@@ -2470,12 +2171,7 @@ export default function PortalV2Page() {
       // exists in the mock RAW_STORES data), so that column is dropped for live rows rather than
       // showing a fabricated value — a real region mapping would need to be added upstream first.
       const liveRateRows = liveSites ? liveSites.map((s) => ({
-        name: s.name,
-        selfRate: (s.ssAreaSum || 0) > 0 ? (s.ssRate || 0) : null,
-        totalRate: (s.areaSum || 0) > 0 ? (s.rate || 0) : null,
-        realRate: derivedSelfStorageRealRate(s),
-        realTotal: derivedTotalRealRate(s),
-        area: s.occA || 0,
+        name: s.name, selfRate: s.ssRate || 0, totalRate: s.rate || 0, realRate: s.ssReal || 0, realTotal: s.realRate || 0, area: s.occA || 0,
       })) : null;
       const mockRateRows = fs.map((s) => ({ name: s.name, region: s.region, selfRate: s.rate, totalRate: +(s.rate * 0.957).toFixed(2), realRate: +(s.rate * 0.925).toFixed(2), realTotal: +(s.rate * 0.89).toFixed(2), area: s.area }));
       if (!liveRateRows) debugWarn('[portal-v2] Rates per ft² table rendering with mock RAW_STORES data (no live sites available).');
@@ -2483,26 +2179,14 @@ export default function PortalV2Page() {
       // summary row). Live path reuses computeTotals' weighted rates (Σ rent ÷ Σ area × 12 — never a
       // mean of per-site rates); mock path weights each mock rate by that store's occupied area.
       const rateTotals = (liveRateRows && t)
-        ? {
-            selfRate: t.ssAreaSum ? (t.ssRate ?? 0) : null,
-            totalRate: t.areaSum ? (t.rate ?? 0) : null,
-            realRate: derivedSelfStorageRealRate(t),
-            realTotal: derivedTotalRealRate(t),
-            area: t.occA ?? 0,
-          }
+        ? { selfRate: t.ssRate ?? 0, totalRate: t.rate ?? 0, realRate: t.ssReal ?? 0, realTotal: t.realRate ?? 0, area: t.occA ?? 0 }
         : (() => {
             const aSum = mockRateRows.reduce((a, r) => a + r.area, 0);
             const w = (k) => aSum ? R2(mockRateRows.reduce((a, r) => a + r[k] * r.area, 0) / aSum) : 0;
             return { selfRate: w('selfRate'), totalRate: w('totalRate'), realRate: w('realRate'), realTotal: w('realTotal'), area: aSum };
           })();
       const rateTotalsPrev = (liveRateRows && prevT)
-        ? {
-            selfRate: prevT.ssAreaSum ? (prevT.ssRate ?? 0) : null,
-            totalRate: prevT.areaSum ? (prevT.rate ?? 0) : null,
-            realRate: derivedSelfStorageRealRate(prevT),
-            realTotal: derivedTotalRealRate(prevT),
-            area: prevT.occA ?? 0,
-          }
+        ? { selfRate: prevT.ssRate ?? 0, totalRate: prevT.rate ?? 0, realRate: prevT.ssReal ?? 0, realTotal: prevT.realRate ?? 0, area: prevT.occA ?? 0 }
         : null;
       out.tables.push({
         // NARROWED 21 Jul 2026 (same request as Portfolio Occupancy above) — pairs with it 2-up.
@@ -2538,7 +2222,7 @@ export default function PortalV2Page() {
           // sourced from ManagementSummary) across all live sites — same live-data pattern as Enquiries.
           if (liveSites) {
             const sum = (k) => liveSites.reduce((a, s) => a + (s[k] || 0), 0);
-            return { title: 'Move-ins & Move-outs', tip: 'Reports: MoveInsAndMoveOuts (visible current-month Move-ins, Move-outs, Net ft²); ManagementSummary (closed-month fallback counts only).\nFields: MoveIn, MoveOut, MoveDate, MovedInArea, MovedOutArea (MoveInsAndMoveOuts); sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary fallback only).\nCalculation: for the visible current month, Move-ins/Move-outs are counted from dated move events through the last complete day in the selected store scope; closed months fall back to the stored monthly ManagementSummary counts. Net ft² = Σ MovedInArea − Σ MovedOutArea across that same scope.', tiles: [
+            return { title: 'Move-ins & Move-outs', tip: 'Reports: ManagementSummary (Move-ins, Move-outs); MoveInsAndMoveOuts (Net ft²).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Move-ins/Move-outs = counts within the selected period. Net ft² = Σ MovedInArea − Σ MovedOutArea, across the current store scope.', tiles: [
               { value: intFmt(sum('moveIns')), label: 'Move-ins', delta: null, dir: null },
               { value: intFmt(sum('moveOuts')), label: 'Move-outs', delta: null, dir: null },
               { value: intFmt(sum('netArea')) + ' ft²', label: 'Net ft²', delta: null, dir: null },
@@ -2554,19 +2238,13 @@ export default function PortalV2Page() {
           // from lib/reportMap.js's lead_funnel/InquiryTracking parser per the locked spec) across
           // ALL live sites — same "no region filter on live data" caveat as the rate table/charts.
           if (liveSites) {
-            // Prefer the server-aggregated portfolio totals whenever no explicit store checkbox
-            // filter is active. This keeps the unfiltered Dashboard card aligned with the exact
-            // range payload the API just returned even if some stale/deployed client path ever
-            // carries an inconsistent per-site enquiry breakdown. Once a store filter is active we
-            // still recompute from the scoped sites[] array so the card narrows correctly.
-            const enquiryTotals = (!pageHasSelectedStores && liveTotals?.enquiries)
-              ? liveTotals.enquiries
-              : computeTotals(liveSites).enquiries;
+            const sum = (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0);
+            const enquiryRows = liveSites.map((s) => s.enquiries || {});
             return { title: 'Enquiries', tip: 'Report: InquiryTracking.\nFields: sInquiryType (Phone/WalkIn/Web/EMail), dPlaced.\nCalculation: Phone/Walk-ins/Web = counts where sInquiryType matches and dPlaced falls in the selected period. The displayed Web and Total counts follow the live legacy Marketing page and exclude EMail; EMail remains available separately in the widget builder.', tiles: [
-              { value: intFmt(enquiryTotals?.phone || 0), label: 'Phone', delta: null, dir: null },
-              { value: intFmt(enquiryTotals?.walkin || 0), label: 'Walk-ins', delta: null, dir: null },
-              { value: intFmt(enquiryTotals?.web || 0), label: 'Web', delta: null, dir: null },
-              { value: intFmt(enquiryTotals?.total || 0), label: 'Visible Total', delta: null, dir: null },
+              { value: intFmt(sum('phone')), label: 'Phone', delta: null, dir: null },
+              { value: intFmt(sum('walkin')), label: 'Walk-ins', delta: null, dir: null },
+              { value: intFmt(enquiryRows.reduce((a, e) => a + enquiryWebVisible(e), 0)), label: 'Web', delta: null, dir: null },
+              { value: intFmt(enquiryRows.reduce((a, e) => a + enquiryTotalVisible(e), 0)), label: 'Visible Total', delta: null, dir: null },
             ] };
           }
           debugWarn('[portal-v2] Enquiries stat card rendering with mock RAW_STORES data (no live sites available).');
@@ -2585,13 +2263,8 @@ export default function PortalV2Page() {
       // (same gap flagged on the Rates per ft² table), so all live sites are shown unfiltered here.
       const thresholdColorFor = (v) => v >= 85 ? C.green : v >= 75 ? C.amber : C.red;
       const liveAreaBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.occA || 0, disp: intFmt(s.occA || 0) + ' ft²', color: C.blue })) : null;
-      const liveRateBars = liveSites ? liveSites
-        .filter((s) => (s.ssAreaSum || 0) > 0)
-        .map((s) => ({ label: s.name, value: s.ssRate || 0, disp: '£' + (s.ssRate || 0).toFixed(2), color: C.teal })) : null;
-      const liveClaBars = liveSites ? liveSites.map((s) => {
-        const pct = claPctForSite(s);
-        return { label: s.name, value: pct, disp: pct.toFixed(1) + '%', color: thresholdColorFor(pct) };
-      }) : null;
+      const liveRateBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.ssRate || 0, disp: '£' + (s.ssRate || 0).toFixed(2), color: C.teal })) : null;
+      const liveClaBars = liveSites ? liveSites.map((s) => ({ label: s.name, value: s.areaPC || 0, disp: (s.areaPC || 0).toFixed(1) + '%', color: thresholdColorFor(s.areaPC || 0) })) : null;
       if (!liveAreaBars) debugWarn('[portal-v2] Dashboard comparison charts rendering with mock RAW_STORES data (no live sites available).');
 
       // Pinned summary bar on each comparison chart (legacy parity — the legacy portal's bar
@@ -2603,7 +2276,7 @@ export default function PortalV2Page() {
       const avgCla = (liveClaBars && t) ? (t.claPC ?? 0) : (fs.length ? fs.reduce((a, s) => a + s.claPct, 0) / fs.length : 0);
       out.chartCards = [
         { title: 'Rented Area by Store', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Occupied area = Σ OccupiedArea per store. Average bar = mean across shown stores.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.', el: <StoreBarChart items={liveAreaBars || fs.map((s) => ({ label: s.name, value: s.area, disp: intFmt(s.area) + ' ft²', color: C.blue }))} opts={{ average: { label: 'Average', value: avgArea, disp: intFmt(avgArea) + ' ft²' } }} /> },
-        { title: 'Self Storage Rate per ft² by Store', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bRented, sTypeName ("Indoor Self Storage").\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, occupied self storage units only, per store. Portfolio bar = weighted across the shown store scope, not a simple mean. Stores with no occupied self storage area are excluded because no rate can be derived for them.', el: (liveRateBars && !liveRateBars.length) ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No stores with occupied self storage area exist in the selected store scope.</div> : <StoreBarChart items={liveRateBars || fs.map((s) => ({ label: s.name, value: s.rate, disp: '£' + s.rate.toFixed(2), color: C.teal }))} opts={{ average: { label: 'Portfolio', value: avgSSRate, disp: '£' + avgSSRate.toFixed(2) } }} /> },
+        { title: 'Self Storage Rate per ft² by Store', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bRented, sTypeName ("Indoor Self Storage").\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, occupied self storage units only, per store. Portfolio bar = weighted across the shown store scope, not a simple mean.', el: <StoreBarChart items={liveRateBars || fs.map((s) => ({ label: s.name, value: s.rate, disp: '£' + s.rate.toFixed(2), color: C.teal }))} opts={{ average: { label: 'Portfolio', value: avgSSRate, disp: '£' + avgSSRate.toFixed(2) } }} /> },
         { title: 'Occupied Area % of CLA by Store', tip: 'Report: OccupancyStatistics.\nFields: Area, Occupied, TotalUnits, Unrentable.\nCalculation: % of CLA = occupied area ÷ CLA area × 100, per store. Portfolio bar = weighted across the shown store scope.', el: <StoreBarChart items={liveClaBars || fs.map((s) => ({ label: s.name, value: s.claPct, disp: s.claPct.toFixed(1) + '%', color: thresholdColorFor(s.claPct) }))} opts={{ zero: false, average: { label: 'Portfolio', value: avgCla, disp: avgCla.toFixed(1) + '%' } }} /> },
       ];
       customWidgets.forEach((w) => {
@@ -2617,7 +2290,7 @@ export default function PortalV2Page() {
           .filter((row) => Number.isFinite(row.value))
           .sort((a, b) => b.value - a.value)
           .slice(0, 8)
-          .map(({ site, value }) => ({ label: site.name, value, disp: (Math.round(value * 100) / 100).toLocaleString('en-GB'), color: C.teal }));
+          .map(({ site, value }) => ({ label: site.name, value: Math.abs(value), disp: (Math.round(value * 100) / 100).toLocaleString('en-GB'), color: C.teal }));
         out.chartCards.push({
           title: w.name,
           el: items.length
@@ -2653,7 +2326,7 @@ export default function PortalV2Page() {
         // 8 Jul 2026 alongside DataTable's totals-row deltas, so "vs last month" works the same way
         // as every other tile on this card.
         kpiT
-          ? { title: 'Total Store Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy, Total Occupancy sqft); RentRoll (Rate per ft²).\nFields: Occupied, TotalUnits, OccupiedArea (falls back to Area × Occupied) (OccupancyStatistics); dcStdRate, Area/Area1, bRented (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Total Occupancy (sqft) = Σ OccupiedArea.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: kpiT.areaSum ? ('£' + (kpiT.rate ?? 0).toFixed(2)) : 'N/A', label: 'Rate per ft²', ...(kpiT.areaSum ? deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') : { delta: null, dir: null }) }, { value: intFmt(kpiT.occA ?? 0) + ' ft²', label: 'Total Occupancy (sqft)', ...deltaTick(kpiT.occA, kpiPrevT && kpiPrevT.occA, 'ft') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
+          ? { title: 'Total Store Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy, Total Occupancy sqft); RentRoll (Rate per ft²).\nFields: Occupied, TotalUnits, OccupiedArea (falls back to Area × Occupied) (OccupancyStatistics); dcStdRate, Area/Area1, bRented (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Total Occupancy (sqft) = Σ OccupiedArea.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end — not a live figure.', tiles: [{ value: (kpiT.occPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.occPC, kpiPrevT && kpiPrevT.occPC, 'pct') }, { value: '£' + (kpiT.rate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.rate, kpiPrevT && kpiPrevT.rate, 'money') }, { value: intFmt(kpiT.occA ?? 0) + ' ft²', label: 'Total Occupancy (sqft)', ...deltaTick(kpiT.occA, kpiPrevT && kpiPrevT.occA, 'ft') }], note: intFmt(kpiT.occ ?? 0) + ' / ' + intFmt(kpiT.tot ?? 0) + ' units occupied' }
           : { title: 'Total Store Occupancy', tiles: [{ value: occPct.toFixed(1) + '%', label: 'Occupancy', delta: '2%', dir: 'up' }, { value: '£28.46', label: 'Rate per ft²', delta: '£0.22', dir: 'up' }, { value: intFmt(agg.area) + ' ft²', label: 'Total Occupancy (sqft)', delta: '820', dir: 'up' }], note: intFmt(agg.occupied) + ' / ' + intFmt(agg.total) + ' units occupied' },
         kpiT
           // Renamed 8 Jul 2026 (Michael: KPI page widget name, "Indoor Self Storage" -> "Self Storage")
@@ -2663,10 +2336,10 @@ export default function PortalV2Page() {
           // (ssOccPC = Occupied ÷ TotalUnits, self storage units only) already WAS unit occupancy;
           // it just wasn't labelled as such. Made that explicit instead of adding a duplicate tile,
           // and dropped the Unit Occupancy % column from the Occupancy by Store table below to match.
-          ? { title: 'Self Storage', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Unit Occupancy % = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Both scoped to self storage units only.\nNote: if the selected store scope has no self storage units at all, neither occupancy nor rate can be derived truthfully.', tiles: [{ value: kpiT.ssTot ? (kpiT.ssOccPC ?? 0).toFixed(1) + '%' : 'N/A', label: 'Unit Occupancy %', ...(kpiT.ssTot ? deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') : { delta: null, dir: null }) }, { value: kpiT.ssAreaSum ? ('£' + (kpiT.ssRate ?? 0).toFixed(2)) : 'N/A', label: 'Rate per ft²', ...(kpiT.ssAreaSum ? deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') : { delta: null, dir: null }) }] }
+          ? { title: 'Self Storage', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (Rate per ft²) — self storage units only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Unit Occupancy % = Occupied ÷ TotalUnits × 100. Rate = Σ dcStdRate ÷ Σ area × 12. Both scoped to self storage units only.', tiles: [{ value: (kpiT.ssOccPC ?? 0).toFixed(1) + '%', label: 'Unit Occupancy %', ...deltaTick(kpiT.ssOccPC, kpiPrevT && kpiPrevT.ssOccPC, 'pct') }, { value: '£' + (kpiT.ssRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.ssRate, kpiPrevT && kpiPrevT.ssRate, 'money') }] }
           : { title: 'Self Storage', tiles: [{ value: (occPct + 1.1).toFixed(1) + '%', label: 'Unit Occupancy %', delta: '2%', dir: 'up' }, { value: '£29.74', label: 'Rate per ft²', delta: '£0.20', dir: 'up' }] },
         kpiT
-          ? { title: 'Offices Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (rent, Area) — offices only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate, unlike Total/Self Storage).\nNote: if the selected store scope has no offices units at all, neither occupancy nor rate can be derived truthfully.', tiles: [{ value: kpiT.officesTot ? (kpiT.officesOccPC ?? 0).toFixed(1) + '%' : 'N/A', label: 'Occupancy', ...(kpiT.officesTot ? deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') : { delta: null, dir: null }) }, { value: kpiT.officesAreaSum ? ('£' + (kpiT.officesRate ?? 0).toFixed(2)) : 'N/A', label: 'Rate per ft²', ...(kpiT.officesAreaSum ? deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') : { delta: null, dir: null }) }] }
+          ? { title: 'Offices Occupancy', live: true, tip: 'Reports: OccupancyStatistics (Occupancy); RentRoll (rent, Area) — offices only.\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Occupancy = Occupied ÷ TotalUnits × 100. Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate, unlike Total/Self Storage).', tiles: [{ value: (kpiT.officesOccPC ?? 0).toFixed(1) + '%', label: 'Occupancy', ...deltaTick(kpiT.officesOccPC, kpiPrevT && kpiPrevT.officesOccPC, 'pct') }, { value: '£' + (kpiT.officesRate ?? 0).toFixed(2), label: 'Rate per ft²', ...deltaTick(kpiT.officesRate, kpiPrevT && kpiPrevT.officesRate, 'money') }] }
           : { title: 'Offices Occupancy', tiles: [{ value: '78.0%', label: 'Occupancy', delta: '3%', dir: 'up' }, { value: '£61.90', label: 'Rate per ft²', delta: null, dir: null }] },
         // Reservations vs Move-outs: REBUILT 6 Jul 2026 (Michael's idea). The old ReservationList/
         // ScheduledMoveOuts-based version was confirmed structurally live-only on BOTH sides —
@@ -2711,7 +2384,7 @@ export default function PortalV2Page() {
         // global date-range picker is set to a past month, by design (there's no historical concept of
         // "how many reservations were open on a past date" — SiteLink doesn't track that).
         liveSites
-          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: "Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList); dSchedOut (ScheduledMoveOuts).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded on or after the portal's represented business day boundary, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts rows with dSchedOut on or after that same boundary (excludes stale past-dated rows SiteLink never clears from this report).\nFreshness: latest stored snapshot from the most recent portal pull, representing the last complete business day rather than real-time intraday.", tiles: [
+          ? { title: 'Scheduled Reservations vs Scheduled Move-outs', live: true, tip: 'Reports: ReservationList (Reservations); ScheduledMoveOuts (Move-outs).\nFields: dCancelled, dNeeded, QTCancellationTypeID, QTRentalTypeID (ReservationList); dSchedOut (ScheduledMoveOuts).\nCalculation: Reservations = active waiting-list rows (not cancelled, dNeeded in the future, QTRentalTypeID = 2). Move-outs = ScheduledMoveOuts rows with dSchedOut not yet passed (excludes stale past-dated rows SiteLink never clears from this report).\nFreshness: latest stored snapshot from the most recent portal pull, not the selected period and not real-time intraday.', tiles: [
               { value: intFmt(liveSites.reduce((a, s) => a + (s.activeReservations || 0), 0)), label: 'Reservations', delta: null, dir: null },
               { value: intFmt(liveSites.reduce((a, s) => a + (s.scheduledOuts || 0), 0)), label: 'Move-outs', delta: null, dir: null },
               { value: (() => { const n = liveSites.reduce((a, s) => a + (s.activeReservations || 0) - (s.scheduledOuts || 0), 0); return (n >= 0 ? '+' : '') + intFmt(n); })(), label: 'Net change', delta: null, dir: null },
@@ -2749,11 +2422,14 @@ export default function PortalV2Page() {
           }
           return { title: 'Reserved Scheduled Sqft', tiles: [{ value: intFmt(2600 * f) + ' ft²', label: 'Reserved', delta: '140', dir: 'up' }] };
         })(),
-        // Debtor Levels: live-wired from /api/portfolio's totals (lib/buildPayload.js). Primary
-        // delinquency source is ManagementSummary's Unpaid ageing table when available, with
-        // PastDueBalances only backfilling older stored rows that predate that parser fix.
+        // Debtor Levels: live-wired from /api/portfolio's totals (lib/buildPayload.js). Per the
+        // legacy portal's own tooltip (confirmed 2 Jul 2026): % Tenants = PastDueBalances
+        // Delinquency Units / Occupancy Statistics Occupied Units; % Rent Roll = PastDueBalances
+        // Delinquency Total / Occupancy Statistics Actual Occupied Unit Rates (the tooltip calls
+        // the source "ManagementSummary", but the fields actually live in PastDueBalances/
+        // OccupancyStatistics in this pipeline). Total = raw £ overdue, summed across sites.
         kpiT
-          ? { title: 'Debtor Levels', live: true, tip: `Reports: ManagementSummary ("Unpaid" ageing table, primary 30+ day overdue source), OccupancyStatistics (occupied units/rent), PastDueBalances (older-row fallback only).\nFields: dcDlqntTot, iDelUnits, Period (ManagementSummary); Occupied, ActualOccupied (OccupancyStatistics); ChargeBalance and DaysLate (PastDueBalances fallback).\nCalculation: % Tenants = overdue (30+ day) accounts ÷ occupied units × 100. % Rent Roll = overdue (30+ day) £ ÷ occupied rent × 100. Lower is better.${kpiT.occ ? '' : '\nNote: no occupied units exist in the selected store scope, so % Tenants cannot be derived.'}${kpiT.occActualRent ? '' : '\nNote: no occupied rent exists in the selected store scope, so % Rent Roll cannot be derived.'}`, tiles: [{ value: kpiT.occ ? (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% Tenants', ...(kpiT.occ ? deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct', true) : { delta: null, dir: null }) }, { value: kpiT.occActualRent ? (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% Rent Roll', ...(kpiT.occActualRent ? deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct', true) : { delta: null, dir: null }) }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole', true) }] }
+          ? { title: 'Debtor Levels', live: true, tip: `Reports: PastDueBalances (overdue units/£, 30+ days); OccupancyStatistics (occupied units/rent).\nFields: ChargeBalance (or RentBal+LateFeeBal+POSBal+OtherChargesBal+TaxesBal), DaysLate (PastDueBalances); Occupied, ActualOccupied (OccupancyStatistics).\nCalculation: % Tenants = overdue (30+ day) accounts ÷ occupied units × 100. % Rent Roll = overdue (30+ day) £ ÷ occupied rent × 100. Lower is better.${kpiT.occ ? '' : '\nNote: no occupied units exist in the selected store scope, so % Tenants cannot be derived.'}${kpiT.occActualRent ? '' : '\nNote: no occupied rent exists in the selected store scope, so % Rent Roll cannot be derived.'}`, tiles: [{ value: kpiT.occ ? (kpiT.debtorTenantPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% Tenants', ...(kpiT.occ ? deltaTick(kpiT.debtorTenantPct, kpiPrevT && kpiPrevT.debtorTenantPct, 'pct', true) : { delta: null, dir: null }) }, { value: kpiT.occActualRent ? (kpiT.debtorRentRollPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% Rent Roll', ...(kpiT.occActualRent ? deltaTick(kpiT.debtorRentRollPct, kpiPrevT && kpiPrevT.debtorRentRollPct, 'pct', true) : { delta: null, dir: null }) }, { value: money(kpiT.debtorTotal ?? 0), label: 'Total', ...deltaTick(kpiT.debtorTotal, kpiPrevT && kpiPrevT.debtorTotal, 'moneyWhole', true) }] }
           : { title: 'Debtor Levels', tiles: [{ value: '1.8%', label: '% Tenants', delta: '0%', dir: null }, { value: '0.6%', label: '% Rent Roll', delta: '0%', dir: null }, { value: money(2790 * f), label: 'Total', delta: '£93', dir: 'up' }] },
         // Move-ins & Move-outs: was present on the legacy portal's KPIs page (missed when this page
         // was first built — it only existed on the Dashboard page here) — same live-data pattern as
@@ -2803,7 +2479,7 @@ export default function PortalV2Page() {
           const prevMoveOutArea = livePrevSites ? livePrevSites.reduce((a, s) => a + (s.moveOutAreaSum || 0), 0) : null;
           const netMoveIns = moveIns - moveOuts;
           const prevNetMoveIns = (prevMoveIns != null && prevMoveOuts != null) ? prevMoveIns - prevMoveOuts : null;
-          return { title: 'Move-ins & Move-outs', live: true, compact: true, tip: 'Reports: MoveInsAndMoveOuts (visible current-month Move-ins, Move-outs, Sqft In, Sqft Out); ManagementSummary (closed-month fallback counts only).\nFields: MoveIn, MoveOut, MoveDate, MovedInArea, MovedOutArea (MoveInsAndMoveOuts); sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary fallback only).\nCalculation: for the visible current month, Move-ins/Move-outs are counted from dated move events through the last complete day in the selected store scope; closed months fall back to the stored monthly ManagementSummary counts. Net Move-ins = Move-ins − Move-outs. Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
+          return { title: 'Move-ins & Move-outs', live: true, compact: true, tip: 'Reports: ManagementSummary (Move-ins, Move-outs counts); MoveInsAndMoveOuts (Sqft In, Sqft Out).\nFields: sDesc rows matching "Move In"/"Move Out", iMCount (ManagementSummary); MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Net Move-ins = Move-ins − Move-outs (unit count). Net ft² = Σ MovedInArea − Σ MovedOutArea (Sqft Out shown negative).', tiles: [
               { value: intFmt(moveIns), label: 'Move-ins', ...deltaTick(moveIns, prevMoveIns, 'count') },
               { value: intFmt(moveOuts), label: 'Move-outs', ...deltaTick(moveOuts, prevMoveOuts, 'count', true) },
               { value: (netMoveIns >= 0 ? '+' : '') + intFmt(netMoveIns), label: 'Net Move-ins', ...deltaTick(netMoveIns, prevNetMoveIns, 'count') },
@@ -2909,10 +2585,7 @@ export default function PortalV2Page() {
       // (e.g. line 1594's `occPct: s.occPC || 0` on the Portfolio Occupancy table) — never as a field
       // ON s itself. Copy-paste mixed up the two naming conventions.
       const liveOccByStoreRows = liveSites ? liveSites.map((s) => ({
-        name: s.name,
-        areaPct: s.totA ? +((((s.occA || 0) / s.totA) * 100).toFixed(1)) : 0,
-        unitPct: occupancyPctForSite(s),
-        econPct: economicOccPctForSite(s),
+        name: s.name, areaPct: s.areaPCmla || 0, unitPct: s.occPC || 0, econPct: s.economicOccPct || 0,
       })) : null;
       if (!liveOccByStoreRows) debugWarn('[portal-v2] Occupancy by Store table rendering with mock data (no live sites available).');
       const occByStoreRows = liveOccByStoreRows || fs.map((s) => ({
@@ -2956,10 +2629,6 @@ export default function PortalV2Page() {
         : 0;
       const hasCustTypeSplit = !!(custT && custTypeUnitsTotal > 0);
       const hasCustTypeRate = !!(custT && custTypeRateAreaTotal > 0);
-      const custTypeRateItems = hasCustTypeRate ? [
-        (custT?.residential?.area || 0) > 0 ? { label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue } : null,
-        (custT?.business?.area || 0) > 0 ? { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal } : null,
-      ].filter(Boolean) : [];
       // Rate Increases by Store: converted from a time trend (needed 12mo history we don't have) to
       // a per-store comparison over the CURRENTLY SELECTED live period. TenantRentChangeHistory's
       // increases count is already captured per site (rec.rateChanges.increases), so this doesn't
@@ -2978,7 +2647,7 @@ export default function PortalV2Page() {
         // by the 'Occupancy by Store' table above, which shows this same Area Occupancy % alongside
         // Unit Occupancy % and the new Economic Occupancy %, per Rich's consolidation request.
         { title: 'Units by Customer Type', tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany.\nCalculation: A unit is "Business" if bCorporate or bCommercial is set, or sCompany is non-blank; otherwise "Personal". Share = each segment\'s occupied units ÷ total occupied units × 100.\nNote: when the selected store scope has no occupied units with a customer-type classification, no split can be derived truthfully.', el: hasCustTypeSplit ? <VBars items={[{ label: 'Personal', value: custT.residential.pct, disp: custT.residential.pct + '%', color: C.blue }, { label: 'Business', value: custT.business.pct, disp: custT.business.pct + '%', color: C.blue2 }]} opts={{ max: 100 }} /> : liveSites ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No customer-type split is available for the selected store scope.</div> : <VBars items={[{ label: 'Personal', value: 81, disp: '81%', color: C.blue }, { label: 'Business', value: 19, disp: '19%', color: C.blue2 }]} opts={{ max: 100 }} /> },
-        { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bCorporate, bCommercial, sCompany.\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, computed separately for the Business and Personal segments.\nNote: when the selected store scope has no classified occupied area, no customer-type rate split can be derived truthfully. If only one segment has classified area, only that segment is shown — the missing segment is omitted rather than rendered as a false £0.00 bar.', el: custTypeRateItems.length ? <VBars items={custTypeRateItems} opts={{ max: 40 }} /> : liveSites ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No customer-type rate split is available for the selected store scope.</div> : <VBars items={[{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
+        { title: 'Rate per ft² by Customer Type', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, bCorporate, bCommercial, sCompany.\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12, computed separately for the Business and Personal segments.\nNote: when the selected store scope has no classified occupied area, no customer-type rate split can be derived truthfully.', el: hasCustTypeRate ? <VBars items={[{ label: 'Personal', value: custT.residential.rate, disp: '£' + custT.residential.rate.toFixed(2), color: C.blue }, { label: 'Business', value: custT.business.rate, disp: '£' + custT.business.rate.toFixed(2), color: C.teal }]} opts={{ max: 40 }} /> : liveSites ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No customer-type rate split is available for the selected store scope.</div> : <VBars items={[{ label: 'Personal', value: 29.1, disp: '£29.10', color: C.blue }, { label: 'Business', value: 31.4, disp: '£31.40', color: C.teal }]} opts={{ max: 40 }} /> },
         { title: `Rate Increases by Store (${liveScopeLabel})`, tip: 'Report: TenantRentChangeHistory.\nFields: dcOldRate, dcNewRate.\nCalculation: Count of rows where dcNewRate > dcOldRate, posted in the selected period, per site.', el: <StoreBarChart items={liveRateIncBars || fs.map((s) => ({ label: s.name, value: Math.round((38 * f) / fs.length) + (s.occupied % 5), disp: intFmt(Math.round((38 * f) / fs.length) + (s.occupied % 5)), color: C.blue }))} opts={{ average: { label: 'Total', value: rateIncTotal, disp: intFmt(rateIncTotal) } }} /> },
         // RELABELED 21 Jul 2026 (Rich's portal review, task #360). This chart was previously titled
         // "Move-in Variance vs Standard Rate (Whole Book...)" — Rich flagged that title's metric as
@@ -3035,7 +2704,7 @@ export default function PortalV2Page() {
           const title = 'Occupancy by Floor';
           return {
             title,
-            tip: 'Source: unit_floor_status (loaded from SiteLink UnitStatus export or UnitsInformation API import).\nFields: floor, occupied, rentable, area.\nCalculation: Occupied ÷ total positive-area rentable units, grouped by floor. Zero-area placeholder/pseudo-units are excluded. Respects the selected store checkbox filter; with no store selected, shows all imported sites.\nNote: this is a live unit-status snapshot and does not use the OccupancyStatistics monthly snapshot that powers the main Occupancy KPI cards elsewhere on the portal, so store totals here are not expected to tie exactly to those widgets.',
+            tip: 'Source: unit_floor_status (loaded from SiteLink UnitStatus export or UnitsInformation API import).\nFields: floor, occupied, rentable.\nCalculation: Occupied ÷ total rentable units, grouped by floor. Respects the selected store checkbox filter; with no store selected, shows all imported sites.',
             el: hasScopedFloorData
               ? <VBars items={rows} opts={{ max: 100 }} />
               : hasFloorDataset
@@ -3121,9 +2790,7 @@ export default function PortalV2Page() {
         const rateArea = (ct.residential?.area || 0) + (ct.business?.area || 0);
         return { name: s.name, personal, business, personalPct: tot ? +(personal / tot * 100).toFixed(1) : null, rate: rateArea ? (s.rate || 0) : null };
       }) : null;
-      const hasLiveCustTypeData = !!(liveCustTypeRows && liveCustTypeRows.some((r) => ((r.personal || 0) + (r.business || 0)) > 0 || r.rate != null));
       if (!liveCustTypeRows) debugWarn('[portal-v2] Units by Customer Type table rendering with mock RAW_STORES data (no live sites available).');
-      else if (!hasLiveCustTypeData) debugWarn('[portal-v2] Units by Customer Type table has no customer-type rows for the selected period/store scope.');
       const custTypeRowsAll = liveCustTypeRows || fs.map((s) => {
         const business = Math.round(s.occupied * (0.14 + (s.total % 13) / 100));
         return { name: s.name, region: s.region, personal: s.occupied - business, business, personalPct: +(((s.occupied - business) / s.occupied) * 100).toFixed(1), rate: s.rate };
@@ -3134,16 +2801,13 @@ export default function PortalV2Page() {
         const p = custTypeRowsAll.reduce((a, r) => a + (r.personal || 0), 0);
         const b = custTypeRowsAll.reduce((a, r) => a + (r.business || 0), 0);
         const occSum = custTypeRowsAll.reduce((a, r) => a + (r.personal || 0) + (r.business || 0), 0);
-        const classifiedAreaSum = liveSites
-          ? liveSites.reduce((sum, s) => sum + ((s.customerType?.business?.area || 0) + (s.customerType?.residential?.area || 0)), 0)
-          : 0;
         const rate = kpiT ? (kpiT.rate ?? 0) : (occSum ? R2(custTypeRowsAll.reduce((a, r) => a + (r.rate || 0) * ((r.personal || 0) + (r.business || 0)), 0) / occSum) : 0);
-        return { personal: p, business: b, personalPct: (p + b) ? +(p / (p + b) * 100).toFixed(1) : null, rate: classifiedAreaSum ? rate : null };
+        return { personal: p, business: b, personalPct: (p + b) ? +(p / (p + b) * 100).toFixed(1) : null, rate: occSum ? rate : null };
       })();
       out.tables.push({
         // NARROWED 21 Jul 2026 (see Unit Mix Occupancy above — same request, paired with it).
-        title: `Units by Customer Type — by Store (${liveScopeLabel})`, live: hasLiveCustTypeData, pageSize: 10, totals: hasLiveCustTypeData ? custTypeTotals : null, totalsLabel: 'Total',
-        tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany, dcStdRate, Area/Area1.\nCalculation: Personal/Business occupied unit counts per site; Rate = Σ dcStdRate ÷ Σ area × 12 (same portfolio Total Rate shown on the Rates per ft² table).\nNote: this split is only available where customer-type detail was captured for the selected period; older stored months can be unavailable rather than zero.',
+        title: `Units by Customer Type — by Store (${liveScopeLabel})`, live: !!liveCustTypeRows, pageSize: 10, totals: custTypeTotals, totalsLabel: 'Total',
+        tip: 'Report: RentRoll.\nFields: bCorporate, bCommercial, sCompany, dcStdRate, Area/Area1.\nCalculation: Personal/Business occupied unit counts per site; Rate = Σ dcStdRate ÷ Σ area × 12 (same portfolio Total Rate shown on the Rates per ft² table).',
         columns: liveCustTypeRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'personal', label: 'Personal Units', type: 'int', align: 'right' }, { key: 'business', label: 'Business Units', type: 'int', align: 'right' },
@@ -3153,24 +2817,19 @@ export default function PortalV2Page() {
           { key: 'personal', label: 'Personal Units', type: 'int', align: 'right' }, { key: 'business', label: 'Business Units', type: 'int', align: 'right' },
           { key: 'personalPct', label: '% Personal', type: 'pct', align: 'right' }, { key: 'rate', label: 'Rate £/ft²', type: 'money2', align: 'right' },
         ],
-        rows: hasLiveCustTypeData
-          ? custTypeRowsAll
-          : liveSites
-            ? [{ name: '(no customer-type data for selected scope/period)', personal: null, business: null, personalPct: null, rate: null }]
-            : custTypeRowsAll,
+        rows: custTypeRowsAll,
       });
       // Offices Occupancy / Indoor Self Storage Occupancy — by store: live-wired per-store
       // breakdown, matching the legacy portal's own widgets of the same name (tooltip confirmed
       // 2 Jul 2026). occupied/total <- Occupancy Statistics unit-type counts (s.offices/s.ss),
       // rate <- Rent Roll's per-type rent/area (already fixed onto s.offices.rate/s.ss.rate in
-      // lib/buildPayload.js's recordFor()). Sites with none of that unit type still show 0 occupied /
-      // 0 total, but no rate — treating "no such unit type here" as not-applicable rather than a
-      // measured £0.00.
+      // lib/buildPayload.js's recordFor()). Sites with none of that unit type show 0/0, £0.00 —
+      // matching the legacy screenshot (blank rows for stores without an Offices unit type).
       const liveOfficesRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, occupied: s.offices?.occ || 0, total: s.offices?.tot || 0, rate: (s.officesAreaSum || 0) > 0 ? (s.offices?.rate || 0) : null,
+        name: s.name, occupied: s.offices?.occ || 0, total: s.offices?.tot || 0, rate: s.offices?.rate || 0,
       })) : null;
       const liveSSRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, occupied: s.ss?.occ || 0, total: s.ss?.tot || 0, rate: (s.ssAreaSum || 0) > 0 ? (s.ss?.rate || 0) : null,
+        name: s.name, occupied: s.ss?.occ || 0, total: s.ss?.tot || 0, rate: s.ss?.rate || 0,
       })) : null;
       if (!liveOfficesRows || !liveSSRows) debugWarn('[portal-v2] Offices/Indoor Self Storage Occupancy tables rendering with mock data (no live sites available).');
       const officeSSColumns = [
@@ -3181,26 +2840,26 @@ export default function PortalV2Page() {
       // Totals rows (legacy parity: both tables end with summed occupancy + the portfolio's
       // weighted rate — kpiT.officesRate/ssRate are already Σ rent ÷ Σ area × 12 for that unit
       // type). Mock fallback: sums + occupied-weighted mean of the per-store mock rates.
-      const occRateTotals = (rows, liveOcc, liveTot, liveRate, liveArea) => {
-        if (kpiT) return { occupied: liveOcc ?? 0, total: liveTot ?? 0, rate: liveArea ? (liveRate ?? 0) : null };
+      const occRateTotals = (rows, liveOcc, liveTot, liveRate) => {
+        if (kpiT) return { occupied: liveOcc ?? 0, total: liveTot ?? 0, rate: liveRate ?? 0 };
         const occ = rows.reduce((a, r) => a + (r.occupied || 0), 0), tot = rows.reduce((a, r) => a + (r.total || 0), 0);
-        return { occupied: occ, total: tot, rate: occ ? R2(rows.reduce((a, r) => a + (r.rate || 0) * (r.occupied || 0), 0) / occ) : null };
+        return { occupied: occ, total: tot, rate: occ ? R2(rows.reduce((a, r) => a + (r.rate || 0) * (r.occupied || 0), 0) / occ) : 0 };
       };
-      const officesRows = liveOfficesRows || fs.map((s) => ({ name: s.name, occupied: 0, total: 0, rate: null }));
+      const officesRows = liveOfficesRows || fs.map((s) => ({ name: s.name, occupied: 0, total: 0, rate: 0 }));
       const ssRows = liveSSRows || fs.map((s) => ({ name: s.name, occupied: s.occupied, total: s.total, rate: s.rate }));
       // NARROWED (task #395) — 4 columns each, and these two are natural siblings (same officeSSColumns
       // shape), so they now sit side by side as a pair instead of each spanning the full page width.
       out.tables.push({
         title: `Offices Occupancy — by Store (${liveScopeLabel})`, live: !!liveOfficesRows, pageSize: 10,
-        tip: 'Reports: OccupancyStatistics (Offices unit type); RentRoll (rent, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate). Sites with no Offices unit type show 0 occupied / 0 total and no applicable rate, rather than a measured £0.00.',
+        tip: 'Reports: OccupancyStatistics (Offices unit type); RentRoll (rent, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcRent, Area/Area1, sTypeName="Offices" (RentRoll).\nCalculation: Rate = Σ dcRent ÷ Σ area × 12 (actual rent, not standard rate). Sites with no Offices unit type show 0/£0.00.',
         columns: officeSSColumns, rows: officesRows, totalsLabel: 'Total',
-        totals: occRateTotals(officesRows, kpiT?.officesOcc, kpiT?.officesTot, kpiT?.officesRate, kpiT?.officesAreaSum),
+        totals: occRateTotals(officesRows, kpiT?.officesOcc, kpiT?.officesTot, kpiT?.officesRate),
       });
       out.tables.push({
         title: `Indoor Self Storage Occupancy — by Store (${liveScopeLabel})`, live: !!liveSSRows, pageSize: 10,
-        tip: 'Reports: OccupancyStatistics (Indoor Self Storage unit type); RentRoll (standard rate, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12. Sites with no self storage units show 0 occupied / 0 total and no applicable rate.',
+        tip: 'Reports: OccupancyStatistics (Indoor Self Storage unit type); RentRoll (standard rate, Area).\nFields: Occupied, TotalUnits (OccupancyStatistics); dcStdRate, Area/Area1, sTypeName="Indoor Self Storage" (RentRoll).\nCalculation: Rate = Σ dcStdRate ÷ Σ area × 12.',
         columns: officeSSColumns, rows: ssRows, totalsLabel: 'Total',
-        totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate, kpiT?.ssAreaSum),
+        totals: occRateTotals(ssRows, kpiT?.ssOcc, kpiT?.ssTot, kpiT?.ssRate),
       });
       // Occupied Area by % of CLA — by Store: CONVERTED from a table to a StoreBarChart 16 Jul 2026
       // (Michael's manual audit) — same per-store comparison pattern as its sibling "Occupied Area
@@ -3208,7 +2867,7 @@ export default function PortalV2Page() {
       // lib/reportMap.js's occupancy parser), claPct <- areaPC (same occA/claA-with-occA/totA-
       // fallback rule used everywhere else, e.g. recordFor() in lib/buildPayload.js).
       const liveClaRows = liveSites ? liveSites.map((s) => ({
-        name: s.name, area: s.occA || 0, cla: s.claA || 0, claPct: claPctForSite(s),
+        name: s.name, area: s.occA || 0, cla: s.claA || 0, claPct: s.areaPC || 0,
       })) : null;
       if (!liveClaRows) debugWarn('[portal-v2] Occupied Area by % of CLA chart rendering with mock RAW_STORES data (no live sites available).');
       const claRowsAll = liveClaRows || fs.map((s) => ({ name: s.name, region: s.region, area: s.area, cla: Math.round(s.area / (s.claPct / 100)), claPct: s.claPct }));
@@ -3227,31 +2886,26 @@ export default function PortalV2Page() {
 
     else if (page === 'economicOccupancy') {
       if (!econDetailData) debugWarn('[portal-v2] Economic Occupancy page rendering with no data (no live sites available).');
-      const econColumns = [
-        { key: 'type', label: 'Unit Type', type: 'text' },
-        { key: 'askingPSF', label: 'Asking Rent PSF', type: 'money2', align: 'right' },
-        { key: 'askingMoM', label: 'MoM', type: 'text', align: 'right' },
-        { key: 'inPlacePSF', label: 'In-Place Rent PSF', type: 'money2', align: 'right' },
-        { key: 'inPlaceMoM', label: 'MoM', type: 'text', align: 'right' },
-        { key: 'discountPct', label: 'In-Place Discount', type: 'pct', align: 'right' },
-        { key: 'discountMoM', label: 'MoM', type: 'text', align: 'right' },
-        { key: 'occPct', label: 'Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
-        { key: 'occMoM', label: 'MoM', type: 'text', align: 'right' },
-        { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
-        { key: 'econMoM', label: 'MoM', type: 'text', align: 'right' },
-      ];
-      const econScopeLabel = econDetailData?.scope || liveScopeLabel;
-      const hasEconRows = !!(econDetailData && econDetailData.rows.length);
-      out.tables.push({
-        title: 'Economic Occupancy Detail — ' + econScopeLabel,
-        live: hasEconRows,
-        pageSize: 30,
-        tip: 'Report: OccupancyStatistics.\nFields: TotalArea, OccupiedArea (falls back to Area × Occupied), GrossPotential, ActualOccupied — grouped by unit Type and summed across every size within that type.\nCalculation: Asking Rent PSF = Σ GrossPotential ÷ Σ TotalArea × 12. In-Place Rent PSF = Σ ActualOccupied ÷ Σ OccupiedArea × 12. In-Place Discount = (In-Place − Asking) ÷ Asking × 100. Occupancy % = Σ OccupiedArea ÷ Σ TotalArea × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100.\nMoM columns compare against last month\'s snapshot for the same store selection.\nNote: when no typed occupancy-detail rows exist for the selected scope/period, this table shows an explicit empty state rather than silently disappearing.',
-        columns: econColumns,
-        rows: hasEconRows
-          ? econDetailData.rows
-          : [{ type: liveSites ? '(no economic occupancy detail rows for selected scope/period)' : '(no live economic occupancy data available)', askingPSF: null, askingMoM: null, inPlacePSF: null, inPlaceMoM: null, discountPct: null, discountMoM: null, occPct: null, occMoM: null, econPct: null, econMoM: null }],
-      });
+      if (econDetailData && econDetailData.rows.length) {
+        out.tables.push({
+          title: 'Economic Occupancy Detail — ' + econDetailData.scope, live: true, pageSize: 30,
+          tip: 'Report: OccupancyStatistics.\nFields: TotalArea, OccupiedArea (falls back to Area × Occupied), GrossPotential, ActualOccupied — grouped by unit Type and summed across every size within that type.\nCalculation: Asking Rent PSF = Σ GrossPotential ÷ Σ TotalArea × 12. In-Place Rent PSF = Σ ActualOccupied ÷ Σ OccupiedArea × 12. In-Place Discount = (In-Place − Asking) ÷ Asking × 100. Occupancy % = Σ OccupiedArea ÷ Σ TotalArea × 100. Economic Occupancy % = Σ ActualOccupied ÷ Σ GrossPotential × 100.\nMoM columns compare against last month\'s snapshot for the same store selection.',
+          columns: [
+            { key: 'type', label: 'Unit Type', type: 'text' },
+            { key: 'askingPSF', label: 'Asking Rent PSF', type: 'money2', align: 'right' },
+            { key: 'askingMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'inPlacePSF', label: 'In-Place Rent PSF', type: 'money2', align: 'right' },
+            { key: 'inPlaceMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'discountPct', label: 'In-Place Discount', type: 'pct', align: 'right' },
+            { key: 'discountMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'occPct', label: 'Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'occMoM', label: 'MoM', type: 'text', align: 'right' },
+            { key: 'econPct', label: 'Economic Occupancy %', type: 'pct', align: 'right', color: 'threshold' },
+            { key: 'econMoM', label: 'MoM', type: 'text', align: 'right' },
+          ],
+          rows: econDetailData.rows,
+        });
+      }
     }
 
     else if (page === 'financials') {
@@ -3269,9 +2923,8 @@ export default function PortalV2Page() {
       let custInsights;
       if (finT) {
         const validStayCount = finT.stayCount || 0;
-        const avgStayRaw = validStayCount ? ((finT.stayDaysSum || 0) / validStayCount) : null;
-        const avgStay = avgStayRaw != null ? Math.round(avgStayRaw) : null;
-        const avgCustValue = avgStayRaw != null ? R2((((finT.stayRentSum || 0) / validStayCount) * (avgStayRaw / 30.43))) : null;
+        const avgStay = validStayCount ? Math.round((finT.stayDaysSum || 0) / validStayCount) : null;
+        const avgCustValue = validStayCount ? R2((((finT.stayRentSum || 0) / validStayCount) * (avgStay / 30.43))) : null;
         custInsights = avgStay != null && avgCustValue != null
           ? { title: 'Customer Insights', live: true, tip: 'Report: RentRoll.\nFields: dLeaseDate, dcRent, bRented.\nCalculation: Avg Stay = Σ(days since dLeaseDate as of the stored pull snapshot) ÷ occupied units with a valid lease-date-derived stay length. Avg Customer Value = (Σ dcRent ÷ those same occupied units) × (Avg Stay ÷ 30.43) — a lifetime value estimate, not just monthly rent.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary (days occupied)", but avg length of stay is actually sourced from RentRoll\'s dLeaseDate (lib/reportMap.js\'s rent_roll parser).', tiles: [{ value: money(avgCustValue), label: 'Avg customer value', delta: null, dir: null }, { value: avgStay + ' days', label: 'Avg length of stay', delta: null, dir: null }] }
           : { title: 'Customer Insights', live: true, tip: 'Report: RentRoll.\nFields: dLeaseDate, dcRent, bRented.\nCalculation: Avg Stay = Σ(days since dLeaseDate as of the stored pull snapshot) ÷ occupied units with a valid lease-date-derived stay length. Avg Customer Value = (Σ dcRent for those same customers) ÷ valid-customer count × (Avg Stay ÷ 30.43) — a lifetime value estimate, not just monthly rent.\nNote: no occupied customers with a valid lease-date-derived stay length exist in the selected store scope, so neither average can be derived truthfully.', tiles: [{ value: 'N/A', label: 'Avg customer value', delta: null, dir: null }, { value: 'N/A', label: 'Avg length of stay', delta: null, dir: null }] };
@@ -3280,13 +2933,12 @@ export default function PortalV2Page() {
         custInsights = { title: 'Customer Insights', tiles: [{ value: money(3921), label: 'Avg customer value', delta: '£38', dir: 'down' }, { value: '721 days', label: 'Avg length of stay', delta: '2 days', dir: 'down' }] };
       }
       // Past Due Balances: totals.debtorTotal / debtorRentRollPct — same Debtor Levels source
-      // already used on the Dashboard/KPIs (ManagementSummary primary, PastDueBalances fallback).
-      // Tile label calls out
+      // already used on the Dashboard/KPIs (PastDueBalances, sum-then-divide). Tile label calls out
       // "(30+ days)" explicitly (widget name review, 2 Jul 2026) since debtorTotal is the
       // 30-days-overdue figure, not every positive balance — the same distinction that was a
       // confirmed bug on the Debtor Levels widget (see lib/buildPayload.js's `debtors` comment).
       const pastDue = finT
-        ? { title: 'Past Due Balances', live: true, tip: `Reports: ManagementSummary ("Unpaid" ageing table, primary 30+ day overdue source), OccupancyStatistics (occupied rent), PastDueBalances (older-row fallback only).\nFields: dcDlqntTot, Period (ManagementSummary); ActualOccupied (OccupancyStatistics); ChargeBalance and DaysLate (PastDueBalances fallback).\nCalculation: Total overdue = Σ balances in the 30+ day buckets. % of rent roll = overdue (30+ day) £ ÷ Σ ActualOccupied × 100.${finT.occActualRent ? '' : '\nNote: no occupied rent exists in the selected store scope, so % of rent roll cannot be derived.'}`, tiles: [{ value: money(finT.debtorTotal ?? 0), label: 'Total overdue (30+ days)', delta: null, dir: null }, { value: finT.occActualRent ? (finT.debtorRentRollPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% of rent roll', delta: null, dir: null }] }
+        ? { title: 'Past Due Balances', live: true, tip: `Reports: PastDueBalances (overdue, 30+ days); OccupancyStatistics (occupied rent).\nFields: ChargeBalance (or RentBal+LateFeeBal+POSBal+OtherChargesBal+TaxesBal), DaysLate (PastDueBalances); ActualOccupied (OccupancyStatistics).\nCalculation: Total overdue = Σ balances where DaysLate > 30. % of rent roll = overdue (30+ day) £ ÷ Σ ActualOccupied × 100.${finT.occActualRent ? '' : '\nNote: no occupied rent exists in the selected store scope, so % of rent roll cannot be derived.'}`, tiles: [{ value: money(finT.debtorTotal ?? 0), label: 'Total overdue (30+ days)', delta: null, dir: null }, { value: finT.occActualRent ? (finT.debtorRentRollPct ?? 0).toFixed(1) + '%' : 'N/A', label: '% of rent roll', delta: null, dir: null }] }
         : { title: 'Past Due Balances', tiles: [{ value: money(2790 * f), label: 'Total overdue (30+ days)', delta: '£93', dir: 'up' }, { value: '0.6%', label: '% of rent roll', delta: '0%', dir: null }] };
       out.statCards = [custInsights, pastDue];
       // True Revenue — now live via CustomReportByReportID(781861) ("Financial \ True Revenue
@@ -3422,7 +3074,7 @@ export default function PortalV2Page() {
         // fewer decimal, so the same underlying number showed as e.g. "86%" here vs "86.4%" there.
         ? (autobillNewCustomers
             ? { title: 'Autobill Conversion', live: true, tip: 'Reports: MoveInsAndMoveOuts (move-ins); RentRoll (autobill status).\nFields: TenantID (MoveInsAndMoveOuts); TenantID, iAutoBillType (RentRoll).\nCalculation: New autobilled customers ÷ total new move-ins in the selected period, sampled daily across the month and averaged (autobill_daily table) rather than a single point-in-time read.', tiles: [{ value: (ancT.autobillPC ?? 0).toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={ancT.autobillPC ?? 0} color={C.blue} /> }
-            : { title: 'Autobill Conversion', live: true, tip: 'Reports: MoveInsAndMoveOuts (move-ins); RentRoll (autobill status).\nFields: TenantID (MoveInsAndMoveOuts); TenantID, iAutoBillType (RentRoll).\nCalculation: New autobilled customers ÷ total new move-ins in the selected period, sampled daily across the month and averaged (autobill_daily table) rather than a single point-in-time read.\nNote: no new customers exist in the selected store scope/period, so no autobill conversion rate can be derived.', tiles: [{ value: 'N/A', label: monthTag, delta: null, dir: null }], hasViz: true, el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No new customers exist in the selected store scope or period.</div> })
+            : { title: 'Autobill Conversion', live: true, tip: 'Reports: MoveInsAndMoveOuts (move-ins); RentRoll (autobill status).\nFields: TenantID (MoveInsAndMoveOuts); TenantID, iAutoBillType (RentRoll).\nCalculation: New autobilled customers ÷ total new move-ins in the selected period, sampled daily across the month and averaged (autobill_daily table) rather than a single point-in-time read.\nNote: no new customers exist in the selected store scope/period, so no autobill conversion rate can be derived.', tiles: [{ value: 'N/A', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Donut pct={0} color={C.blue} /> })
         : { title: 'Autobill Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '16%', dir: 'down' }], hasViz: true, el: <Donut pct={57} color={C.blue} /> };
       // Insurance Conversion: new insured customers (insNewCount above) ÷ new move-ins for the month —
       // the standard "did the new customer take out insurance" conversion rate. CORRECTED 6 Jul 2026:
@@ -3447,11 +3099,11 @@ export default function PortalV2Page() {
       // rather than show a nonsensical number. insNewCount itself is left un-clamped — Insurance
       // Premiums (New Customers) further down divides it into insNewPremium/insNewCoverage, which need
       // to stay internally consistent with each other, not with moveInsSum.
-      const insConvPct = liveSites && moveInsSum ? Math.min(100, +(insNewCount / moveInsSum * 100).toFixed(1)) : null;
+      const insConvPct = liveSites && moveInsSum ? Math.min(100, +(insNewCount / moveInsSum * 100).toFixed(0)) : null;
       const insuranceConvCard = insConvPct != null
-        ? { title: 'Insurance Conversion', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nFields: iActive, dMovedIn (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Insured new customers (active policies where dMovedIn falls in the period) ÷ new move-ins × 100, capped at 100%.\nNote: the two reports define "new" independently, so this can occasionally read high before capping.', tiles: [{ value: insConvPct.toFixed(1) + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={insConvPct} /> }
+        ? { title: 'Insurance Conversion', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nFields: iActive, dMovedIn (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Insured new customers (active policies where dMovedIn falls in the period) ÷ new move-ins × 100, capped at 100%.\nNote: the two reports define "new" independently, so this can occasionally read high before capping.', tiles: [{ value: insConvPct + '%', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={insConvPct} /> }
         : liveSites
-          ? { title: 'Insurance Conversion', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nFields: iActive, dMovedIn (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Insured new customers (active policies where dMovedIn falls in the period) ÷ new move-ins × 100, capped at 100%.\nNote: no move-ins exist in the selected store scope/period, so no conversion rate can be derived.', tiles: [{ value: 'N/A', label: monthTag, delta: null, dir: null }], hasViz: true, el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No move-ins exist in the selected store scope or period.</div> }
+          ? { title: 'Insurance Conversion', live: true, tip: 'Reports: InsuranceRoll (new insured customers); MoveInsAndMoveOuts (new move-ins).\nFields: iActive, dMovedIn (InsuranceRoll); MoveIn (MoveInsAndMoveOuts).\nCalculation: Insured new customers (active policies where dMovedIn falls in the period) ÷ new move-ins × 100, capped at 100%.\nNote: no move-ins exist in the selected store scope/period, so no conversion rate can be derived.', tiles: [{ value: 'N/A', label: monthTag, delta: null, dir: null }], hasViz: true, el: <Gauge pct={0} /> }
         : { title: 'Insurance Conversion', tiles: [{ value: '57%', label: 'Jul 2026', delta: '7%', dir: 'up' }], hasViz: true, el: <Gauge pct={57} /> };
       const insuranceRollCard = ancT
         ? { title: 'Insurance Roll', live: true, tip: `Reports: InsuranceRoll (premiums, insured); RentRoll (rent roll); OccupancyStatistics (occupied units).\nFields: dcPremium, iActive (InsuranceRoll); dcRent, bRented (RentRoll); Occupied, TotalUnits (OccupancyStatistics).\nCalculation: Premiums = Σ dcPremium (active policies). % Rent Roll = premiums ÷ rent roll × 100. % Insured = insured units ÷ occupied units × 100.${ancT.rent ? '' : '\nNote: no rent roll exists in the selected store scope, so % Rent Roll cannot be derived.'}${ancT.occ ? '' : '\nNote: no occupied units exist in the selected store scope, so % Insured cannot be derived.'}`, tiles: [{ value: money(ancT.insurancePremium ?? 0), label: 'Premiums', delta: null, dir: null }, { value: ancT.rent ? (ancT.insurancePctRoll ?? 0).toFixed(1) + '%' : 'N/A', label: '% Rent Roll', delta: null, dir: null }, { value: ancT.occ ? (ancT.insurancePctInsured ?? 0).toFixed(1) + '%' : 'N/A', label: '% Insured', delta: null, dir: null }] }
@@ -3509,7 +3161,7 @@ export default function PortalV2Page() {
       const liveInsBars = liveSites ? liveSites
         .filter((s) => (s.occ || 0) > 0)
         .map((s) => {
-          const penetration = insurancePenetrationForSite(s) ?? 0;
+          const penetration = (s.insurance && s.insurance.penetration) || 0;
           return { label: s.name, value: penetration, disp: penetration.toFixed(1) + '%', color: penetration >= 70 ? C.green : penetration >= 50 ? C.amber : C.red };
         }) : null;
       if (!liveInsBars || !liveInsBars.length) {
@@ -3538,7 +3190,7 @@ export default function PortalV2Page() {
           premiums: ins.premium || 0,
           pctRoll: s.rent ? +((ins.premium || 0) / s.rent * 100).toFixed(1) : null,
           insured: ins.insured || 0,
-          pctInsured: insurancePenetrationForSite(s),
+          pctInsured: s.occ ? (ins.penetration || 0) : null,
         };
       }) : null;
       if (!liveInsRows) debugWarn('[portal-v2] Insurance Roll table rendering with mock RAW_STORES data (no live sites available).');
@@ -3589,22 +3241,20 @@ export default function PortalV2Page() {
       // Enquiries by Channel + Enquiry -> Reservation: same authoritative source as the dashboard
       // Enquiries card (lib/reportMap.js lead_funnel / InquiryTracking, sInquiryType field) — sum
       // across all live sites. Same "no region filter on live data" caveat as elsewhere.
+      const enqSum = liveSites ? (k) => liveSites.reduce((a, s) => a + ((s.enquiries && s.enquiries[k]) || 0), 0) : null;
       let enquiriesByChannel, enquiryToReservation;
-      if (liveSites) {
-        const enquiryTotals = (!pageHasSelectedStores && liveTotals?.enquiries)
-          ? liveTotals.enquiries
-          : computeTotals(liveSites).enquiries;
+      if (enqSum) {
         enquiriesByChannel = { title: 'Enquiries by Channel', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Counts where sInquiryType matches and dPlaced falls in the selected period, summed across sites. The displayed Web and Total counts follow the live legacy Marketing page and exclude EMail.', tiles: [
-          { value: intFmt(enquiryTotals?.phone || 0), label: 'Phone', delta: null, dir: null },
-          { value: intFmt(enquiryTotals?.walkin || 0), label: 'Walk-ins', delta: null, dir: null },
-          { value: intFmt(enquiryTotals?.web || 0), label: 'Web', delta: null, dir: null },
-          { value: intFmt(enquiryTotals?.total || 0), label: 'Visible Total', delta: null, dir: null },
+          { value: intFmt(enqSum('phone')), label: 'Phone', delta: null, dir: null },
+          { value: intFmt(enqSum('walkin')), label: 'Walk-ins', delta: null, dir: null },
+          { value: intFmt(liveSites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0)), label: 'Web', delta: null, dir: null },
+          { value: intFmt(liveSites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0)), label: 'Visible Total', delta: null, dir: null },
         ] };
         // CORRECTED 6 Jul 2026: was reading `conversions` (Enquiry -> Move-In, a different metric
         // entirely — see buildPayload.js) despite the "Reservation" title. Now uses
         // `reservationConversions`, the actual Enquiry -> Reservation figure.
-        const totalEnq = enquiryTotals?.reservationConversionBase || 0;
-        const totalConverted = enquiryTotals?.reservationConversions || 0;
+        const totalEnq = liveSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
+        const totalConverted = liveSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
         const convPct = totalEnq ? +(totalConverted / totalEnq * 100).toFixed(1) : null;
         // FIXED 10 Jul 2026 (audit): missing `live: true` — sibling card enquiriesByChannel two lines
         // up has it, this one never did, so this card never showed the green LIVE badge even while
@@ -3619,8 +3269,8 @@ export default function PortalV2Page() {
         // divide once" pattern as the Enquiry -> Move-In tile. Also fixes the live/in-progress month
         // always reading artificially low, since a period-ratio needs no cross-month data to exist yet.
         enquiryToReservation = convPct != null
-          ? { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, iInquiryConvertedToLease, iReservationConvertedToLease.\nCalculation: visible converted enquiries ÷ visible enquiries for the selected period, using the same Phone/Web/Walk-in rows shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). A visible enquiry counts as converted when either SiteLink conversion flag is true.', tiles: [{ value: convPct.toFixed(1) + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> }
-          : { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, iInquiryConvertedToLease, iReservationConvertedToLease.\nCalculation: visible converted enquiries ÷ visible enquiries for the selected period, using the same Phone/Web/Walk-in rows shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). A visible enquiry counts as converted when either SiteLink conversion flag is true.\nNote: no visible enquiries exist in the selected store scope/period, so no conversion rate can be derived.', tiles: [{ value: 'N/A', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No visible enquiries exist in the selected store scope or period.</div> };
+          ? { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: visible converted enquiries ÷ visible enquiries for the selected period, using the same Phone/Web/Walk-in rows shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis).', tiles: [{ value: convPct + '%', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={convPct} /> }
+          : { title: 'Enquiry → Reservation', live: true, tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: visible converted enquiries ÷ visible enquiries for the selected period, using the same Phone/Web/Walk-in rows shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis).\nNote: no visible enquiries exist in the selected store scope/period, so no conversion rate can be derived.', tiles: [{ value: 'N/A', label: 'Conversion rate', delta: null, dir: null }], hasViz: true, el: <Gauge pct={0} /> };
       } else {
         debugWarn('[portal-v2] Marketing Enquiries widgets rendering with mock RAW_STORES data (no live sites available).');
         // FIXED 7 Jul 2026 (exhaustive bug audit): same copy-paste `live: true` bug as Insurance
@@ -3644,15 +3294,14 @@ export default function PortalV2Page() {
       // `moveIns` (ManagementSummary period flow, "completed during the selected month/range"). That
       // mixed two different time bases inside one visual, so the Reservations bar could stay frozen on
       // a past-month selection while Move-ins changed with the picker. We already carry the correct
-      // period-scoped reservation-flow metric (`reservationsMade`, from visible InquiryTracking
-      // enquiries that entered reservation stage within the selected window) specifically for
-      // historical/date-aware comparisons.
+      // period-scoped reservation-flow metric (`reservationsMade`, from InquiryTracking reservation-
+      // stage rows within the selected window) specifically for historical/date-aware comparisons.
       // Use that here so both bars respect the same selected period.
       const resVsMoveIns = liveSites ? { res: liveSites.reduce((a, s) => a + (s.reservationsMade || 0), 0), mi: liveSites.reduce((a, s) => a + (s.moveIns || 0), 0) } : null;
       if (!resVsMoveIns) debugWarn('[portal-v2] Reservations Made vs Move-ins chart rendering with mock data (no live sites available).');
       out.chartCards = [
         resVsMoveIns
-          ? { title: 'Reservations Made vs Move-ins', tip: 'Reports: InquiryTracking (Reservations made); MoveInsAndMoveOuts (visible current-month Move-ins); ManagementSummary (closed-month fallback counts only).\nFields: sRentalType = "Reservation", dConverted_ToRsv, sInquiryType (InquiryTracking); MoveIn, MoveDate (MoveInsAndMoveOuts); sDesc rows matching "Move In", iMCount (ManagementSummary fallback only).\nCalculation: Reservations = visible enquiries (Phone/Web/Walk-in only) that entered reservation stage within the selected period, counted by dConverted_ToRsv. Move-ins = completed move-ins in the same selected period, counted from dated move events through the last complete day for the visible current month and from stored ManagementSummary counts for closed months. Both bars are date-scoped flow counts, not a live backlog snapshot or a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
+          ? { title: 'Reservations Made vs Move-ins', tip: 'Reports: InquiryTracking (Reservations made); ManagementSummary (Move-ins).\nFields: sRentalType = "Reservation", dPlaced (InquiryTracking); sDesc rows matching "Move In", iMCount (ManagementSummary).\nCalculation: Reservations = reservation-stage InquiryTracking rows whose dPlaced falls in the selected period. Move-ins = completed move-ins in the same selected period. Both bars are date-scoped flow counts, not a live backlog snapshot or a conversion rate.', el: <VBars items={[{ label: 'Reservations', value: resVsMoveIns.res, disp: intFmt(resVsMoveIns.res), color: C.blue }, { label: 'Move-ins', value: resVsMoveIns.mi, disp: intFmt(resVsMoveIns.mi), color: C.teal }]} opts={{ max: Math.max(resVsMoveIns.res, resVsMoveIns.mi) * 1.15 }} /> }
           : { title: 'Reservations Made vs Move-ins', el: <VBars items={[{ label: 'Reservations', value: 52 * f, disp: intFmt(52 * f), color: C.blue }, { label: 'Move-ins', value: 112 * f, disp: intFmt(112 * f), color: C.teal }]} opts={{ max: 130 * f }} /> },
       ];
       // Marketing Year-on-Year (task #130/#136, 13 Jul 2026 — Michael picked "YoY trend chart" via
@@ -3716,7 +3365,7 @@ export default function PortalV2Page() {
             ? { title: 'Enquiries — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not enough stored history yet for a year-on-year comparison.</div>, wide: true }
             : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
         yoySeries && yoyConversionRenderable
-          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, iInquiryConvertedToLease, iReservationConvertedToLease.\nCalculation: visible converted enquiries ÷ visible enquiries for each stored month, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). A visible enquiry counts as converted when either SiteLink conversion flag is true. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
+          ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: visible converted enquiries ÷ visible enquiries for each stored month, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : yoySeries
             ? { title: 'Enquiry → Reservation Conversion — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>At least one compared month has no visible enquiries, so a truthful year-on-year conversion line cannot be drawn.</div>, wide: true }
             : haveSomeLiveHistory
@@ -3733,7 +3382,7 @@ export default function PortalV2Page() {
         const total = enquiryTotalVisible(e);
         const convBase = enquiryVisibleConversionBase(e);
         const converted = enquiryVisibleConversionNumerator(e);
-        return { name: s.name, phone: enquiryPhoneVisible(e), web: enquiryWebVisible(e), walkin: enquiryWalkinVisible(e), total, conv: convBase ? +(converted / convBase * 100).toFixed(1) : null };
+        return { name: s.name, phone: e.phone || 0, web: enquiryWebVisible(e), walkin: e.walkin || 0, total, conv: convBase ? +(converted / convBase * 100).toFixed(1) : null };
       }) : null;
       if (!liveLeadRows) debugWarn('[portal-v2] Leads by Store table rendering with mock RAW_STORES data (no live sites available).');
       const leadRowsAll = liveLeadRows || fs.map((s) => {
@@ -3747,17 +3396,11 @@ export default function PortalV2Page() {
       // re-derived sum-then-divide from the same enqSum() the Enquiries by Channel/Enquiry ->
       // Reservation cards above already use, not an average of per-store conversion %s.
       const leadTotals = (() => {
-        const unfilteredPortfolioEnquiries = (!pageHasSelectedStores && liveTotals?.enquiries) ? liveTotals.enquiries : null;
-        const phone = unfilteredPortfolioEnquiries ? (Number(unfilteredPortfolioEnquiries.phone) || 0) : leadRowsAll.reduce((a, r) => a + (r.phone || 0), 0);
-        const web = unfilteredPortfolioEnquiries ? (Number(unfilteredPortfolioEnquiries.web) || 0) : leadRowsAll.reduce((a, r) => a + (r.web || 0), 0);
-        const walkin = unfilteredPortfolioEnquiries ? (Number(unfilteredPortfolioEnquiries.walkin) || 0) : leadRowsAll.reduce((a, r) => a + (r.walkin || 0), 0);
-        const total = unfilteredPortfolioEnquiries ? (Number(unfilteredPortfolioEnquiries.total) || 0) : leadRowsAll.reduce((a, r) => a + (r.total || 0), 0);
-        const conv = liveSites ? (() => {
-          if (!pageHasSelectedStores && liveTotals?.enquiries) {
-            const totalBase = Number(liveTotals.enquiries.reservationConversionBase) || 0;
-            const totalConverted = Number(liveTotals.enquiries.reservationConversions) || 0;
-            return totalBase ? +((totalConverted / totalBase) * 100).toFixed(1) : null;
-          }
+        const phone = leadRowsAll.reduce((a, r) => a + (r.phone || 0), 0);
+        const web = leadRowsAll.reduce((a, r) => a + (r.web || 0), 0);
+        const walkin = leadRowsAll.reduce((a, r) => a + (r.walkin || 0), 0);
+        const total = leadRowsAll.reduce((a, r) => a + (r.total || 0), 0);
+        const conv = enqSum ? (() => {
           const totalBase = liveSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
           const totalConverted = liveSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
           return totalBase ? +((totalConverted / totalBase) * 100).toFixed(1) : null;
@@ -3772,10 +3415,7 @@ export default function PortalV2Page() {
         const totalBase = livePrevSites.reduce((a, s) => a + enquiryVisibleConversionBase(s.enquiries), 0);
         const totalConverted = livePrevSites.reduce((a, s) => a + enquiryVisibleConversionNumerator(s.enquiries), 0);
         return {
-          phone: livePrevSites.reduce((a, s) => a + enquiryPhoneVisible(s.enquiries), 0),
-          web: livePrevSites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0),
-          walkin: livePrevSites.reduce((a, s) => a + enquiryWalkinVisible(s.enquiries), 0),
-          total: livePrevSites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0),
+          phone: enqSumPrev('phone'), web: livePrevSites.reduce((a, s) => a + enquiryWebVisible(s.enquiries), 0), walkin: enqSumPrev('walkin'), total: livePrevSites.reduce((a, s) => a + enquiryTotalVisible(s.enquiries), 0),
           conv: totalBase ? +((totalConverted / totalBase) * 100).toFixed(1) : null,
         };
       })() : null;
@@ -3788,7 +3428,7 @@ export default function PortalV2Page() {
       out.tables.push({
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         title: `Leads by Store (${liveScopeLabel})`, live: !!liveLeadRows, pageSize: 12, totals: leadTotals, totalsPrev: leadTotalsPrev, totalsLabel: 'Total',
-        tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, iInquiryConvertedToLease, iReservationConvertedToLease.\nCalculation: Inquiry counts by visible channel per site. Conversion % = visible converted enquiries ÷ visible enquiries for that site and period, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). A visible enquiry counts as converted when either SiteLink conversion flag is true. Totals row is sum-then-divide.',
+        tip: 'Report: InquiryTracking.\nFields: sInquiryType, iInquiryConvertedToLease, dPlaced.\nCalculation: Inquiry counts by visible channel per site. Conversion % = visible converted enquiries ÷ visible enquiries for that site and period, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). Totals row is sum-then-divide.',
         columns: liveLeadRows ? [
           { key: 'name', label: 'Location', type: 'text' },
           { key: 'phone', label: 'Phone', type: 'int', align: 'right' }, { key: 'web', label: 'Web', type: 'int', align: 'right' },
@@ -4048,7 +3688,7 @@ export default function PortalV2Page() {
         return series.length ? series : null;
       };
       const revCollectedCard = dailyOk
-        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through the last complete day. Missing snapshot dates are filled by carrying the most recent cumulative total forward.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: dailyRevenueSeries }]} opts={{ labels: revenueMonthDayLabels || paddedDailyCurve.map((c) => String(ymdDay(c.date) || '')), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
+        ? { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit — pulled once per day for the selected month (daily_financial_snapshot), broken out per store.\nCalculation: Σ Charge − Σ Credit, per day, from the selected month\'s first day through the last complete day. Missing snapshot dates are filled by carrying the most recent cumulative total forward.\nNote: only Revenue Collected has a daily source today — the other five charts on this page still show one point per calendar month rather than daily, though they now split by selected store(s) the same way this one does.', note: dailyRevNote, el: <LineChart series={dailySeriesFor() || [{ name: momAnySel ? 'Selected store(s) (daily)' : 'Portfolio (daily)', color: C.blue, values: dailyRevenueSeries }]} opts={{ labels: revenueMonthDayLabels || paddedDailyCurve.map((c) => String(new Date(c.date).getDate())), zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }} /> }
         : { title: 'Revenue Collected', tip: 'Report: FinancialSummary.\nFields: Charge, Credit.\nCalculation: Σ Charge − Σ Credit, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: corrected 16 Jul 2026 — this previously said "Report: ManagementSummary", but Charge/Credit are FinancialSummary fields (lib/reportMap.js\'s financial parser).' + momTip, note: momFilterNote, el: momChartEl(momSeriesFor((r) => r.revenue && r.revenue.collected), [{ name: 'Portfolio', color: C.blue, values: (liveHist || []).map((h) => h.revenue || 0) }], { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }) };
       // NOTE (widget name review, 2 Jul 2026): this trend is named "Revenue Collected" (Charge minus
       // Credit, from the `financial`/ManagementSummary report), NOT "True Revenue" — that more
@@ -4076,7 +3716,7 @@ export default function PortalV2Page() {
       out.chartCards = liveHist ? [
         revCollectedCard,
         { title: 'Rent Roll', tip: 'Report: RentRoll.\nFields: dcRent, bRented.\nCalculation: Σ dcRent on occupied (bRented) units, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.rent, 'Portfolio', C.teal, (liveHist[0] && liveHist[0].rent) || 0) || momSeriesFor((r) => r.rent), [{ name: 'Portfolio', color: C.teal, values: liveHist.map((h) => h.rent || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ zero: true, unit: '£', unitPrefix: true }) : { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }) },
-        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.insurancePremium, 'Premiums', C.blue, (liveHist[0] && liveHist[0].insurancePremium) || 0) || momSeriesFor((r) => r.insurancePremium), [{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ zero: true, unit: '£', unitPrefix: true }) : { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }) },
+        { title: 'Insurance Roll', tip: 'Report: InsuranceRoll.\nFields: dcPremium, iActive.\nCalculation: Σ dcPremium on active policies, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.insurancePremiumSum, 'Premiums', C.blue, (liveHist[0] && liveHist[0].insurancePremium) || 0) || momSeriesFor((r) => r.insurancePremiumSum), [{ name: 'Premiums', color: C.blue, values: liveHist.map((h) => h.insurancePremium || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ zero: true, unit: '£', unitPrefix: true }) : { labels: hLabels, zero: true, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true }) },
         { title: 'Total Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied if not present).\nCalculation: Σ OccupiedArea, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end, not a true daily figure. In 1M view, that selected month\'s stored value is repeated across the month.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.occA, 'ft²', C.blue, (liveHist[0] && liveHist[0].occA) || 0) || momSeriesFor((r) => r.occA), [{ name: 'ft²', color: C.blue, values: liveHist.map((h) => h.occA || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: 'ft²' }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }) },
         { title: 'Self Storage Occupied Area', tip: 'Report: OccupancyStatistics.\nFields: OccupiedArea (falls back to Area × Occupied), UnitType ("Indoor Self Storage" rows only).\nCalculation: Σ OccupiedArea, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: OccupiedArea is SiteLink\'s own average of day 10, day 20, and month-end, not a true daily figure. In 1M view, that selected month\'s stored value is repeated across the month.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.ss && r.ss.occA, 'ft²', C.teal, (liveHist[0] && liveHist[0].ssOccA) || 0) || momSeriesFor((r) => r.ss && r.ss.occA), [{ name: 'ft²', color: C.teal, values: liveHist.map((h) => h.ssOccA || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: 'ft²' }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: 'ft²' }) },
         { title: 'Self Storage Rate per ft²', tip: 'Report: RentRoll.\nFields: dcStdRate, Area/Area1, sTypeName ("Indoor Self Storage" rows only).\nCalculation: Σ dcStdRate ÷ Σ area × 12, self storage units only, per stored month — one line per selected store if any are checked, else portfolio-wide.\nNote: in 1M view, this selected month\'s stored value is repeated across the month so the chart runs from day 1 through the last complete day.' + momTip, note: momFilterNote, el: momChartEl(momSingleMonthSeriesFor((r) => r.ssRate, 'Rate', C.blue, (liveHist[0] && liveHist[0].ssRate) || 0) || momSeriesFor((r) => r.ssRate), [{ name: 'Rate', color: C.blue, values: liveHist.map((h) => h.ssRate || 0) }], isSingleSelectedMonth && selectedMonthDayLabels ? momSingleMonthOpts({ unit: '£', unitPrefix: true, axisDecimals: 2 }) : { labels: hLabels, height: momChartHeight, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }) },
@@ -4314,11 +3954,12 @@ export default function PortalV2Page() {
       };
       const mockSnap = {
         range: (() => {
-          const y = lastCompleteDay(new Date());
-          if (snapshotPeriod === 'daily') return { start: formatLocalYmd(y), end: formatLocalYmd(y) };
-          if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: formatLocalYmd(s), end: formatLocalYmd(y) }; }
+          const y = new Date(); y.setDate(y.getDate() - 1);
+          const ymdLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          if (snapshotPeriod === 'daily') return { start: ymdLocal(y), end: ymdLocal(y) };
+          if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: ymdLocal(s), end: ymdLocal(y) }; }
           const q = new Date(y.getFullYear(), Math.floor(y.getMonth() / 3) * 3, 1);
-          return { start: formatLocalYmd(q), end: formatLocalYmd(y) };
+          return { start: ymdLocal(q), end: ymdLocal(y) };
         })(),
         totals: { daily: { enquiries: 14, reservations: 5, moveIns: 3, moveOuts: 2, sqftIn: 312, sqftOut: 168 }, weekly: { enquiries: 96, reservations: 31, moveIns: 22, moveOuts: 17, sqftIn: 2150, sqftOut: 1340 }, quarterly: { enquiries: 1180, reservations: 402, moveIns: 268, moveOuts: 231, sqftIn: 27400, sqftOut: 21860 } }[snapshotPeriod],
         sites: null,
@@ -4338,7 +3979,7 @@ export default function PortalV2Page() {
       const snapshotSiteRows = (snap && Array.isArray(snap.sites) ? snap.sites : [])
         .slice().sort((a, b) => a.code.localeCompare(b.code))
         .filter((s) => !anySelectedSnapshot || selectedNames.has(nameForCode(s.code, s.store)))
-        .map((s) => ({ code: s.code, store: nameForCode(s.code, s.store), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, moveOuts: s.moveOuts, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
+        .map((s) => ({ store: nameForCode(s.code, s.store), enquiries: s.enquiries, reservations: s.reservations, moveIns: s.moveIns, moveOuts: s.moveOuts, sqftIn: s.sqftIn, sqftOut: s.sqftOut }));
       const totals = snapshotSiteRows.length
         ? {
             enquiries: snapshotSiteRows.reduce((a, r) => a + (r.enquiries || 0), 0),
@@ -4383,15 +4024,9 @@ export default function PortalV2Page() {
         // reservation ratio (matching this card's own prior mock numbers) when liveSites isn't
         // available yet, same as every other mock branch on this page.
         (() => {
-          const liveAvgSqftPerRes = normalizedReservationSqftPerReservation(liveSites);
-          const blendedSnapshotSqftPerRes = normalizedSnapshotReservationSqftPerReservation(snapshotSiteRows, liveAvgSqftPerRes);
-          // Keep the headline estimate on the exact same per-store estimation path as the table/export
-          // below. A single portfolio-wide blend can be directionally reasonable, but it made the card
-          // contradict the visible per-store breakdown by hundreds of sqft on the same snapshot day.
-          const estSqft = snapshotSiteRows.length
-            ? snapshotSiteRows.reduce((sum, row) => sum + snapshotReservedSqftEstimateForRow(row, siteMap[row.code], blendedSnapshotSqftPerRes, liveAvgSqftPerRes), 0)
-            : Math.round(totals.reservations * blendedSnapshotSqftPerRes);
-          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced, dConverted_ToRsv, sInquiryType, sRentalType.\nCalculation: Enquiries = visible placed enquiries within the selected window (' + periodLabel.toLowerCase() + '), summed across sites, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed basis). Reservations = visible enquiries that entered reservation stage within the same window (sRentalType = "Reservation", counted by dConverted_ToRsv), summed across those same visible channels. Snapshot windows always stop at the last complete day, not intraday today.\nReserved sqft: ESTIMATE, not a direct measurement — each store\'s Reservations count is multiplied by that store\'s best available average reservation size proxy, then summed. The portal now prefers the selected snapshot window\'s own move-in area per customer (closest available dated proxy), then falls back to the current-month live move-in blend, then to the live reservation-book estimate only when those look plausible. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
+          const avgSqftPerRes = normalizedReservationSqftPerReservation(liveSites);
+          const estSqft = Math.round(totals.reservations * avgSqftPerRes);
+          return { title: 'Enquiries & Reservations', live: !!snap, tip: 'Report: InquiryTracking.\nFields: dPlaced, sInquiryType, iInquiryConvertedToLease.\nCalculation: Enquiries = visible placed enquiries within the selected window (' + periodLabel.toLowerCase() + '), summed across sites, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed basis). Reservations = visible converted enquiries on that same basis for the same window. Snapshot windows always stop at the last complete day, not intraday today.\nReserved sqft: ESTIMATE, not a direct measurement — Reservations (this card) × a blended average reservation size. The portal now prefers current-month move-in area per customer (closest available dated proxy), falling back to the live reservation-book estimate only when that looks plausible. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.', tiles: [{ value: intFmt(totals.enquiries), label: 'Enquiries', delta: null, dir: null }, { value: intFmt(totals.reservations), label: 'Reservations', delta: null, dir: null }, { value: intFmt(estSqft) + ' ft²', label: 'Reserved sqft (est.)', delta: null, dir: null }] };
         })(),
         // Reservation Backlog card REMOVED 14 Jul 2026 (Michael) — was a "Coming soon" placeholder
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
@@ -4412,7 +4047,7 @@ export default function PortalV2Page() {
       out.tables = [
         // NARROWED 21 Jul 2026 — only table on this page, renders narrower rather than edge to edge.
         { title: `Per-Store Breakdown — ${periodLabel} (${fmtRange(range)})`, live: !!snap, pageSize: 29,
-          tip: 'Report: InquiryTracking; MoveInsAndMoveOuts.\nFields: dPlaced, dConverted_ToRsv, sInquiryType, sRentalType (InquiryTracking); MoveIn, MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Per-site counts/sums for the selected window. Snapshot enquiries use the visible Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed basis); snapshot reservations count visible enquiries that entered reservation stage within the window (sRentalType = "Reservation", counted by dConverted_ToRsv). Refreshed via the daily snapshot pull (npm run pull:snapshot).',
+          tip: 'Report: InquiryTracking; MoveInsAndMoveOuts.\nFields: dPlaced, sInquiryType, iInquiryConvertedToLease (InquiryTracking); MoveIn, MovedInArea, MovedOutArea (MoveInsAndMoveOuts).\nCalculation: Per-site counts/sums for the selected window. Snapshot enquiries/reservations follow the same visible Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed basis), refreshed via the daily snapshot pull (npm run pull:snapshot).',
           columns: [
             { key: 'store', label: 'Store', type: 'text' },
             { key: 'enquiries', label: 'Enquiries', type: 'int', align: 'right' },
@@ -4650,7 +4285,7 @@ export default function PortalV2Page() {
       const occDeclineRows = occDeclineHave ? dmSites.map((s) => {
         const prev = livePrevSites.find((p) => p.name === s.name);
         if (!prev) return null;
-        const curPct = occupancyPctForSite(s), prevPct = occupancyPctForSite(prev);
+        const curPct = s.occPC || 0, prevPct = prev.occPC || 0;
         return { store: s.name, curPct, prevPct, change: R2(curPct - prevPct) };
       }).filter(Boolean).sort((a, b) => a.change - b.change) : [];
       const mockOccDecline = [
@@ -4667,8 +4302,8 @@ export default function PortalV2Page() {
       const delinquencyRows = dmSites.filter((s) => s.debtors && (s.debtors.accounts > 0 || s.debtors.total > 0))
         .map((s) => ({
           store: s.name, accounts: s.debtors.accounts || 0, total: s.debtors.total || 0,
-          tenantPct: debtorTenantPctForSite(s),
-          rentRollPct: debtorRentRollPctForSite(s),
+          tenantPct: s.occ ? (s.debtors.tenantPct || 0) : null,
+          rentRollPct: s.occActualRent ? (s.debtors.rentRollPct || 0) : null,
         }))
         .sort((a, b) => ((b.rentRollPct ?? -Infinity) - (a.rentRollPct ?? -Infinity)));
       const mockDelinquency = [
@@ -4776,8 +4411,8 @@ export default function PortalV2Page() {
       // curve only had 2 rows so far this month, not 15). The label line right below this already
       // derives the true day-of-month from c.date for the same reason -- reuse that here instead of
       // the array index so a sparse curve doesn't understate the pace line.
-      const cockpitPace = cockpitAvgRate == null ? null : cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? (ymdDay(c.date) || (i + 1)) : (i + 1))));
-      const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(ymdDay(c.date) || (i + 1)) : String(i + 1));
+      const cockpitPace = cockpitAvgRate == null ? null : cockpitCurve.map((c, i) => Math.round(cockpitAvgRate * (cockpitOk ? new Date(c.date).getDate() : (i + 1))));
+      const cockpitLabels = cockpitCurve.map((c, i) => cockpitOk ? String(new Date(c.date).getDate()) : String(i + 1));
       const cockpitToDate = (cockpitOk && cockpitActual && cockpitActual.length) ? (cockpitActual[cockpitActual.length - 1] || 0) : null;
       const cockpitPaceToDate = cockpitOk && cockpitPace ? (cockpitPace[cockpitPace.length - 1] || 0) : null;
       const [cockpitYear, cockpitMonth] = cockpitMonthKey.split('-').map(Number);
@@ -4850,32 +4485,9 @@ export default function PortalV2Page() {
     return aoa;
   }
   const sumBy = (rows, fn) => rows.reduce((a, row) => a + fn(row), 0);
-  const occupancyPctForSite = (s) => (s.tot ? +((((s.occ || 0) / s.tot) * 100).toFixed(1)) : 0);
-  const claPctForSite = (s) => s.claA
-    ? +((((s.occA || 0) / s.claA) * 100).toFixed(1))
-    : (s.totA ? +((((s.occA || 0) / s.totA) * 100).toFixed(1)) : 0);
-  const ssOccupancyPctForSite = (s) => (s.ss?.tot ? +((((s.ss?.occ || 0) / s.ss.tot) * 100).toFixed(1)) : null);
-  const officesOccupancyPctForSite = (s) => (s.offices?.tot ? +((((s.offices?.occ || 0) / s.offices.tot) * 100).toFixed(1)) : null);
-  const economicOccPctForSite = (s) => (s.gpot ? +((((s.occActualRent || 0) / s.gpot) * 100).toFixed(1)) : 0);
-  const debtorTenantPctForSite = (s) => s.occ ? +(((((s.debtors && s.debtors.accounts) || 0) / s.occ) * 100).toFixed(1)) : null;
-  const debtorRentRollPctForSite = (s) => s.occActualRent ? +(((((s.debtors && s.debtors.total) || 0) / s.occActualRent) * 100).toFixed(1)) : null;
-  const insurancePenetrationForSite = (s) => s.occ ? +(((((s.insurance && s.insurance.insured) || 0) / s.occ) * 100).toFixed(1)) : null;
   const moveInRateForSite = (s) => (s.moveInAreaSum ? R2((s.moveInRateSum || 0) / s.moveInAreaSum * 12) : null);
   const moveInVarianceRawPctForSite = (s) => (s.moveInStdRateSum ? R2((s.moveInVarianceSum || 0) / s.moveInStdRateSum * 100) : null);
-  const stayCountForSite = (s) => (s.stayCount ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.occ : 0)) || 0;
-  const stayDaysSumForSite = (s) => (s.stayDaysSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.avgStayDays * s.occ : 0)) || 0;
-  const stayRentSumForSite = (s) => (s.stayRentSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.rent : 0)) || 0;
-  const avgStayRawForSite = (s) => {
-    const stayCount = stayCountForSite(s);
-    return stayCount > 0 ? (stayDaysSumForSite(s) / stayCount) : null;
-  };
-  const avgCustomerValueForSite = (s) => {
-    const avgStayRaw = avgStayRawForSite(s);
-    const stayCount = stayCountForSite(s);
-    return avgStayRaw != null
-      ? R2(((stayRentSumForSite(s) / stayCount) * (avgStayRaw / 30.43)))
-      : null;
-  };
+  const avgCustomerValueForSite = (s) => ((s.stayCount || 0) > 0 && (s.avgStayDays > 0)) ? R2(((((s.stayRentSum ?? s.rent) || 0) / s.stayCount) * (s.avgStayDays / 30.43))) : null;
   const autobillConversionForSite = (s) => (s.autobillNewTotal ? +((((s.autobillNewCountExact ?? s.autobillNewCount) || 0) / s.autobillNewTotal) * 100).toFixed(1) : null);
   const insuranceConversionForSite = (s) => (s.moveIns ? Math.min(100, +((((s.insuredNewCustomers && s.insuredNewCustomers.count) || 0) / s.moveIns) * 100).toFixed(1)) : null);
   const insuranceContentsAvgForSite = (s) => {
@@ -4886,25 +4498,6 @@ export default function PortalV2Page() {
   const merchandiseSalesForSite = (s) => (s.merchandise && s.merchandise.chargeFromFinancial) || 0;
   const merchandiseIncomePerNewCustomerForSite = (s) => (s.moveIns ? R2(merchandiseSalesForSite(s) / s.moveIns) : null);
   const discountTotalForSite = (s) => (s.discountPlans || []).reduce((a, row) => a + (row.discount || 0), 0);
-  const exportPortfolioEnquiries = (sites) => {
-    if (!sites) return null;
-    const selectedLiveNames = new Set(
-      Object.entries(selected)
-        .filter(([, on]) => on)
-        .map(([name]) => name)
-        .filter((name) => liveSitesRaw?.some((s) => s.name === name))
-    );
-    const hasStoreFilter = selectedLiveNames.size > 0;
-    if (!hasStoreFilter && liveTotals?.enquiries) return liveTotals.enquiries;
-    return {
-      phone: sumBy(sites, (s) => enquiryPhoneVisible(s.enquiries)),
-      walkin: sumBy(sites, (s) => enquiryWalkinVisible(s.enquiries)),
-      web: sumBy(sites, (s) => enquiryWebVisible(s.enquiries)),
-      total: sumBy(sites, (s) => enquiryTotalVisible(s.enquiries)),
-      reservationConversionBase: sumBy(sites, (s) => enquiryVisibleConversionBase(s.enquiries)),
-      reservationConversions: sumBy(sites, (s) => enquiryVisibleConversionNumerator(s.enquiries)),
-    };
-  };
   function statCardExportAoa(pk, card) {
     const title = card.title;
     const sites = exportLiveSites();
@@ -4922,45 +4515,44 @@ export default function PortalV2Page() {
     if (pk === 'dashboard' && title === 'Enquiries' && sites) {
       const rows = sites.map((s) => ({
         store: s.name,
-        phone: enquiryPhoneVisible(s.enquiries),
-        walkins: enquiryWalkinVisible(s.enquiries),
+        phone: s.enquiries?.phone || 0,
+        walkins: s.enquiries?.walkin || 0,
         web: enquiryWebVisible(s.enquiries),
         total: enquiryTotalVisible(s.enquiries),
       }));
-      const totals = exportPortfolioEnquiries(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Visible Total' }],
         rows,
-        { phone: totals?.phone || 0, walkins: totals?.walkin || 0, web: totals?.web || 0, total: totals?.total || 0 },
+        { phone: sumBy(rows, (r) => r.phone), walkins: sumBy(rows, (r) => r.walkins), web: sumBy(rows, (r) => r.web), total: sumBy(rows, (r) => r.total) },
       );
     }
     if (pk === 'kpis' && title === 'Total Store Occupancy' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, occupancyPct: occupancyPctForSite(s), rate: (s.areaSum || 0) > 0 ? (s.rate || 0) : null, occSqft: s.occA || 0, occupiedUnits: s.occ || 0, totalUnits: s.tot || 0 }));
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.occPC || 0, rate: s.rate || 0, occSqft: s.occA || 0, occupiedUnits: s.occ || 0, totalUnits: s.tot || 0 }));
       const totals = computeTotals(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occSqft', label: 'Total Occupancy (sqft)' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
         rows,
-        { occupancyPct: totals.occPC || 0, rate: totals.areaSum ? totals.rate : null, occSqft: totals.occA || 0, occupiedUnits: totals.occ || 0, totalUnits: totals.tot || 0 },
+        { occupancyPct: totals.occPC || 0, rate: totals.rate || 0, occSqft: totals.occA || 0, occupiedUnits: totals.occ || 0, totalUnits: totals.tot || 0 },
         'Portfolio',
       );
     }
     if (pk === 'kpis' && title === 'Self Storage' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, occupancyPct: ssOccupancyPctForSite(s), rate: (s.ssAreaSum || 0) > 0 ? (s.ssRate || 0) : null, occupiedUnits: s.ss?.occ || 0, totalUnits: s.ss?.tot || 0 }));
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.ss?.occPC || 0, rate: s.ssRate || 0, occupiedUnits: s.ss?.occ || 0, totalUnits: s.ss?.tot || 0 }));
       const totals = computeTotals(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Unit Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
         rows,
-        { occupancyPct: totals.ssTot ? totals.ssOccPC : null, rate: totals.ssAreaSum ? totals.ssRate : null, occupiedUnits: totals.ssOcc || 0, totalUnits: totals.ssTot || 0 },
+        { occupancyPct: totals.ssOccPC || 0, rate: totals.ssRate || 0, occupiedUnits: totals.ssOcc || 0, totalUnits: totals.ssTot || 0 },
         'Portfolio',
       );
     }
     if (pk === 'kpis' && title === 'Offices Occupancy' && sites) {
-      const rows = sites.map((s) => ({ store: s.name, occupancyPct: officesOccupancyPctForSite(s), rate: (s.officesAreaSum || 0) > 0 ? (s.offices?.rate || 0) : null, occupiedUnits: s.offices?.occ || 0, totalUnits: s.offices?.tot || 0 }));
+      const rows = sites.map((s) => ({ store: s.name, occupancyPct: s.offices?.occPC || 0, rate: s.offices?.rate || 0, occupiedUnits: s.offices?.occ || 0, totalUnits: s.offices?.tot || 0 }));
       const totals = computeTotals(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'occupancyPct', label: 'Occupancy %' }, { key: 'rate', label: 'Rate per ft²' }, { key: 'occupiedUnits', label: 'Occupied Units' }, { key: 'totalUnits', label: 'Total Units' }],
         rows,
-        { occupancyPct: totals.officesTot ? totals.officesOccPC : null, rate: totals.officesAreaSum ? totals.officesRate : null, occupiedUnits: totals.officesOcc || 0, totalUnits: totals.officesTot || 0 },
+        { occupancyPct: totals.officesOccPC || 0, rate: totals.officesRate || 0, occupiedUnits: totals.officesOcc || 0, totalUnits: totals.officesTot || 0 },
         'Portfolio',
       );
     }
@@ -4983,8 +4575,8 @@ export default function PortalV2Page() {
     if (pk === 'kpis' && title === 'Debtor Levels' && sites) {
       const rows = sites.map((s) => ({
         store: s.name,
-        tenantPct: debtorTenantPctForSite(s),
-        rentRollPct: debtorRentRollPctForSite(s),
+        tenantPct: s.occ ? (s.debtors?.tenantPct || 0) : null,
+        rentRollPct: s.occActualRent ? (s.debtors?.rentRollPct || 0) : null,
         total: s.debtors?.total || 0,
       }));
       const totals = computeTotals(sites);
@@ -5048,7 +4640,7 @@ export default function PortalV2Page() {
       const rows = sites.map((s) => ({
         store: s.name,
         avgCustomerValue: avgCustomerValueForSite(s),
-        avgLengthOfStayDays: avgStayRawForSite(s) != null ? Math.round(avgStayRawForSite(s)) : null,
+        avgLengthOfStayDays: ((s.stayCount || 0) > 0 && (s.avgStayDays > 0)) ? s.avgStayDays : null,
       }));
       const finT = computeTotals(sites);
       const validStayCount = finT.stayCount || 0;
@@ -5064,7 +4656,7 @@ export default function PortalV2Page() {
       const rows = sites.map((s) => ({
         store: s.name,
         totalOverdue: s.debtors?.total || 0,
-        rentRollPct: debtorRentRollPctForSite(s),
+        rentRollPct: s.occActualRent ? (s.debtors?.rentRollPct || 0) : null,
       }));
       const totals = computeTotals(sites);
       return toSheet(
@@ -5078,14 +4670,14 @@ export default function PortalV2Page() {
       const rows = sites.map((s) => ({
         store: s.name,
         conversionPct: s.autobillNewTotal ? autobillConversionForSite(s) : null,
-        newAutobilledCustomers: (s.autobillNewCountExact ?? s.autobillNewCount) || 0,
+        newAutobilledCustomers: s.autobillNewCount || 0,
         newCustomers: s.autobillNewTotal || 0,
       }));
       const totals = computeTotals(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion %' }, { key: 'newAutobilledCustomers', label: 'Avg new autobilled customers (est.)' }, { key: 'newCustomers', label: 'New customers' }],
         rows,
-        { conversionPct: totals.autobillNewTotal ? totals.autobillPC : null, newAutobilledCustomers: totals.autobillNewCountExact || 0, newCustomers: totals.autobillNewTotal || 0 },
+        { conversionPct: totals.autobillNewTotal ? totals.autobillPC : null, newAutobilledCustomers: totals.autobillNewCount || 0, newCustomers: totals.autobillNewTotal || 0 },
         'Portfolio',
       );
     }
@@ -5110,7 +4702,7 @@ export default function PortalV2Page() {
         store: s.name,
         premiums: s.insurance?.premium || 0,
         pctRentRoll: s.rent ? +(((s.insurance?.premium || 0) / s.rent) * 100).toFixed(1) : null,
-        pctInsured: insurancePenetrationForSite(s),
+        pctInsured: s.occ ? (s.insurance?.penetration || 0) : null,
       }));
       const totals = computeTotals(sites);
       return toSheet(
@@ -5164,16 +4756,15 @@ export default function PortalV2Page() {
     if (pk === 'marketing' && title === 'Enquiries by Channel' && sites) {
       const rows = sites.map((s) => ({
         store: s.name,
-        phone: enquiryPhoneVisible(s.enquiries),
-        walkins: enquiryWalkinVisible(s.enquiries),
+        phone: s.enquiries?.phone || 0,
+        walkins: s.enquiries?.walkin || 0,
         web: enquiryWebVisible(s.enquiries),
         total: enquiryTotalVisible(s.enquiries),
       }));
-      const totals = exportPortfolioEnquiries(sites);
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'phone', label: 'Phone' }, { key: 'walkins', label: 'Walk-ins' }, { key: 'web', label: 'Web' }, { key: 'total', label: 'Visible Total' }],
         rows,
-        { phone: totals?.phone || 0, walkins: totals?.walkin || 0, web: totals?.web || 0, total: totals?.total || 0 },
+        { phone: sumBy(rows, (r) => r.phone), walkins: sumBy(rows, (r) => r.walkins), web: sumBy(rows, (r) => r.web), total: sumBy(rows, (r) => r.total) },
       );
     }
     if (pk === 'marketing' && title === 'Enquiry → Reservation' && sites) {
@@ -5182,9 +4773,8 @@ export default function PortalV2Page() {
         const converted = enquiryVisibleConversionNumerator(s.enquiries);
         return { store: s.name, conversionPct: conversionBase ? +((converted / conversionBase) * 100).toFixed(1) : null, reservations: converted, enquiries: conversionBase };
       });
-      const totals = exportPortfolioEnquiries(sites);
-      const totalEnquiries = Number(totals?.reservationConversionBase) || 0;
-      const totalReservations = Number(totals?.reservationConversions) || 0;
+      const totalEnquiries = sumBy(sites, (s) => enquiryVisibleConversionBase(s.enquiries));
+      const totalReservations = sumBy(sites, (s) => enquiryVisibleConversionNumerator(s.enquiries));
       return toSheet(
         [{ key: 'store', label: 'Store' }, { key: 'conversionPct', label: 'Conversion rate %' }, { key: 'reservations', label: 'Converted enquiries' }, { key: 'enquiries', label: 'Enquiries' }],
         rows,
@@ -5209,14 +4799,14 @@ export default function PortalV2Page() {
       );
     }
     if (pk === 'snapshot' && title === 'Enquiries & Reservations' && snapshotRows) {
-      const blendedSnapshotSqftPerReservation = normalizedSnapshotReservationSqftPerReservation(snapshotRows, blendedSqftPerReservation);
       const rows = snapshotRows.map((r) => {
         const liveSite = siteMap[r.code];
+        const localAvg = normalizedReservationSqftPerReservationForSite(liveSite, blendedSqftPerReservation);
         return {
           store: exportSnapshotStoreName(r, siteMap),
           enquiries: r.enquiries || 0,
           reservations: r.reservations || 0,
-          reservedSqftEst: snapshotReservedSqftEstimateForRow(r, liveSite, blendedSnapshotSqftPerReservation, blendedSqftPerReservation),
+          reservedSqftEst: Math.round((r.reservations || 0) * (localAvg || blendedSqftPerReservation || 70)),
         };
       });
       return toSheet(
@@ -5250,40 +4840,19 @@ export default function PortalV2Page() {
       const labels = el.props.opts?.labels || [];
       const series = el.props.series || [];
       const maxLen = Math.max(labels.length, ...series.map((s) => (s.values || []).length), 0);
-      const seriesLabels = series.map((s) => s.labels || labels);
-      const needsPerSeriesLabels = series.some((s, i) => {
-        const own = seriesLabels[i] || [];
-        if (own.length !== labels.length) return true;
-        return own.some((lbl, idx) => lbl !== labels[idx]);
-      });
-      const header = needsPerSeriesLabels
-        ? ['Index', ...series.flatMap((s) => [`${s.name || 'Series'} label`, `${s.name || 'Series'} value`])]
-        : ['Label', ...series.map((s) => s.name || 'Series')];
-      const rows = Array.from({ length: maxLen }, (_, i) => needsPerSeriesLabels
-        ? [
-            i + 1,
-            ...series.flatMap((s, si) => [
-              (seriesLabels[si] || [])[i] ?? '',
-              (s.values || [])[i] ?? '',
-            ]),
-          ]
-        : [
-            labels[i] ?? String(i + 1),
-            ...series.map((s) => (s.values || [])[i] ?? ''),
-          ]);
+      const header = ['Label', ...series.map((s) => s.name || 'Series')];
+      const rows = Array.from({ length: maxLen }, (_, i) => [
+        labels[i] ?? String(i + 1),
+        ...series.map((s) => (s.values || [])[i] ?? ''),
+      ]);
       return [header, ...rows];
     }
     if (el.type === VBars || el.type === HBars || el.type === StoreBarChart) {
       const items = el.props.items || [];
-      const rows = [
+      return [
         ['Label', 'Value', 'Display'],
         ...items.map((it) => [it.label ?? '', it.value ?? '', it.disp ?? '']),
       ];
-      if (el.type === StoreBarChart && el.props.opts?.average) {
-        const avg = el.props.opts.average;
-        rows.push([avg.label || 'Average', avg.value ?? '', avg.disp ?? '']);
-      }
-      return rows;
     }
     if (el.type === Donut || el.type === Gauge) {
       const pct = el.props.pct ?? '';
@@ -5299,24 +4868,6 @@ export default function PortalV2Page() {
   // so calling it with `pk` actually recomputes that specific page's real data.
   function withPage(pk) {
     return buildPage(pk);
-  }
-  function chartCardElForExport(pk, card) {
-    if (!(card && card.el && card.el.type === LineChart)) return card?.el || null;
-    const overlayKey = `${pk}::${card.title}`;
-    const overlay = chartOverlays[overlayKey];
-    if (!overlay) return card.el;
-    const resolved = resolveLineChart(overlay.page, overlay.title);
-    if (!resolved) return card.el;
-    const overlaySeries = (resolved.series || []).map((s) => ({
-      ...s,
-      axis: 'right',
-      labels: (resolved.opts && resolved.opts.labels) || s.labels,
-      unit: s.unit ?? resolved.opts?.unit,
-      unitPrefix: s.unitPrefix ?? resolved.opts?.unitPrefix,
-      axisDecimals: s.axisDecimals ?? resolved.opts?.axisDecimals,
-      name: `${s.name} — ${overlay.title}`,
-    }));
-    return <LineChart series={[...(card.el.props.series || []), ...overlaySeries]} opts={card.el.props.opts} />;
   }
   function buildExportGroups() {
     const sel = exportSel;
@@ -5356,7 +4907,7 @@ export default function PortalV2Page() {
       }));
       d.chartCards.forEach((c, i) => items.push({
         id: pk + '_c' + i, page: pages[pk], label: c.title, icon: chartIcon,
-        aoa: () => chartCardExportAoa({ ...c, el: chartCardElForExport(pk, c) }) || [['Metric', 'Value'], ['Chart export unavailable', c.title]],
+        aoa: () => chartCardExportAoa(c) || [['Metric', 'Value'], ['Chart export unavailable', c.title]],
       }));
     });
     const groups = {};
@@ -5419,9 +4970,8 @@ export default function PortalV2Page() {
   // hours, so a stuck/failed overnight cron reads as a big, obvious "14h ago" instead of quietly
   // rolling over to a vague day count. Beyond that: an absolute date+time, since "3d ago" alone
   // would bury exactly how stale the portal actually is.
-  const mainFreshnessAt = rangePullAt || lastPullAt;
   const freshnessAt = (() => {
-    const mainFreshness = mainFreshnessAt;
+    const mainFreshness = rangePullAt || lastPullAt;
     if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || null;
     if (page === 'districtManager') {
       const candidates = [mainFreshness, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && liveCockpit.generatedAt]
@@ -5430,13 +4980,7 @@ export default function PortalV2Page() {
         .filter((v) => !Number.isNaN(v));
       return candidates.length ? new Date(Math.min(...candidates)).toISOString() : null;
     }
-    if (!liveTotals) return null;
     return mainFreshness;
-  })();
-  const rangeFreshnessAt = (() => {
-    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || null;
-    if (!liveTotals) return null;
-    return mainFreshnessAt;
   })();
   const freshnessLabel = (() => {
     if (!freshnessAt) return null;
@@ -5447,7 +4991,7 @@ export default function PortalV2Page() {
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.round(mins / 60);
     if (hrs < 36) return `${hrs}h ago`;
-    return londonDateTimeLabel(freshnessAt);
+    return new Date(freshnessAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   })();
   // Clarify the live month boundary explicitly in the header. The portal intentionally freezes the
   // CURRENT month at the last COMPLETE day, so on Friday, 24 Jul 2026, a correct current-month view
@@ -5461,7 +5005,7 @@ export default function PortalV2Page() {
     const currentMonthKey = `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
     const decorate = (mk, fallbackLabel) => {
       if (mk !== currentMonthKey) return fallbackLabel;
-      const completedDay = completedDayForMonth(mk, rangeFreshnessAt);
+      const completedDay = completedDayForMonth(mk, freshnessAt);
       return `${fallbackLabel} (through ${MONTH_NAMES[anchor.getMonth()]} ${completedDay})`;
     };
     const fromLabel = decorate(fromKey, monthLbl(monthFrom));
@@ -5477,15 +5021,6 @@ export default function PortalV2Page() {
   const dataStatus = (() => {
     if (page === 'snapshot') {
       const scopedSnapshot = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
-      if (loading && !liveSnapshot) {
-        return {
-          label: 'Loading data',
-          title: 'Snapshot data is still loading for this page.',
-          fg: '#175CD3',
-          bg: '#EFF4FF',
-          dot: '#2E90FA',
-        };
-      }
       if (!liveSnapshot) {
         return {
           label: 'Mock data',
@@ -5514,15 +5049,6 @@ export default function PortalV2Page() {
     }
     if (page === 'districtManager') {
       const cockpitReady = !!(liveCockpit && Array.isArray(liveCockpit.curve) && liveCockpit.curve.length);
-      if (loading && !liveTotals && !liveFloorOcc && !liveCockpit) {
-        return {
-          label: 'Loading data',
-          title: 'District-manager data is still loading for this page.',
-          fg: '#175CD3',
-          bg: '#EFF4FF',
-          dot: '#2E90FA',
-        };
-      }
       if (!liveTotals && !liveFloorOcc && !liveCockpit) {
         return {
           label: 'Mock data',
@@ -5547,15 +5073,6 @@ export default function PortalV2Page() {
         fg: '#B54708',
         bg: '#FFFAEB',
         dot: '#F79009',
-      };
-    }
-    if (loading && !liveTotals) {
-      return {
-        label: 'Loading data',
-        title: 'Portal data is still loading for this page.',
-        fg: '#175CD3',
-        bg: '#EFF4FF',
-        dot: '#2E90FA',
       };
     }
     if (!liveTotals) {
@@ -6052,9 +5569,6 @@ export default function PortalV2Page() {
                         if (resolved) {
                           const overlaySeries = resolved.series.map((s) => ({
                             ...s, axis: 'right', labels: (resolved.opts && resolved.opts.labels) || s.labels,
-                            unit: s.unit ?? resolved.opts?.unit,
-                            unitPrefix: s.unitPrefix ?? resolved.opts?.unitPrefix,
-                            axisDecimals: s.axisDecimals ?? resolved.opts?.axisDecimals,
                             name: `${s.name} — ${overlay.title}`,
                           }));
                           el = <LineChart series={[...c.el.props.series, ...overlaySeries]} opts={c.el.props.opts} />;
