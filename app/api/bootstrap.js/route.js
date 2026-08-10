@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
-import { readPortalPayload } from '../../../lib/portalPayload.js';
+import { readPortalPayloadFreshCurrentMonth, summarizeHistoricalMonthlyCoverage } from '../../../lib/portalPayload.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Same production-read budget as /api/portfolio: the legacy bootstrap now uses the exact same
+// fresh-current-month merge helper, so its first cold read can also exceed the default route
+// timeout unless we raise it explicitly.
+export const maxDuration = 300;
+
+const AUTHENTICATED_NO_STORE = 'private, no-store';
 
 const COLOURS = ['#95D108', '#679106', '#3A5203', '#8AC308', '#7AAB07'];
 
@@ -13,22 +19,22 @@ function moneyFromRate(rate, area) {
 function legacyRentRollUnits(rec) {
   const out = {};
   const ssArea = rec.ss?.occA || 0;
-  const ssRent = rec.ss?.rent || moneyFromRate(rec.ssRate || rec.ss?.rate, ssArea);
+  const ssRent = rec.ss?.rent ?? moneyFromRate(rec.ssRate ?? rec.ss?.rate, ssArea);
   if (ssArea || ssRent) {
     out['Self Storage'] = {
       unit_type: 'Self Storage',
       area: ssArea,
       rent: ssRent,
       original_rent: ssRent,
-      effective_rent: moneyFromRate(rec.ssReal || rec.ss?.real, ssArea) || ssRent,
+      effective_rent: moneyFromRate(rec.ssReal ?? rec.ss?.real, ssArea) || ssRent,
     };
   }
 
   for (const t of rec.unitTypes || []) {
     const name = /office/i.test(t.unit_type || '') ? 'Offices' : (t.unit_type || 'Other');
     const area = t.occ_area || 0;
-    const rent = t.monthly_rent || moneyFromRate(t.rate_per_sqft_ann, area);
-    const effRent = t.monthly_rent || moneyFromRate(t.real_rate_per_sqft_ann, area);
+    const rent = t.monthly_rent ?? moneyFromRate(t.rate_per_sqft_ann, area);
+    const effRent = t.monthly_rent ?? moneyFromRate(t.real_rate_per_sqft_ann, area);
     // FIXED 7 Jul 2026 (exhaustive bug audit): a second raw unit-type row that normalizes to the
     // same display name (e.g. two rows both matching /office/i, or a genuine duplicate) used to
     // be silently dropped entirely (`if (out[name]) continue`) instead of merged — unlike every
@@ -58,6 +64,13 @@ function categoryAmount(categories, matcher, field = 'payment') {
   return row ? Number(row[field] || 0) : 0;
 }
 
+function legacyDebtBucket(ageing, key) {
+  if (!ageing || typeof ageing !== 'object') return 0;
+  if (key === '0-10') return Number(ageing['0-10'] ?? ageing['1-30'] ?? 0) || 0;
+  if (key === '11-30' && Object.prototype.hasOwnProperty.call(ageing, '1-30')) return 0;
+  return Number(ageing[key] || 0) || 0;
+}
+
 function legacyRecord(rec, month) {
   if (!rec) return null;
   const revenue = rec.revenue || {};
@@ -66,7 +79,7 @@ function legacyRecord(rec, month) {
   const categories = revenue.categories || [];
   const rentReceipts = categoryAmount(categories, /^rent$/i, 'payment');
   const insuranceReceipts = categoryAmount(categories, /insurance/i, 'payment');
-  const totalReceipts = revenue.payment || revenue.collected || 0;
+  const totalReceipts = revenue.payment ?? revenue.collected ?? 0;
 
   return {
     month,
@@ -88,32 +101,38 @@ function legacyRecord(rec, month) {
     rented_area_change: rec.netArea || 0,
     total_leads: enquiries.total || 0,
     phone_leads: enquiries.phone || 0,
-    web_leads: enquiries.web || 0,
+    web_leads: (enquiries.webOnly ?? enquiries.web) || 0,
     walkin_leads: enquiries.walkin || 0,
+    // Legacy bootstrap keeps its long-standing generic "reservations" field on the payload's
+    // explicit InquiryTracking reservation-stage count (`rec.reservations`). The newer
+    // `reservationsMade` metric powers the audited "Reservations vs Move-outs" portal widget and is
+    // intentionally kept separate because it can diverge store-by-store.
     reservations: rec.reservations || 0,
     scheduled_move_outs: rec.scheduledOuts || 0,
     rental_discounts: revenue.discount || 0,
     credits_issued: revenue.credit || 0,
-    merchandise: rec.merchandise?.sales || 0,
+    // Keep the legacy bootstrap on the same audited "Merchandise Sales" source as the new portal:
+    // FinancialSummary POS charges (`chargeFromFinancial`), not MerchandiseSummary's own sales total.
+    merchandise: rec.merchandise?.chargeFromFinancial || 0,
     insurance_units: rec.insurance?.insured || 0,
     insurance_value: rec.insurance?.premium || 0,
     move_ins_insurance: rec.insuranceActivity?.newPolicies || 0,
-    unique_tenants: rec.marketing?.tenants || rec.occ || 0,
-    rate_ss_sqft: rec.ssRate || rec.ss?.rate || 0,
+    unique_tenants: rec.marketing?.tenants ?? rec.occ ?? 0,
+    rate_ss_sqft: rec.ssRate ?? rec.ss?.rate ?? 0,
     rate_total_sqft: rec.rate || 0,
-    real_rate_ss_sqft: rec.ssReal || rec.ss?.real || 0,
+    real_rate_ss_sqft: rec.ssReal ?? rec.ss?.real ?? 0,
     real_rate_total_sqft: rec.realRate || 0,
     rent_roll_units: legacyRentRollUnits(rec),
     unit_mix_summary: rec.unitTypes || [],
     unit_size_summary: rec.unitMix || [],
-    debtors_value_0: 0,
-    debtors_value_11: 0,
-    debtors_value_31: debtAgeing['31-60'] || 0,
-    debtors_value_61: debtAgeing['61-90'] || 0,
-    debtors_value_91: debtAgeing['91-120'] || 0,
-    debtors_value_121: debtAgeing['121-180'] || 0,
-    debtors_value_181: debtAgeing['181-360'] || 0,
-    debtors_value_361: debtAgeing['361+'] || 0,
+    debtors_value_0: legacyDebtBucket(debtAgeing, '0-10'),
+    debtors_value_11: legacyDebtBucket(debtAgeing, '11-30'),
+    debtors_value_31: legacyDebtBucket(debtAgeing, '31-60'),
+    debtors_value_61: legacyDebtBucket(debtAgeing, '61-90'),
+    debtors_value_91: legacyDebtBucket(debtAgeing, '91-120'),
+    debtors_value_121: legacyDebtBucket(debtAgeing, '121-180'),
+    debtors_value_181: legacyDebtBucket(debtAgeing, '181-360'),
+    debtors_value_361: legacyDebtBucket(debtAgeing, '361+'),
   };
 }
 
@@ -159,17 +178,35 @@ function emptyBootstrap() {
   };
 }
 
+function summarizePayloadCompleteness(payload) {
+  const sites = Array.isArray(payload?.sites) ? payload.sites : [];
+  const missingSites = sites
+    .filter((site) => site?.__padded_missing_site)
+    .map((site) => site?.code || site?.name)
+    .filter(Boolean);
+  const historicalCoverage = summarizeHistoricalMonthlyCoverage(payload, { excludeMonth: payload?.current_month || null });
+  const incompleteMonths = [...historicalCoverage.incompleteMonths].sort();
+  return {
+    complete: missingSites.length === 0 && incompleteMonths.length === 0,
+    missingSites,
+    incompleteMonths,
+  };
+}
+
 function jsAssignment(name, value) {
   return `window.${name} = ${JSON.stringify(value)};`;
 }
 
-function bootstrapScript(legacy, configured) {
+function bootstrapScript(legacy, configured, completeness = { complete: true, missingSites: [], incompleteMonths: [] }) {
   return [
     jsAssignment('STATIC_PREVIEW', !configured),
     jsAssignment('colours', COLOURS),
     jsAssignment('ajax', { url: '/api' }),
     jsAssignment('PORTAL_USER', ''),
     jsAssignment('SITELINK_CONFIGURED', configured),
+    jsAssignment('SITELINK_COMPLETE', completeness.complete !== false),
+    jsAssignment('SITELINK_MISSING_SITES', Array.isArray(completeness.missingSites) ? completeness.missingSites : []),
+    jsAssignment('SITELINK_INCOMPLETE_MONTHS', Array.isArray(completeness.incompleteMonths) ? completeness.incompleteMonths : []),
     jsAssignment('OPEX_RATIO', 0),
     jsAssignment('DATA_UPDATED', legacy.updated),
     jsAssignment('FACILITIES', legacy.facilities),
@@ -183,23 +220,29 @@ function bootstrapScript(legacy, configured) {
 
 export async function GET() {
   try {
-    const result = await readPortalPayload({ ensureFresh: true });
-    const legacy = result?.payload ? payloadToLegacy(result.payload) : emptyBootstrap();
-    return new NextResponse(bootstrapScript(legacy, Boolean(result?.payload)), {
+    // Keep legacy bootstrap reads lightweight too. The scheduled rebuild cron is responsible for
+    // refreshing portal_payload; a plain bootstrap read should not kick off a full rebuild inside an
+    // end-user request.
+    const result = await readPortalPayloadFreshCurrentMonth();
+    const payload = result?.payload || null;
+    const configured = !!(payload && payload.totals && Array.isArray(payload.sites) && payload.sites.length);
+    const completeness = configured ? summarizePayloadCompleteness(payload) : { complete: false, missingSites: [], incompleteMonths: [] };
+    const legacy = configured ? payloadToLegacy(payload) : emptyBootstrap();
+    return new NextResponse(bootstrapScript(legacy, configured, completeness), {
       headers: {
         'Content-Type': 'application/javascript; charset=utf-8',
-        'Cache-Control': 'no-store',
+        'Cache-Control': AUTHENTICATED_NO_STORE,
       },
     });
   } catch (error) {
     const legacy = emptyBootstrap();
     return new NextResponse(
-      `${bootstrapScript(legacy, false)}\nconsole.error(${JSON.stringify(`bootstrap failed: ${error.message}`)});`,
+      `${bootstrapScript(legacy, false, { complete: false, missingSites: [], incompleteMonths: [] })}\nconsole.error(${JSON.stringify(`bootstrap failed: ${error.message}`)});`,
       {
         status: 200,
         headers: {
           'Content-Type': 'application/javascript; charset=utf-8',
-          'Cache-Control': 'no-store',
+          'Cache-Control': AUTHENTICATED_NO_STORE,
         },
       },
     );

@@ -78,6 +78,8 @@ if (!idRows.length) {
 }
 
 const now = new Date();
+const currentMonthArg = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+const isHistoricalTargetMonth = !!monthArg && monthArg < currentMonthArg;
 let ok = 0, failed = 0;
 for (const r of idRows) {
   try {
@@ -127,7 +129,11 @@ console.log(`\nReparsed ${ok}/${idRows.length} row(s) (${failed} failed) — zer
 // already-reparsed data isn't lost: just re-run `npm run rebuild:payload` (or wait for tomorrow's
 // 8am cron) to retry the rebuild alone, without redoing any of the reparsing above.
 console.log('Rebuilding portal_payload...');
-const result = await runRebuildPayload();
+const result = await runRebuildPayload({
+  forceHistoricalRepair: !monthArg || isHistoricalTargetMonth,
+  repairMonths: isHistoricalTargetMonth ? [monthArg] : [],
+  skipLockCheck: true,
+});
 if (result.status !== 'ok') {
   console.error(`portal_payload rebuild failed: ${result.message || 'unknown error'}`);
   console.error('The reparse above already succeeded and is saved — just re-run `npm run rebuild:payload` to retry the rebuild alone.');

@@ -16,6 +16,7 @@
 import { admin } from '../lib/supabaseAdmin.js';
 import { pullReport } from '../lib/reportMap.js';
 import { buildPayload, listStoredMonths } from '../lib/buildPayload.js';
+import { normalizePortalPayloadForStorage } from '../lib/portalPayload.js';
 
 const reportKey = process.argv[2];
 if (!reportKey) { console.error('Usage: node scripts/repull-report-all-months.js <report>'); process.exit(1); }
@@ -83,7 +84,7 @@ const now = new Date();
 const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 const payload = await buildPayload(currentMonthStart, prevMonthStart);
-const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
+const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload: normalizePortalPayloadForStorage(payload) });
 if (ppErr) { console.error('portal_payload write failed:', ppErr.message); process.exit(1); }
 console.log('portal_payload rebuilt.');
 process.exit(0);

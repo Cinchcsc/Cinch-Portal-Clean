@@ -5,13 +5,9 @@ import { runPull } from '../../../lib/pull.js';
 
 export const runtime = 'nodejs';        // the SOAP client needs the Node runtime, not Edge
 export const dynamic = 'force-dynamic';
-// CHECKED 14 Jul 2026 (Michael confirmed Hobby plan): maxDuration up to 300s is fine on Hobby too —
-// Vercel's Fluid Compute is enabled by default on every plan now (confirmed live against Vercel's own
-// current docs), so 300s is Hobby's default AND max, not a Pro-only feature. The real Hobby constraint
-// is cron SCHEDULING, not function duration: crons on Hobby only fire once/day and Vercel doesn't
-// guarantee the exact minute — it can trigger anywhere in the scheduled HOUR (confirmed via
-// vercel.com/docs/cron-jobs/usage-and-pricing). See vercel.json's comment for why every cron entry
-// now gets its OWN hour instead of being packed 10 minutes apart within one hour.
+// Explicitly declare the full serverless budget this pull needs. The pull is split across multiple
+// cron entrypoints for operational reasons, but each invocation can still spend most of this window
+// on its own SiteLink batch before control returns to Vercel.
 export const maxDuration = 300;
 
 // COST CONTROL: the full 17-report pull is ~500 SiteLink calls and won't finish inside a single 60s
@@ -21,6 +17,20 @@ export const maxDuration = 300;
 // vercel.json (each its own hour), or with ?full=1 for an ad-hoc all-reports pull (best on the Mac via
 // `npm run pull`, no timeout). Add &reports=occupancy,past_due to pull any custom subset.
 const LIGHT = ['occupancy', 'rent_roll'];
+
+function statusCodeForJob(result) {
+  switch (result?.status) {
+    case 'ok':
+      return 200;
+    case 'skipped':
+      return 409;
+    case 'partial':
+    case 'error':
+      return 500;
+    default:
+      return 200;
+  }
+}
 
 export async function GET(request) {
   // CHANGED 16 Jul 2026 (pentest follow-up): `if (secret && mismatch)` failed OPEN — skipped the
@@ -35,6 +45,10 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
     const sp = new URL(request.url).searchParams;
+    const triggerLabel = (() => {
+      const u = new URL(request.url);
+      return `${u.pathname}${u.search || ''}`;
+    })();
     const full = sp.get('full') === '1';
     const custom = (sp.get('reports') || '').split(',').map(s => s.trim()).filter(Boolean);
     const reports = custom.length ? custom : (full ? undefined : LIGHT);  // undefined => all reports
@@ -49,7 +63,8 @@ export async function GET(request) {
     // too is what's been dying mid-rebuild on the day's last batch (see lib/pull.js's rebuildPayload
     // comment). The rebuild now happens exclusively via /api/rebuild-payload's own dedicated cron, with
     // its own untouched budget, after every report-pulling batch has had its own hour to finish.
-    return NextResponse.json(await runPull({ reports, rebuildPayload: false, shard, shards }));
+    const result = await runPull({ reports, rebuildPayload: false, shard, shards, triggerLabel });
+    return NextResponse.json(result, { status: statusCodeForJob(result) });
   } catch (e) {
     return NextResponse.json({ status: 'error', message: e.message }, { status: 500 });
   }

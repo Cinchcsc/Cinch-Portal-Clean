@@ -12,7 +12,7 @@
 // Example: node --env-file=.env scripts/repull-report-month.js insurance_roll 2026-06
 import { admin } from '../lib/supabaseAdmin.js';
 import { pullReport } from '../lib/reportMap.js';
-import { buildPayload } from '../lib/buildPayload.js';
+import { runRebuildPayload } from '../lib/rebuildPayload.js';
 
 const reportKey = process.argv[2];
 const monthArg = process.argv[3]; // YYYY-MM
@@ -33,6 +33,7 @@ const monthStart = new Date(y, m - 1, 1);
 const now = new Date();
 const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+const isHistoricalMonth = !isCurrentMonth;
 const closedMonthEndExclusive = new Date(y, m, 1);
 const monthEnd = isCurrentMonth ? startOfToday : closedMonthEndExclusive;
 const parseEndDate = new Date(monthEnd.getTime() - 1);
@@ -65,9 +66,13 @@ for (const loc of locations) {
 console.log(`\nRe-pulled ${ok}/${locations.length} sites (${failed} failed).`);
 
 console.log('Rebuilding portal_payload...');
-const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-const payload = await buildPayload(currentMonthStart, prevMonthStart);
-const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
-if (ppErr) { console.error('portal_payload write failed:', ppErr.message); process.exit(1); }
-console.log('Done — portal_payload rebuilt.');
+const result = await runRebuildPayload({
+  forceHistoricalRepair: isHistoricalMonth,
+  repairMonths: isHistoricalMonth ? [monthArg] : [],
+  skipLockCheck: true,
+});
+if (result.status !== 'ok') {
+  console.error(`portal_payload rebuild failed: ${result.message || 'unknown error'}`);
+  process.exit(1);
+}
+console.log(`Done — portal_payload rebuilt (${result.durationMs}ms, mode=${result.mode || 'unknown'}).`);

@@ -19,11 +19,18 @@ const C = { blue: '#2757E8', ink: '#101828', sub: '#667085', border: '#E4E7EC', 
 // widget. NEXT_PUBLIC_TURNSTILE_SITE_KEY is safe to ship client-side (it's the PUBLIC half — unlike
 // the Secret Key, which only ever goes into Supabase's dashboard, never into this codebase).
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
+const safeRedirectTarget = (raw) => {
+  const fallback = '/portal-v2';
+  const value = String(raw || '').trim();
+  if (!value.startsWith('/')) return fallback;
+  if (value.startsWith('//')) return fallback;
+  return value;
+};
 
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const redirectTo = params.get('redirectTo') || '/portal-v2';
+  const redirectTo = safeRedirectTarget(params.get('redirectTo'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState('signin'); // 'signin' | 'reset'

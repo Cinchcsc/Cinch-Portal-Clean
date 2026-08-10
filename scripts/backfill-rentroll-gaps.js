@@ -10,6 +10,7 @@
 import { admin } from '../lib/supabaseAdmin.js';
 import { pullReport } from '../lib/reportMap.js';
 import { buildPayload } from '../lib/buildPayload.js';
+import { normalizePortalPayloadForStorage } from '../lib/portalPayload.js';
 import { checkPullLock, startPullLog, finishPullLog } from '../lib/pullLock.js';
 import { describeError } from '../lib/describeError.js';
 
@@ -108,7 +109,7 @@ try {
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const payload = await buildPayload(currentMonthStart, prevMonthStart);
-  const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload });
+  const { error: ppErr } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload: normalizePortalPayloadForStorage(payload) });
   if (ppErr) throw new Error(`portal_payload write failed: ${ppErr.message}`);
   console.log('Done — portal_payload rebuilt.');
   await finishPullLog(logId, failed > ok ? 'error' : 'ok', `${ok} ok, ${failed} failed`);

@@ -1,16 +1,18 @@
 // Run a full pull locally (writes to Supabase via the service-role key) and print a per-site
-// reconciliation table so the numbers can be checked against the live portal.  npm run pull
+// reconciliation table using the SAME fresh-current-month read path the live portal serves, so the
+// numbers can be checked against the actual UI rather than the stored portal_payload row alone.
+// npm run pull
 import { runPull } from '../lib/pull.js';
-import { admin } from '../lib/supabaseAdmin.js';
+import { readPortalPayloadFreshCurrentMonth } from '../lib/portalPayload.js';
 
 const result = await runPull();
 console.log('PULL RESULT:', JSON.stringify(result, null, 2));
 
 try {
-  const { data: pr } = await admin.from('portal_payload').select('payload,generated_at').eq('id', 1).order('generated_at', { ascending: false }).limit(1);
-  let p = pr?.[0]?.payload; if (typeof p === 'string') { try { p = JSON.parse(p); } catch {} }
+  const fresh = await readPortalPayloadFreshCurrentMonth();
+  const p = fresh?.payload;
   if (p?.sites?.length) {
-    console.log(`\nReconciliation — ${p.current_month} · Rate/ft² annualised (compare SS rate to your live portal):`);
+    console.log(`\nReconciliation — ${p.current_month} · generated ${fresh?.generatedAt || p.generated_at || 'unknown'} · Rate/ft² annualised (compare SS rate to your live portal):`);
     console.log('site               occ%   SelfStorage  TotalRate       rent');
     console.log('-------------------------------------------------------------');
     for (const s of p.sites) {
@@ -20,7 +22,7 @@ try {
     }
     console.log('\nPortfolio totals:', JSON.stringify(p.totals));
   } else {
-    console.log('\n(No portal_payload rows yet — check the PULL RESULT errors above.)');
+    console.log('\n(No usable live portal payload yet — check the PULL RESULT errors above.)');
   }
 } catch (e) { console.log('\nReconciliation read failed:', e.message); }
 

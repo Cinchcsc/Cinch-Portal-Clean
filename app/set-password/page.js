@@ -18,13 +18,24 @@ export default function SetPasswordPage() {
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const expiredMsg = 'That link is invalid or has expired — please request a new one.';
 
   useEffect(() => {
     const supabase = supabaseBrowser();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) router.replace('/login?error=' + encodeURIComponent('That link is invalid or has expired — please request a new one.'));
-      else { setHasSession(true); setChecking(false); }
-    });
+    supabase.auth.getUser()
+      .then(({ data: { user } }) => {
+        if (!user) {
+          setChecking(false);
+          router.replace('/login?error=' + encodeURIComponent(expiredMsg));
+        } else {
+          setHasSession(true);
+          setChecking(false);
+        }
+      })
+      .catch(() => {
+        setChecking(false);
+        router.replace('/login?error=' + encodeURIComponent(expiredMsg));
+      });
   }, [router]);
 
   const submit = async (e) => {
@@ -37,6 +48,10 @@ export default function SetPasswordPage() {
     const { error: err } = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (err) {
+      if (err.status === 401 || err.code === 'session_not_found') {
+        router.replace('/login?error=' + encodeURIComponent(expiredMsg));
+        return;
+      }
       // Same fix as app/login/page.js (14 Jul 2026): some Supabase auth errors have an unhelpful
       // .message (e.g. literally "{}"), so fall back to status/code instead of a dead-end message.
       let msg = err.message;

@@ -25,15 +25,20 @@
 import { admin } from '../lib/supabaseAdmin.js';
 import { REPORTS } from '../lib/reportMap.js';
 import { extractRows } from '../lib/sitelink.js';
+import { lastCompleteDay } from '../lib/reportingPeriod.js';
 
 const now = new Date();
 const curMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 const [y, m] = curMonthKey.split('-').map(Number);
 const startDate = new Date(y, m - 1, 1);
-const endDate = now; // current (open) month — same "isCurrentMonth" convention reparse-report.js uses
+// Align the probe with the portal's real current-month semantics: the app deliberately freezes all
+// visible current-month flow metrics at the last complete day, not "right now". Using `now` here
+// overstates every dated parser that can see today's partial rows and creates false-positive diffs
+// against the payload build, which already trims current-month reads to lastCompleteDay().
+const endDate = lastCompleteDay(now);
 
 console.log(`Stale-parse-shape sweep — current month ${curMonthKey.slice(0, 7)} only, all reports, all sites.`);
-console.log(`Re-parsing each stored raw_response with TODAY's reportMap.js and diffing vs the saved data.\n`);
+console.log(`Re-parsing each stored raw_response with TODAY's reportMap.js through ${String(endDate.toISOString()).slice(0, 10)} and diffing vs the saved data.\n`);
 
 // Bounded, human-readable diff: recurse into plain objects up to a small depth; for arrays, only
 // report a length change (not per-element diffs — rent_roll's unit_rows can be hundreds of rows and

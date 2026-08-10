@@ -1,52 +1,69 @@
-// PROBE (23 Jul 2026), task #406/#407 — the just-deployed pullSnapshot.js fix (commit d1b6310)
-// shows Abingdon (L029) at 2 enquiries / 0 reservations for "yesterday" (22 Jul). That's NOT
-// necessarily still broken — the originally-confirmed dropped row was a SPECIFIC known reservation
-// on 21 Jul at 10:35am, a DIFFERENT calendar day than today's "yesterday" (22 Jul). Zero could
-// simply be the genuine answer for a quiet day at a smaller site. Rather than assume either way,
-// this checks the actual ground truth independently of the snapshot pipeline: does a wide (7-day)
-// InquiryTracking window show ANY reservation-stage row with dPlaced on 22 Jul specifically, for
-// each site the live snapshot just reported 0 reservations for? If the wide window also shows
-// nothing for that exact day, 0 is correct and the fix is working as intended. If it shows a real
-// row the daily output is still missing, the fix has a problem worth chasing further.
-//
-// Also spot-checks 2 sites the live snapshot DID show non-zero reservations for (Bicester=2,
-// Letchworth=1), confirming those specific counts against the same wide-window ground truth —
-// so this isn't just checking the zero case, it's checking the fix produces the RIGHT number
-// either way.
+// PROBE (23/27/28 Jul 2026), task #406/#407/#427 — verifies the live snapshot reservation count
+// against the SAME business rule the portal now uses: visible enquiries (Phone/Web/Walk-in only)
+// whose InquiryTracking row ENTERED reservation stage on the target day, counted by
+// dConverted_ToRsv with sRentalType="Reservation". Older versions had two false-mismatch classes:
+//   1. comparing against dPlaced instead of dConverted_ToRsv, which can legitimately differ
+//      (e.g. enquiry placed on Jul 21, reservation made on Jul 22);
+//   2. reading only a short live InquiryTracking lookback window, which dropped older enquiries that
+//      converted to reservation on the target day (e.g. Bicester rows placed on Jun 30 / Jul 14 but
+//      converted on Jul 27).
+// Read the target date and live counts directly from snapshot_payload, and validate against the
+// stored current-month raw_report SOAP that pullSnapshot.js itself reads, so the probe matches the
+// live snapshot builder's true source/shape exactly.
 //
 // Run:  node --env-file=.env scripts/probe-verify-snapshot-fix.js
-import { callReport, extractNamedTable } from '../lib/sitelink.js';
-
-const need = ['SITELINK_WSDL', 'SITELINK_CORP_CODE', 'SITELINK_CORP_USER', 'SITELINK_CORP_PASSWORD', 'SITELINK_LICENSE_KEY'];
-const miss = need.filter((k) => !process.env[k]);
-if (miss.length) { console.error('Missing env:', miss.join(', ')); process.exit(1); }
+import { admin } from '../lib/supabaseAdmin.js';
+import { extractNamedTable } from '../lib/sitelink.js';
+import { readSnapshotPayload } from '../lib/snapshotPayload.js';
+import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
 
 const str = (v) => String(v ?? '').trim();
-const TARGET_DAY = '2026-07-22'; // "yesterday" relative to today (23 Jul) when the live pull ran
-
-// SITES: [code, name, whatTheLiveSnapshotJustShowed]
+const channelKey = (v) => str(v).toLowerCase().replace(/[^a-z]/g, '');
+const snap = await readSnapshotPayload();
+if (!snap?.payload?.daily?.range?.start || !Array.isArray(snap?.payload?.daily?.sites)) {
+  console.error('snapshot_payload daily range/sites missing; run npm run pull:snapshot first.');
+  process.exit(1);
+}
+const TARGET_DAY = snap.payload.daily.range.start;
+const liveByCode = new Map((snap.payload.daily.sites || []).map((row) => [row.code, row]));
 const SITES = [
-  ['L029', 'Abingdon', 0],
-  ['L001', 'Bicester', 2],
-  ['L003', 'Letchworth', 1],
-];
+  ['L029', 'Abingdon'],
+  ['L001', 'Bicester'],
+  ['L003', 'Letchworth'],
+].map(([code, name]) => [code, name, Number(liveByCode.get(code)?.reservations) || 0]);
 
-console.log(`${'='.repeat(95)}\nGround-truth check for ${TARGET_DAY} — wide (7-day) InquiryTracking window vs the live\nsnapshot's per-site reservation counts, for 3 sites (1 zero, 2 non-zero)\n${'='.repeat(95)}`);
+console.log(`${'='.repeat(95)}\nGround-truth check for ${TARGET_DAY} — stored current-month InquiryTracking SOAP vs the live\nsnapshot's reservation-stage-entered counts, for 3 sites (1 zero, 2 non-zero)\n${'='.repeat(95)}`);
+console.log('Uses the stored current-month raw_report InquiryTracking SOAP (the same source pullSnapshot.js reads),');
+console.log('so older enquiries that entered reservation stage on the target day are not falsely dropped by a short lookback window.\n');
 
 for (const [code, name, liveCount] of SITES) {
-  const end = new Date(2026, 6, 23); // today (exclusive-safe: wide window, doesn't matter which side)
-  const start = new Date(2026, 6, 16); // 7 days back
-  const { raw } = await callReport('InquiryTracking', code, start, end);
-  const activityRows = extractNamedTable(raw, 'Activity');
+  const monthKey = `${TARGET_DAY.slice(0, 7)}-01`;
+  const data = await retryOnStatementTimeout(async () => {
+    const { data, error } = await admin
+      .from('raw_report')
+      .select('raw_response')
+      .eq('site_code', code)
+      .eq('report', 'lead_funnel')
+      .eq('month', monthKey)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data || null;
+  });
+  if (!data?.raw_response) {
+    console.log(`\n${code} ${name}: no stored raw_report lead_funnel row for ${monthKey.slice(0, 7)} — skipped.`);
+    continue;
+  }
+  const activityRows = extractNamedTable(data.raw_response, 'Activity');
   const targetDayReservations = activityRows.filter((r) => {
     if (str(r.sRentalType).toLowerCase() !== 'reservation') return false;
-    return str(r.dPlaced).startsWith(TARGET_DAY);
+    if (!['phone', 'walkin', 'web'].includes(channelKey(r.sInquiryType))) return false;
+    return str(r.dConverted_ToRsv).startsWith(TARGET_DAY);
   });
   const match = targetDayReservations.length === liveCount;
   console.log(`\n${code} ${name}: live snapshot showed ${liveCount} reservation(s) for ${TARGET_DAY}`);
-  console.log(`  Wide-window ground truth: ${targetDayReservations.length} reservation-stage row(s) with dPlaced on ${TARGET_DAY}`);
+  console.log(`  Wide-window ground truth: ${targetDayReservations.length} visible reservation-stage row(s) with dConverted_ToRsv on ${TARGET_DAY}`);
   console.log(`  ${match ? 'MATCH — fix is producing the correct count' : '*** MISMATCH — investigate further ***'}`);
-  targetDayReservations.forEach((r) => console.log(`    dPlaced=${r.dPlaced}  TenantID=${r.TenantID}`));
+  targetDayReservations.forEach((r) => console.log(`    dPlaced=${r.dPlaced}  dConverted_ToRsv=${r.dConverted_ToRsv}  TenantID=${r.TenantID}`));
 }
 
 console.log(`\n${'='.repeat(95)}\nIf all 3 say MATCH, the fix is confirmed working correctly (including Abingdon's\ngenuine zero) — not just passing in theory but producing the right live number.\n${'='.repeat(95)}`);
