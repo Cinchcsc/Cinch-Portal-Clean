@@ -10,7 +10,7 @@
 // Usage:
 //   node --env-file=.env scripts/check-core-metrics.js
 import { admin } from '../lib/supabaseAdmin.js';
-import { readPortalPayloadFreshCurrentMonth } from '../lib/portalPayload.js';
+import { readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
 import { extractNamedTable } from '../lib/sitelink.js';
 import { formatLocalYmd, lastCompleteDay } from '../lib/reportingPeriod.js';
 import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
@@ -28,7 +28,7 @@ const dayKey = (value) => {
 const channelKey = (label) => String(label ?? '').trim().toLowerCase().replace(/[^a-z]/g, '');
 const isVisibleMarketingChannel = (label) => ['phone', 'walkin', 'web'].includes(channelKey(label));
 
-const result = await readPortalPayloadFreshCurrentMonth();
+const result = await readPortalPayloadFreshCurrentMonthStable();
 const payload = result?.payload;
 if (!payload?.sites?.length) {
   console.error('Fetch failed: no usable live payload');

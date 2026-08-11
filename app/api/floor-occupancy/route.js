@@ -44,9 +44,10 @@ export async function GET() {
     );
     const complete = !!result?.complete;
     const configured = floors.length > 0;
+    const cacheHealthyFloorOccupancy = configured && complete;
     return NextResponse.json(
       { configured, generated_at: result?.generated_at || null, sites, floors, site_floors, complete, missing_sites },
-      { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } },
+      { headers: { 'Cache-Control': cacheHealthyFloorOccupancy ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } },
     );
   } catch (error) {
     return NextResponse.json({ configured: false, error: error.message, sites: [], floors: [], site_floors: {}, complete: false, missing_sites: [] }, { status: 500, headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });

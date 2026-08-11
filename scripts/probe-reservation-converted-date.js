@@ -26,14 +26,18 @@ const miss = need.filter((k) => !process.env[k]);
 if (miss.length) { console.error('Missing env:', miss.join(', ')); process.exit(1); }
 
 const str = (v) => String(v ?? '').trim();
-const dayOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const sourceDayKey = (v) => {
+  const raw = str(v);
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : ymd(d);
+};
 const isReservationStage = (r) => str(r.sRentalType).toLowerCase() === 'reservation';
-const inWindow = (dateVal, start, end) => {
-  if (!dateVal) return false;
-  const d = new Date(dateVal);
-  if (Number.isNaN(d.getTime())) return false;
-  const day = dayOnly(d);
-  return day >= dayOnly(start) && day <= dayOnly(end);
+const inSourceDayWindow = (dateVal, start, end) => {
+  const key = sourceDayKey(dateVal);
+  return !!key && key >= ymd(start) && key <= ymd(end);
 };
 
 const locations = process.env.SITELINK_LOCATIONS.split(',').map((s) => s.trim()).filter(Boolean);
@@ -63,7 +67,7 @@ async function siteCounts(site, monthStart, monthEnd, queryEnd) {
   let resCurrent = 0;               // CURRENT (production) method: isPlacedInWindow(dPlaced) && isReservationStage
   let resProposed = 0;              // PROPOSED fix: isReservationStage still required -- ONLY the date field changes
   for (const r of rows) {
-    const placedInWindow = inWindow(r.dPlaced, monthStart, monthEnd);
+    const placedInWindow = inSourceDayWindow(r.dPlaced, monthStart, monthEnd);
     if (placedInWindow) {
       const k = str(r.sInquiryType).toLowerCase();
       if (k === 'phone') phone++;
@@ -76,7 +80,7 @@ async function siteCounts(site, monthStart, monthEnd, queryEnd) {
     // dConverted_ToRsv looks like a generic "left raw Inquiry status" timestamp (also set for walk-ins
     // that convert straight to Move-In), not specifically "became a Reservation" -- isReservationStage
     // must stay required; only the date field driving window-membership changes.
-    if (isReservationStage(r) && inWindow(r.dConverted_ToRsv, monthStart, monthEnd)) resProposed++;
+    if (isReservationStage(r) && inSourceDayWindow(r.dConverted_ToRsv, monthStart, monthEnd)) resProposed++;
   }
   const enquiries = phone + walkin + web + email;
   return { enquiries, resCurrent, resProposed, rowCount: rows.length };

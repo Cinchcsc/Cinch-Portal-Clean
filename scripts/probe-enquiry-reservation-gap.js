@@ -15,6 +15,7 @@
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/probe-enquiry-reservation-gap.js
 import { admin } from '../lib/supabaseAdmin.js';
 import { writeFileSync } from 'fs';
+import { decodePortalPayloadStorageValue } from '../lib/portalPayload.js';
 
 const JUNE_KEY = '2026-06-01';
 const NOT_IN_LEGACY_MARKETING = ['L021', 'L026']; // Bedford, Paulton — confirmed absent from legacy's own Marketing page rows
@@ -48,7 +49,7 @@ const { data: pr } = await admin
   .from('portal_payload').select('payload,generated_at').eq('id', 1)
   .order('generated_at', { ascending: false }).limit(1);
 let livePayload = pr?.[0]?.payload;
-if (typeof livePayload === 'string') { try { livePayload = JSON.parse(livePayload); } catch { livePayload = null; } }
+livePayload = decodePortalPayloadStorageValue(livePayload);
 // liveHistory-style per-month record isn't in totals (that's current-period only) — this cross-check
 // is against the live PAGE figure Michael and I both just read in the browser for June (Prior Month).
 

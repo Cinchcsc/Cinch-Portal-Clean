@@ -2,7 +2,7 @@
 // merged view, so a current-month drift is obvious instead of silently inspecting the wrong layer.
 // npm run check
 import { admin } from '../lib/supabaseAdmin.js';
-import { readPortalPayloadFreshCurrentMonth } from '../lib/portalPayload.js';
+import { decodePortalPayloadStorageValue, readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
 import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
 
 try {
@@ -13,7 +13,7 @@ try {
     if (error) throw new Error(error.message);
     return data || [];
   });
-  let p = pr?.[0]?.payload; if (typeof p === 'string') { try { p = JSON.parse(p); } catch {} }
+  const p = decodePortalPayloadStorageValue(pr?.[0]?.payload);
 
   if (p?.sites?.length) {
     console.log(`stored portal_payload · generated ${pr[0].generated_at} · ${p.current_month} · ${p.sites.length} sites`);
@@ -27,7 +27,7 @@ try {
   }
 
   try {
-    const fresh = await readPortalPayloadFreshCurrentMonth();
+    const fresh = await readPortalPayloadFreshCurrentMonthStable();
     const live = fresh?.payload;
     if (live?.sites?.length) {
       console.log(`\nlive portal view · generated ${fresh?.generatedAt || live.generated_at || 'unknown'} · ${live.current_month} · ${live.sites.length} sites`);

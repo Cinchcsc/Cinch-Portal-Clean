@@ -14,15 +14,33 @@ import { admin } from '../lib/supabaseAdmin.js';
 import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
 import { readFileSync } from 'fs';
 
+async function withTimeout(promise, timeoutMs, label) {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 try {
   try {
-    const data = await retryOnStatementTimeout(async () => {
-      const { data, error } = await admin
-        .from('refresh_log').select('id,kind,status,started_at,finished_at,detail')
-        .order('started_at', { ascending: false }).limit(20);
-      if (error) throw new Error(error.message);
-      return data || [];
-    });
+    const data = await withTimeout(
+      retryOnStatementTimeout(async () => {
+        const { data, error } = await admin
+          .from('refresh_log').select('id,kind,status,started_at,finished_at,detail')
+          .order('id', { ascending: false }).limit(20);
+        if (error) throw new Error(error.message);
+        return data || [];
+      }),
+      20000,
+      'recent refresh_log read',
+    );
 
     if (!data.length) { console.log('refresh_log: no rows yet.'); process.exit(0); }
 
@@ -53,14 +71,17 @@ try {
     : `expect at least ${expectedRows} scheduled row(s) once the full cycle has run`;
 
   try {
-    const cycleRows = await retryOnStatementTimeout(async () => {
-      const { data, error } = await admin
-        .from('refresh_log').select('id,kind,status,started_at')
-        .gte('started_at', cycleStart.toISOString())
-        .order('started_at', { ascending: false });
-      if (error) throw new Error(error.message);
-      return data || [];
-    });
+    const cycleRows = await withTimeout(
+      retryOnStatementTimeout(async () => {
+        const { data, error } = await admin
+          .from('refresh_log').select('id,kind,status,started_at')
+          .gte('started_at', cycleStart.toISOString());
+        if (error) throw new Error(error.message);
+        return data || [];
+      }),
+      20000,
+      'current-cycle refresh_log summary read',
+    );
     console.log(`\n${cycleRows.length} row(s) started in the current overnight cycle (since ${cycleStart.toISOString()}) — ${expectation}. Higher counts usually mean manual reruns or catch-up tests happened during the same cycle.`);
   } catch (error) {
     console.log(`\nunable to read current-cycle refresh_log summary: ${error.message} — ${expectation}.`);

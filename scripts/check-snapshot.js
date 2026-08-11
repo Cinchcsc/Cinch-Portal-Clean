@@ -16,11 +16,12 @@ import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
 import { readSnapshotPayload } from '../lib/snapshotPayload.js';
 
 try {
+  let latestLoggedSnapshotRefreshAt = null;
   try {
     const logRows = await retryOnStatementTimeout(async () => {
       const { data, error } = await admin
         .from('refresh_log').select('id,kind,status,started_at,finished_at,detail')
-        .eq('kind', 'snapshot').order('started_at', { ascending: false }).limit(5);
+        .eq('kind', 'snapshot').order('id', { ascending: false }).limit(5);
       if (error) throw new Error(error.message);
       return data || [];
     });
@@ -32,6 +33,7 @@ try {
       console.log(`#${r.id}  ${r.status?.padEnd(8) || '?'}  started ${r.started_at}  finished ${r.finished_at || '—'}  (${dur})`);
       if (r.detail) console.log(`     detail: ${r.detail.slice(0, 300)}`);
     }
+    latestLoggedSnapshotRefreshAt = logRows.find((r) => r.status === 'ok')?.finished_at || logRows.find((r) => r.status === 'ok')?.started_at || null;
   } catch (error) {
     console.log('=== last 5 snapshot pulls (refresh_log) ===');
     console.log(`unable to read snapshot refresh_log rows: ${error.message}`);
@@ -58,7 +60,13 @@ try {
   if (!snapshot?.payload) { console.log('snapshot_payload: no row yet (id=1 not found) — pull:snapshot has never written successfully.'); process.exit(0); }
 
   const p = snapshot.payload;
-  console.log(`generated_at: ${snapshot.generatedAt}  (compare against when you just ran the pull — if this is OLD, the pull didn't actually write)`);
+  console.log(`generated_at: ${snapshot.generatedAt}  (snapshot_payload materialization time)`);
+  if (latestLoggedSnapshotRefreshAt) {
+    console.log(`latest successful snapshot refresh_log finish: ${latestLoggedSnapshotRefreshAt}`);
+    if (snapshot.generatedAt && new Date(snapshot.generatedAt).getTime() > new Date(latestLoggedSnapshotRefreshAt).getTime()) {
+      console.log('note: snapshot_payload is newer than the latest logged snapshot pull, which means a read-time raw_report self-heal rewrote the stored row after the scheduled/manual snapshot job.');
+    }
+  }
   for (const period of ['daily', 'weekly', 'quarterly']) {
     const w = p[period];
     if (!w) { console.log(`\n${period}: MISSING from payload`); continue; }

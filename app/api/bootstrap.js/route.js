@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { readPortalPayloadFreshCurrentMonth, summarizeHistoricalMonthlyCoverage } from '../../../lib/portalPayload.js';
+import { readPortalPayloadFreshCurrentMonthStable, summarizeHistoricalMonthlyCoverage } from '../../../lib/portalPayload.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -223,15 +223,16 @@ export async function GET() {
     // Keep legacy bootstrap reads lightweight too. The scheduled rebuild cron is responsible for
     // refreshing portal_payload; a plain bootstrap read should not kick off a full rebuild inside an
     // end-user request.
-    const result = await readPortalPayloadFreshCurrentMonth();
+    const result = await readPortalPayloadFreshCurrentMonthStable();
     const payload = result?.payload || null;
     const configured = !!(payload && payload.totals && Array.isArray(payload.sites) && payload.sites.length);
     const completeness = configured ? summarizePayloadCompleteness(payload) : { complete: false, missingSites: [], incompleteMonths: [] };
     const legacy = configured ? payloadToLegacy(payload) : emptyBootstrap();
+    const cacheHealthyBootstrap = configured && completeness.complete !== false && result?.freshness_degraded !== true;
     return new NextResponse(bootstrapScript(legacy, configured, completeness), {
       headers: {
         'Content-Type': 'application/javascript; charset=utf-8',
-        'Cache-Control': AUTHENTICATED_NO_STORE,
+        'Cache-Control': cacheHealthyBootstrap ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE,
       },
     });
   } catch (error) {

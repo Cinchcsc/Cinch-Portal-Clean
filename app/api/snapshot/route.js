@@ -2,7 +2,7 @@
 // reads the persisted snapshot_payload row, no live SiteLink calls (those only happen in
 // lib/pullSnapshot.js via `npm run pull:snapshot` or GET /api/pull-snapshot).
 import { NextResponse } from 'next/server';
-import { readSnapshotPayloadFresh } from '../../../lib/snapshotPayload.js';
+import { readLatestSnapshotRefreshAt, readSnapshotPayloadFresh } from '../../../lib/snapshotPayload.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,10 +54,13 @@ function normalizeSnapshotPeriod(period) {
 
 export async function GET() {
   try {
-    const result = await readSnapshotPayloadFresh();
+    const [result, lastRefreshAt] = await Promise.all([
+      readSnapshotPayloadFresh(),
+      readLatestSnapshotRefreshAt().catch(() => null),
+    ]);
     if (!result?.payload) {
       return NextResponse.json(
-        { configured: false, complete: false, generated_at: null, daily: null, weekly: null, quarterly: null },
+        { configured: false, complete: false, generated_at: null, last_refresh_at: lastRefreshAt, daily: null, weekly: null, quarterly: null },
         { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } },
       );
     }
@@ -68,19 +71,21 @@ export async function GET() {
     const hasAnySnapshotPeriod = !!(daily || weekly || quarterly);
     const hasCompleteSnapshotSet = !!(daily && weekly && quarterly);
     const complete = payload.complete !== false && hasCompleteSnapshotSet;
+    const cacheHealthySnapshot = complete && hasAnySnapshotPeriod;
     return NextResponse.json(
       complete
-        ? { configured: true, complete: true, ...payload, daily, weekly, quarterly }
+        ? { configured: true, complete: true, ...payload, last_refresh_at: lastRefreshAt, daily, weekly, quarterly }
         : {
             configured: hasAnySnapshotPeriod,
             complete: false,
             ...payload,
+            last_refresh_at: lastRefreshAt,
             daily,
             weekly,
             quarterly,
             error: 'Stored snapshot payload is incomplete; daily, weekly, and quarterly periods are all required',
           },
-      { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } },
+      { headers: { 'Cache-Control': cacheHealthySnapshot ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } },
     );
   } catch (error) {
     return NextResponse.json({ configured: false, complete: false, error: error.message }, { status: 500, headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });

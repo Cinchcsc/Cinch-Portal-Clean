@@ -25,9 +25,17 @@ const SUPABASE_ORIGIN = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().repl
 // renders its challenge inside an iframe, and makes its own XHR calls, all from
 // challenges.cloudflare.com — needs allowances in script-src, frame-src, and connect-src.
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+// FIXED 10 Aug 2026 (local debugging session): `npm run dev` couldn't do ANYTHING — not just this
+// portal, but even clicking "Sign in" on /login silently did nothing — because Next's dev-mode
+// React Fast Refresh/HMR runtime calls eval() to apply hot-reloaded modules, and script-src had no
+// 'unsafe-eval', so the browser threw "EvalError: ... violates ... script-src" on every page load
+// and the app's own JS (including the login form's click handlers) never finished initializing.
+// This never showed up in production because `next build`/`next start` don't use eval-based HMR at
+// all — only `next dev` does. Scoped to dev only (via NODE_ENV) so the live site's CSP is unchanged.
+const isDev = process.env.NODE_ENV !== 'production';
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN}`,
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''} ${TURNSTILE_ORIGIN}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data:",

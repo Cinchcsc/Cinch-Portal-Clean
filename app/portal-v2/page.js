@@ -1399,6 +1399,9 @@ export default function PortalV2Page() {
   const [liveHistory, setLiveHistory] = useState(null); // portfolio.history (one point per stored month, portfolio-wide) — powers Month-on-Month, unaffected by the PERIOD selector below
   const [livePortfolioStatus, setLivePortfolioStatus] = useState({ complete: true, missingSites: [], incompleteMonths: [] });
   const [liveMetadataPartial, setLiveMetadataPartial] = useState(false);
+  const [liveMetadataReason, setLiveMetadataReason] = useState(null);
+  const [appBuildInfo, setAppBuildInfo] = useState(null);
+  const latestUnscopedCurrentSitesRef = useRef(null);
   const [viewLive, setViewLive] = useState(true);       // false once a specific month/range has been picked and successfully loaded (vs. the default live-current-month view)
   // Weekly/Daily Snapshot page (9 Jul 2026) — deliberately independent of the liveTotals/liveSitesRaw
   // chain above: it's a different period concept entirely (yesterday / last 7 days / quarter-to-date,
@@ -1409,7 +1412,7 @@ export default function PortalV2Page() {
   // 21 Jul 2026: briefly tried anchoring all three periods on TODAY instead of yesterday (Michael),
   // reverted the same day once "today" turned out to mean "frozen at whatever this morning's one
   // pull saw" rather than anything live — see lib/pullSnapshot.js's header comment.
-  const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly } or null if unavailable/unconfigured
+  const [liveSnapshot, setLiveSnapshot] = useState(null); // { daily, weekly, quarterly, generatedAt, lastRefreshAt } or null if unavailable/unconfigured
   const [snapshotPeriod, setSnapshotPeriod] = useState('daily'); // 'daily' | 'weekly' | 'quarterly' — which liveSnapshot period the Snapshot page currently shows
   // Occupancy by Floor (10 Jul 2026, roadmap #132/#139) — same independent-fetch pattern as
   // liveSnapshot above: floor is a static per-unit property, not part of the normal per-month pull
@@ -1437,7 +1440,7 @@ export default function PortalV2Page() {
   // the page, so one widget could silently show a different month from the subtitle and neighboring
   // tables. It now follows the selected month (or the end month of a selected range), same as the
   // rest of the page.
-  const [liveCockpit, setLiveCockpit] = useState(null); // { month, curve, avgDailyRate } or null if unavailable
+  const [liveCockpit, setLiveCockpit] = useState(null); // { month, curve, avgDailyRate, generatedAt, lastRefreshAt } or null if unavailable
   const [liveMomCockpit, setLiveMomCockpit] = useState(null); // selected single month's daily_financial_snapshot curve for MoM's 1M daily chart
 
   const reloadTimer = useRef(null);
@@ -1545,6 +1548,7 @@ export default function PortalV2Page() {
     const next = `${window.location.pathname || '/portal-v2'}${window.location.search || ''}`;
     window.location.href = `/login?redirectTo=${encodeURIComponent(next)}`;
   };
+  const isUnauthorizedError = (err) => Number(err?.status) === 401 || String(err?.message || '').toLowerCase() === 'unauthorized';
   const fetchJsonAuthed = async (url) => {
     let headers = undefined;
     try {
@@ -1568,6 +1572,24 @@ export default function PortalV2Page() {
       throw err;
     }
     return data;
+  };
+
+  const fetchBuildInfo = () => {
+    return fetchJsonAuthed('/api/build-info')
+      .then((data) => {
+        if (!data || typeof data !== 'object' || !data.label) return;
+        setAppBuildInfo({
+          label: String(data.label),
+          commit: data.commit ? String(data.commit) : null,
+          deploymentId: data.deploymentId ? String(data.deploymentId) : null,
+          branch: data.branch ? String(data.branch) : null,
+          nodeEnv: data.nodeEnv ? String(data.nodeEnv) : null,
+        });
+      })
+      .catch((err) => {
+        if (isUnauthorizedError(err)) return;
+        debugWarn('[portal-v2] /api/build-info fetch failed.', err);
+      });
   };
 
   const rescueInitialLiveCurrentSlice = (requestId, onInitialSettled) => {
@@ -1599,17 +1621,35 @@ export default function PortalV2Page() {
         // live current-month slice can still be served, prefer a clearly-labeled partial live state
         // over dropping the entire portal into mock data on first load.
         setLiveMetadataPartial(true);
+        setLiveMetadataReason(data?.freshness_reason || 'current-slice-rescue');
         fetchCockpit(currentKey, setLiveCockpit, liveCockpitRequestId);
         fetchCockpit(currentKey, setLiveMomCockpit, liveMomCockpitRequestId);
         onInitialSettled && onInitialSettled();
         return true;
       })
       .catch((err) => {
+        if (isUnauthorizedError(err)) return false;
         if (requestId === liveTotalsRequestId.current) {
           debugWarn('[portal-v2] current-month live-slice rescue failed after default metadata read failure.', err);
         }
         return false;
       });
+  };
+
+  const rescueCurrentRangeFromUnscopedSlice = (requestId, fromKey, toKey, onSettled) => {
+    if (requestId !== liveRangeRequestId.current) return false;
+    const latestCurrentKey = latestLiveMonthKeyRef.current;
+    const unscopedSites = latestUnscopedCurrentSitesRef.current;
+    if (!(fromKey === toKey && latestCurrentKey && toKey === latestCurrentKey && Array.isArray(unscopedSites) && unscopedSites.length)) {
+      return false;
+    }
+    setLiveTotals(computeTotals(unscopedSites));
+    setLiveSitesRaw(unscopedSites);
+    setViewLive(true);
+    setLiveMetadataPartial(true);
+    setLiveMetadataReason('unscoped-current-slice-fallback');
+    onSettled && onSettled(true);
+    return true;
   };
 
   const hasMonthlySpan = (monthly, fromKey, toKey) => {
@@ -1644,6 +1684,7 @@ export default function PortalV2Page() {
       })
       .catch((err) => {
         if (requestId !== liveMonthlyDetailRequestId.current) return;
+        if (isUnauthorizedError(err)) return;
         debugWarn(`[portal-v2] historical monthly detail hydrate failed for ${hydrateFromKey}..${anchorKey}.`, err);
       });
   };
@@ -1667,6 +1708,7 @@ export default function PortalV2Page() {
         if (requestId !== liveRangeRequestId.current) return;
         const rangedSites = Array.isArray(data?.sites) ? data.sites : null;
         if (!data || !data.configured || !data.totals) {
+          if (rescueCurrentRangeFromUnscopedSlice(requestId, fromKey, toKey, onSettled)) return;
           livePrevRequestId.current += 1;
           debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned no data — keeping the current view.`);
           onSettled && onSettled(false);
@@ -1677,6 +1719,7 @@ export default function PortalV2Page() {
         // here would silently turn some widgets into blank charts and others into all-zero
         // "portfolio" summaries. Fail closed and keep the last known-good range instead.
         if (!rangedSites || !rangedSites.length) {
+          if (rescueCurrentRangeFromUnscopedSlice(requestId, fromKey, toKey, onSettled)) return;
           livePrevRequestId.current += 1;
           debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} returned totals but no site rows — keeping the current view.`);
           onSettled && onSettled(false);
@@ -1693,11 +1736,16 @@ export default function PortalV2Page() {
         // timestamp rather than silently reusing it for a different selection.
         setRangePullAt(data.generated_at || null);
         setViewLive(fromKey === toKey && toKey === latestLiveMonthKeyRef.current);
+        const scopedCurrentMonthDegraded = fromKey === toKey && toKey === latestLiveMonthKeyRef.current && data?.freshness_degraded === true;
+        setLiveMetadataPartial(scopedCurrentMonthDegraded);
+        setLiveMetadataReason(scopedCurrentMonthDegraded ? (data?.freshness_reason || null) : null);
         ensureLiveMonthlyWindow(fromKey, toKey);
         onSettled && onSettled(true);
       })
       .catch((err) => {
         if (requestId !== liveRangeRequestId.current) return;
+        if (isUnauthorizedError(err)) return;
+        if (rescueCurrentRangeFromUnscopedSlice(requestId, fromKey, toKey, onSettled)) return;
         livePrevRequestId.current += 1;
         debugWarn(`[portal-v2] /api/portfolio?from=${fromKey}&to=${toKey} fetch failed.`, err);
         onSettled && onSettled(false);
@@ -1721,8 +1769,9 @@ export default function PortalV2Page() {
           if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
           setLivePrevSitesRaw(data && data.configured && data.totals && Array.isArray(data.sites) && data.sites.length ? data.sites : null);
         })
-        .catch(() => {
+        .catch((err) => {
           if (requestId !== liveRangeRequestId.current || prevRequestId !== livePrevRequestId.current) return;
+          if (isUnauthorizedError(err)) return;
           setLivePrevSitesRaw(null);
         });
     } else {
@@ -1737,11 +1786,13 @@ export default function PortalV2Page() {
       .then((data) => {
         if (requestId !== liveTotalsRequestId.current) return;
         if (!data || !data.configured || !data.totals) {
+          latestUnscopedCurrentSitesRef.current = null;
           debugWarn('[portal-v2] /api/portfolio not configured — dashboard KPI row + rate table + trend charts are using mock data.');
           if (!rangeInitialized.current) {
             rescueInitialLiveCurrentSlice(requestId, onInitialSettled).then((rescued) => {
               if (requestId !== liveTotalsRequestId.current || rescued) return;
               setLiveMetadataPartial(false);
+              setLiveMetadataReason(null);
               // Production hardening (28 Jul 2026, continued audit): a successful response with
               // configured:false is authoritative evidence that the CURRENT stored/default portfolio
               // payload is unusable, which is different from the transport failure handled in catch
@@ -1763,6 +1814,7 @@ export default function PortalV2Page() {
             return;
           }
           setLiveMetadataPartial(false);
+          setLiveMetadataReason(null);
           // Production hardening (28 Jul 2026, continued audit): a successful response with
           // configured:false is authoritative evidence that the CURRENT stored/default portfolio
           // payload is unusable, which is different from the transport failure handled in catch
@@ -1783,6 +1835,7 @@ export default function PortalV2Page() {
           return;
         }
         setLiveMetadataPartial(false);
+        setLiveMetadataReason(null);
         // FIXED 8 Jul 2026 (Michael: "remove the first pull that does 27 sites, it's annoying"): this
         // unscoped call reads the PERSISTED portal_payload singleton, which lags behind live raw data
         // (only refreshed by npm run pull / cron). It used to set liveTotals/liveSitesRaw here too, so
@@ -1792,7 +1845,9 @@ export default function PortalV2Page() {
         // only the unscoped payload has — liveTotals/liveSitesRaw are set exclusively by
         // fetchLiveRange, so the UI goes straight from loading/mock to correct live data, no stale
         // flash in between.
-        setLiveCurrentSitesRaw(Array.isArray(data.sites) && data.sites.length ? data.sites : null);
+        const unscopedCurrentSites = Array.isArray(data.sites) && data.sites.length ? data.sites : null;
+        latestUnscopedCurrentSitesRef.current = unscopedCurrentSites;
+        setLiveCurrentSitesRaw(unscopedCurrentSites);
         setLiveMonthly(data.monthly && typeof data.monthly === 'object' ? data.monthly : null);
         const months = Array.isArray(data.months) && data.months.length
           ? data.months
@@ -1806,6 +1861,8 @@ export default function PortalV2Page() {
           missingSites: Array.isArray(data?.missing_sites) ? data.missing_sites : [],
           incompleteMonths: Array.isArray(data?.incomplete_months) ? data.incomplete_months : [],
         });
+        setLiveMetadataPartial(data?.freshness_degraded === true);
+        setLiveMetadataReason(data?.freshness_degraded === true ? (data?.freshness_reason || null) : null);
         // Real cron timestamp, not the client-side "just now" — see lastPullAt's declaration above.
         // Same rule as rangePullAt above: never let a previous payload's freshness timestamp survive
         // a newer successful metadata refresh that simply has no generated_at of its own.
@@ -1863,22 +1920,41 @@ export default function PortalV2Page() {
           // mock data forever when an older/stale stored payload still has totals+sites but no
           // historical month index yet. We still prefer fetchLiveRange() whenever month metadata
           // exists, but the page must never require months[] just to show the real current slice.
-          setLiveMetadataPartial(false);
+          const unscopedSites = Array.isArray(data.sites) && data.sites.length ? data.sites : null;
+          if (!unscopedSites) {
+            debugWarn('[portal-v2] /api/portfolio returned unscoped totals but no site rows — showing unavailable state instead of mock per-store widgets.');
+            latestUnscopedCurrentSitesRef.current = null;
+            setLiveMetadataPartial(false);
+            setLiveMetadataReason(null);
+            setLiveTotals(null);
+            setLiveSitesRaw(null);
+            setLiveCurrentSitesRaw(null);
+            setViewLive(false);
+            onInitialSettled && onInitialSettled();
+            return;
+          }
+          latestUnscopedCurrentSitesRef.current = unscopedSites;
+          setLiveMetadataPartial(data?.freshness_degraded === true);
+          setLiveMetadataReason(data?.freshness_degraded === true ? (data?.freshness_reason || null) : null);
           setLiveTotals(data.totals);
-          setLiveSitesRaw(Array.isArray(data.sites) && data.sites.length ? data.sites : null);
+          setLiveSitesRaw(unscopedSites);
+          setLiveCurrentSitesRaw(unscopedSites);
           setViewLive(false);
           onInitialSettled && onInitialSettled();
         }
       })
       .catch((err) => {
         if (requestId !== liveTotalsRequestId.current) return;
+        if (isUnauthorizedError(err)) return;
         debugWarn('[portal-v2] /api/portfolio fetch failed — dashboard KPI row + rate table + trend charts are using mock data.', err);
         // Same fix as the "not configured" branch above: don't erase already-loaded good data just
         // because THIS particular re-fetch (triggered by reload() on a nav click) failed.
         if (!rangeInitialized.current) {
           rescueInitialLiveCurrentSlice(requestId, onInitialSettled).then((rescued) => {
             if (requestId !== liveTotalsRequestId.current || rescued) return;
+            latestUnscopedCurrentSitesRef.current = null;
             setLiveMetadataPartial(false);
+            setLiveMetadataReason(null);
             setLiveTotals(null);
             setLiveSitesRaw(null);
             setLiveCurrentSitesRaw(null);
@@ -1890,7 +1966,9 @@ export default function PortalV2Page() {
           });
           return;
         }
+        latestUnscopedCurrentSitesRef.current = null;
         setLiveMetadataPartial(false);
+        setLiveMetadataReason(null);
         onInitialSettled && onInitialSettled();
       });
   };
@@ -1935,19 +2013,33 @@ export default function PortalV2Page() {
         const hasAnySnapshotPeriod = !!(daily || weekly || quarterly);
         const selectedSnapshot = ({ daily, weekly, quarterly })[snapshotPeriod];
         if (!data || !hasAnySnapshotPeriod) {
-          debugWarn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will show mock data.');
+          debugWarn('[portal-v2] /api/snapshot not configured yet — run `npm run pull:snapshot`. Snapshot page will render an honest unavailable/partial state.');
           // Production hardening (28 Jul 2026, continued audit): a successful response with
           // configured:false means the CURRENT stored snapshot payload is incomplete, which is
           // different from a transient fetch failure below. Preserve the returned partial periods so
           // the page can render an honest empty/incomplete state instead of silently showing an older
           // previously-good snapshot as though it were still current.
-          setLiveSnapshot({ daily, weekly, quarterly, generatedAt: data?.generated_at || null, complete: data?.complete !== false });
+          setLiveSnapshot({
+            daily,
+            weekly,
+            quarterly,
+            generatedAt: data?.generated_at || null,
+            lastRefreshAt: data?.last_refresh_at || null,
+            complete: data?.complete !== false,
+          });
           return;
         }
         if (!selectedSnapshot) {
           debugWarn(`[portal-v2] /api/snapshot is missing the selected ${snapshotPeriod} period; rendering an honest empty state for that view instead of stale data.`);
         }
-        setLiveSnapshot({ daily, weekly, quarterly, generatedAt: data.generated_at, complete: data?.complete !== false });
+        setLiveSnapshot({
+          daily,
+          weekly,
+          quarterly,
+          generatedAt: data?.generated_at || null,
+          lastRefreshAt: data?.last_refresh_at || null,
+          complete: data?.complete !== false,
+        });
       })
       // FIXED 24 Jul 2026 (deep audit): this independent fetch path still used the old "clear to
       // null on any transient failure" behavior that was already removed from fetchLiveTotals on 14
@@ -1958,6 +2050,7 @@ export default function PortalV2Page() {
       // because prev is null in that case.
       .catch((err) => {
         if (requestId !== liveSnapshotRequestId.current) return;
+        if (isUnauthorizedError(err)) return;
         debugWarn('[portal-v2] /api/snapshot fetch failed.', err);
         setLiveSnapshot((prev) => prev);
       });
@@ -1998,7 +2091,7 @@ export default function PortalV2Page() {
           ]),
         );
         if (!data || !data.configured || !floors.length) {
-          debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run pull:floor-occupancy`. Occupancy by Floor will show mock data.');
+          debugWarn('[portal-v2] /api/floor-occupancy not configured yet — run `npm run pull:floor-occupancy`. Occupancy by Floor will render an honest unavailable state.');
           // Production hardening (28 Jul 2026, continued audit): keeping the previous "good" floor
           // dataset here hides an explicitly incomplete latest refresh behind stale-but-plausible
           // numbers. Unlike a transport failure (handled in the catch below), a successful response
@@ -2026,6 +2119,7 @@ export default function PortalV2Page() {
       })
       .catch((err) => {
         if (requestId !== liveFloorOccRequestId.current) return;
+        if (isUnauthorizedError(err)) return;
         debugWarn('[portal-v2] /api/floor-occupancy fetch failed.', err);
         setLiveFloorOcc((prev) => prev);
       });
@@ -2069,7 +2163,7 @@ export default function PortalV2Page() {
           if (data && data.month === monthKey) {
             debugWarn(`[portal-v2] /api/cockpit${qs} has no stored daily rows for ${monthKey} yet. Cockpit Charting will render an honest empty/partial state for that month.`);
           } else {
-            debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will show mock data.`);
+            debugWarn(`[portal-v2] /api/cockpit${qs} not configured yet — run \`npm run pull:cockpit\`. Cockpit Charting will render an honest unavailable state.`);
           }
           setter((prev) => {
             if (data && data.month === monthKey) {
@@ -2078,6 +2172,7 @@ export default function PortalV2Page() {
                 curve: [],
                 avgDailyRate: data.avgDailyRate == null ? null : Number(data.avgDailyRate),
                 generatedAt: data.generated_at || null,
+                lastRefreshAt: data?.last_refresh_at || null,
                 complete: data?.complete !== false,
               };
             }
@@ -2090,11 +2185,13 @@ export default function PortalV2Page() {
           curve,
           avgDailyRate: data.avgDailyRate == null ? null : Number(data.avgDailyRate),
           generatedAt: data.generated_at || null,
+          lastRefreshAt: data?.last_refresh_at || null,
           complete: data?.complete !== false,
         });
       })
       .catch((err) => {
         if (requestId !== requestRef.current) return;
+        if (isUnauthorizedError(err)) return;
         debugWarn(`[portal-v2] /api/cockpit${qs} fetch failed.`, err);
         setter((prev) => (monthKey && prev?.month !== monthKey ? null : prev));
       });
@@ -2195,6 +2292,7 @@ export default function PortalV2Page() {
       fetchLiveTotals(() => { clearTimeout(safety); setLoading(false); });
       fetchSnapshot();
       fetchFloorOccupancy();
+      fetchBuildInfo();
     }
     // FIXED 21 Jul 2026 (Rich's portal review, task #362): "Clicking off dropdown on store selection
     // to move on. Not having to click back on drop down." Root cause: this listener is registered on
@@ -3267,10 +3365,9 @@ export default function PortalV2Page() {
         // many rather than implying full-portfolio coverage it doesn't have yet.
         (() => {
           const floors = liveFloorFloors;
-          const mockFloors = [{ floor: 1, occPct: 88.2 }, { floor: 2, occPct: 91.5 }, { floor: 3, occPct: 79.4 }];
           const hasScopedFloorData = !!(floors && floors.length);
           const hasFloorDataset = liveFloorOcc !== null;
-          const rows = (hasScopedFloorData ? floors : mockFloors).map((b) => ({
+          const rows = (hasScopedFloorData ? floors : []).map((b) => ({
             label: b.floor === 0 ? 'Ground' : `Floor ${b.floor}`,
             value: b.occPct,
             disp: b.occPct.toFixed(1) + '%',
@@ -3278,7 +3375,7 @@ export default function PortalV2Page() {
           }));
           if (!hasScopedFloorData) {
             if (hasFloorDataset) debugWarn('[portal-v2] Occupancy by Floor chart has no imported rows for the selected store scope.');
-            else debugWarn('[portal-v2] Occupancy by Floor chart rendering with mock data — import floor data for the selected site(s), or clear the store filter to view all imported sites.');
+            else debugWarn('[portal-v2] Occupancy by Floor chart rendering with an unavailable state — import floor data for the selected site(s), or clear the store filter to view all imported sites.');
           }
           const title = 'Occupancy by Floor';
           return {
@@ -3288,7 +3385,7 @@ export default function PortalV2Page() {
               ? <VBars items={rows} opts={{ max: 100 }} />
               : hasFloorDataset
                 ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No imported floor data for the selected store scope.</div>
-                : <VBars items={rows} opts={{ max: 100 }} />,
+                : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Floor-occupancy data is unavailable right now.</div>,
           };
         })(),
       ];
@@ -3953,7 +4050,7 @@ export default function PortalV2Page() {
       const haveSomeLiveHistory = !!(liveMonthly && Object.keys(liveMonthly).length);
       if (!yoySeries) {
         if (haveSomeLiveHistory) debugWarn('[portal-v2] Marketing YoY charts unavailable for this scope — insufficient stored history for a same-month-last-year comparison.');
-        else debugWarn('[portal-v2] Marketing YoY charts rendering with mock data (need >=13 months of stored history with a same-month-last-year match — run npm run backfill if this persists).');
+        else debugWarn('[portal-v2] Marketing YoY charts unavailable — need >=13 months of stored history with a same-month-last-year match.');
       } else if (!yoyConversionRenderable) {
         debugWarn('[portal-v2] Marketing YoY conversion chart unavailable for this scope — at least one compared month has no visible enquiry base, so a truthful conversion line cannot be drawn.');
       }
@@ -3962,14 +4059,14 @@ export default function PortalV2Page() {
           ? { title: 'Enquiries — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced.\nCalculation: Total visible enquiries per stored month (sum of Phone/Walk-in/Web counts; Email excluded to match the displayed legacy Marketing basis). Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.blue, values: yoySeries.enqThis }, { name: 'Last year', color: C.blue, dashed: true, values: yoySeries.enqLast }]} opts={{ labels: yoySeries.labels, zero: true }} />, wide: true }
           : haveSomeLiveHistory
             ? { title: 'Enquiries — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not enough stored history yet for a year-on-year comparison.</div>, wide: true }
-            : { title: 'Enquiries — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.blue, values: seq(1300 * f, 14 * f, 60 * f, 12) }, { name: 'Last year', color: C.blue, dashed: true, values: seq(1150 * f, 12 * f, 55 * f, 12) }]} opts={{ labels: momLabels(), zero: true }} />, wide: true },
+            : { title: 'Enquiries — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored marketing history has not loaded yet.</div>, wide: true },
         yoySeries && yoyConversionRenderable
           ? { title: 'Enquiry → Reservation Conversion — Year on Year', tip: 'Report: InquiryTracking.\nFields: sInquiryType, dPlaced, iInquiryConvertedToLease, iReservationConvertedToLease.\nCalculation: visible converted enquiries ÷ visible enquiries for each stored month, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed Marketing conversion basis). A visible enquiry counts as converted when either SiteLink conversion flag is true. Solid = trailing 12 months; dashed = same 12 months a year earlier.', el: <LineChart series={[{ name: 'This year', color: C.teal, values: yoySeries.convThis }, { name: 'Last year', color: C.teal, dashed: true, values: yoySeries.convLast }]} opts={{ labels: yoySeries.labels }} />, wide: true }
           : yoySeries
             ? { title: 'Enquiry → Reservation Conversion — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>At least one compared month has no visible enquiries, so a truthful year-on-year conversion line cannot be drawn.</div>, wide: true }
             : haveSomeLiveHistory
               ? { title: 'Enquiry → Reservation Conversion — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Not enough stored history yet for a year-on-year comparison.</div>, wide: true }
-              : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <LineChart series={[{ name: 'This year', color: C.teal, values: seq(36, 0.3, 3, 12) }, { name: 'Last year', color: C.teal, dashed: true, values: seq(33, 0.3, 3, 12) }]} opts={{ labels: momLabels() }} />, wide: true },
+              : { title: 'Enquiry → Reservation Conversion — Year on Year', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored marketing history has not loaded yet.</div>, wide: true },
       );
       // Leads by Store: live-wired from each site's `enquiries` object — same authoritative source
       // (lib/reportMap.js's lead_funnel/InquiryTracking parser, locked spec Michael 1 Jul 2026) as
@@ -4077,7 +4174,7 @@ export default function PortalV2Page() {
       const haveAnyLiveHistory = !!(liveHistory && liveHistory.length >= 1);
       const scopedMissingHistory = haveAnyLiveHistory && !scopedOk;
       const liveHist = scopedOk ? scopedHistory : null;
-      if (!haveAnyLiveHistory) debugWarn('[portal-v2] Month-on-Month charts rendering with mock data (no stored history at all yet — run npm run pull a few more times, or npm run backfill).');
+      if (!haveAnyLiveHistory) debugWarn('[portal-v2] Month-on-Month charts unavailable (no stored history has loaded yet).');
       else if (scopedMissingHistory) debugWarn('[portal-v2] Month-on-Month: selected period has no stored history yet.');
       // FIXED 15 Jul 2026 (pre-go-live audit finding): this used to be appended straight onto the
       // visible chart TITLE ('(full history — selected period too narrow)'), which meant every user
@@ -4336,12 +4433,12 @@ export default function PortalV2Page() {
         { title: 'Self Storage Occupied Area', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No stored history exists yet for the selected period.</div> },
         { title: 'Self Storage Rate per ft²', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No stored history exists yet for the selected period.</div> },
       ] : [
-        { title: 'Revenue Collected', el: <LineChart series={[{ name: 'Portfolio', color: C.blue, values: seq(48000 * f, 900 * f, 2200 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Rent Roll', el: <LineChart series={[{ name: 'Portfolio', color: C.teal, values: seq(1200000 * f, 12000 * f, 24000 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Insurance Roll', el: <LineChart series={[{ name: 'Premiums', color: C.blue, values: seq(4200 * f, 90 * f, 260 * f, 12) }]} opts={{ labels: L, zero: true, niceAxis: true, unit: '£', unitPrefix: true }} /> },
-        { title: 'Total Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.blue, values: seq(600000 * f, 3400 * f, 9000 * f, 12) }]} opts={{ labels: L, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Occupied Area', el: <LineChart series={[{ name: 'ft²', color: C.teal, values: seq(540000 * f, 3000 * f, 8000 * f, 12) }]} opts={{ labels: L, niceAxis: true, unit: 'ft²' }} /> },
-        { title: 'Self Storage Rate per ft²', el: <LineChart series={[{ name: 'Rate', color: C.blue, values: seq(27.2, 0.22, 0.4, 12) }]} opts={{ labels: L, niceAxis: true, unit: '£', unitPrefix: true, axisDecimals: 2 }} /> },
+        { title: 'Revenue Collected', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
+        { title: 'Rent Roll', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
+        { title: 'Insurance Roll', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
+        { title: 'Total Occupied Area', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
+        { title: 'Self Storage Occupied Area', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
+        { title: 'Self Storage Rate per ft²', el: <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Stored month-on-month history has not loaded yet.</div> },
       ];
     }
 
@@ -4553,26 +4650,22 @@ export default function PortalV2Page() {
       // same day (Michael: "no today needs to show yesterday") once "today" turned out to mean
       // "frozen at whatever this morning's one-a-day pull saw" — see lib/pullSnapshot.js's header.
       const snap = liveSnapshot ? liveSnapshot[snapshotPeriod] : null;
-      if (!snap) debugWarn('[portal-v2] Weekly/Daily Snapshot page rendering with mock data (no snapshot_payload yet — run npm run pull:snapshot).');
+      if (!snap) debugWarn('[portal-v2] Weekly/Daily Snapshot page rendering with an unavailable state (no stored rows for the selected snapshot period yet — run npm run pull:snapshot).');
       const periodLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod];
       const fmtRange = (r) => {
         if (!r) return '';
         const f = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
         return r.start === r.end ? f(r.start) : `${f(r.start)} – ${f(r.end)}`;
       };
-      const mockSnap = {
-        range: (() => {
-          const y = lastCompleteDay(new Date());
-          if (snapshotPeriod === 'daily') return { start: formatLocalYmd(y), end: formatLocalYmd(y) };
-          if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: formatLocalYmd(s), end: formatLocalYmd(y) }; }
-          const q = new Date(y.getFullYear(), Math.floor(y.getMonth() / 3) * 3, 1);
-          return { start: formatLocalYmd(q), end: formatLocalYmd(y) };
-        })(),
-        totals: { daily: { enquiries: 14, reservations: 5, moveIns: 3, moveOuts: 2, sqftIn: 312, sqftOut: 168 }, weekly: { enquiries: 96, reservations: 31, moveIns: 22, moveOuts: 17, sqftIn: 2150, sqftOut: 1340 }, quarterly: { enquiries: 1180, reservations: 402, moveIns: 268, moveOuts: 231, sqftIn: 27400, sqftOut: 21860 } }[snapshotPeriod],
-        sites: null,
-      };
-      const rawTotals = snap ? snap.totals : mockSnap.totals;
-      const range = snap ? snap.range : mockSnap.range;
+      const snapshotExpectedRange = (() => {
+        const y = lastCompleteDay(new Date());
+        if (snapshotPeriod === 'daily') return { start: formatLocalYmd(y), end: formatLocalYmd(y) };
+        if (snapshotPeriod === 'weekly') { const s = new Date(y); s.setDate(s.getDate() - 6); return { start: formatLocalYmd(s), end: formatLocalYmd(y) }; }
+        const q = new Date(y.getFullYear(), Math.floor(y.getMonth() / 3) * 3, 1);
+        return { start: formatLocalYmd(q), end: formatLocalYmd(y) };
+      })();
+      const rawTotals = snap ? snap.totals : null;
+      const range = snap ? snap.range : snapshotExpectedRange;
       const nameForCode = (code, fallbackName = null) => fallbackName
         || (liveCurrentSitesRaw || []).find((s) => s.code === code)?.name
         || SITE_NAME_BY_CODE[code]
@@ -4609,6 +4702,7 @@ export default function PortalV2Page() {
         : (anySelectedSnapshot && snap && Array.isArray(snap.sites))
           ? { enquiries: 0, reservations: 0, moveIns: 0, moveOuts: 0, sqftIn: 0, sqftOut: 0 }
           : rawTotals;
+      const snapshotMetricsAvailable = !!totals;
       out.statCards = [
         // Enquiries & Reservations — MERGED 21 Jul 2026 (Michael). Was two separate cards; removed the
         // standalone "Reservations" one earlier the same day because it sat right next to Reserved
@@ -4641,6 +4735,14 @@ export default function PortalV2Page() {
         // reservation ratio (matching this card's own prior mock numbers) when liveSites isn't
         // available yet, same as every other mock branch on this page.
         (() => {
+          if (!snapshotMetricsAvailable) {
+            return {
+              title: 'Enquiries & Reservations',
+              live: false,
+              tip: 'Report: InquiryTracking.\nFields: dPlaced, dConverted_ToRsv, sInquiryType, sRentalType.\nCalculation: Enquiries = visible placed enquiries within the selected window (' + periodLabel.toLowerCase() + '), summed across sites, using the same Phone/Web/Walk-in basis shown on the legacy Marketing page (Email excluded from the displayed basis). Reservations = visible enquiries that entered reservation stage within the same window (sRentalType = "Reservation", counted by dConverted_ToRsv), summed across those same visible channels. Snapshot windows always stop at the last complete day, not intraday today.\nReserved sqft: ESTIMATE, not a direct measurement — each store\'s Reservations count is multiplied by that store\'s best available average reservation size proxy, then summed. Neither source has both a reservation date and unit area, so this remains an estimate rather than a directly measured period total.\nStatus: this selected snapshot period does not have stored rows yet, so the live portal shows N/A rather than fabricated values.',
+              tiles: [{ value: 'N/A', label: 'Enquiries', delta: null, dir: null }, { value: 'N/A', label: 'Reservations', delta: null, dir: null }, { value: 'N/A', label: 'Reserved sqft (est.)', delta: null, dir: null }],
+            };
+          }
           const liveAvgSqftPerRes = normalizedReservationSqftPerReservation(liveCurrentSites);
           const blendedSnapshotSqftPerRes = normalizedSnapshotReservationSqftPerReservation(snapshotSiteRows, liveAvgSqftPerRes);
           // Keep the headline estimate on the exact same per-store estimation path as the table/export
@@ -4655,8 +4757,8 @@ export default function PortalV2Page() {
         // pending a usable target-move-in-date field on InquiryTracking (still not confirmed to exist —
         // see lib/pullSnapshot.js's header comment). reservationBacklog stays null on every snapshot
         // record so this can come back easily if that field is ever found.
-        { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MoveIn, MoveOut.\nCalculation: Count of rows flagged MoveIn and rows flagged MoveOut within the selected window, summed across sites.', tiles: [{ value: intFmt(totals.moveIns), label: 'Move-ins', delta: null, dir: null }, { value: intFmt(totals.moveOuts), label: 'Move-outs', delta: null, dir: null }] },
-        { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInArea, MovedOutArea.\nCalculation: Σ MovedInArea (rows flagged MoveIn) and Σ MovedOutArea (rows flagged MoveOut) for the selected window, summed across sites; Out shown negative.', tiles: [{ value: intFmt(totals.sqftIn) + ' ft²', label: 'In', delta: null, dir: null }, { value: '-' + intFmt(totals.sqftOut) + ' ft²', label: 'Out', delta: null, dir: null }] },
+        { title: 'Move-ins / Move-outs', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MoveIn, MoveOut.\nCalculation: Count of rows flagged MoveIn and rows flagged MoveOut within the selected window, summed across sites.', tiles: [{ value: snapshotMetricsAvailable ? intFmt(totals.moveIns) : 'N/A', label: 'Move-ins', delta: null, dir: null }, { value: snapshotMetricsAvailable ? intFmt(totals.moveOuts) : 'N/A', label: 'Move-outs', delta: null, dir: null }] },
+        { title: 'Sqft In / Out', live: !!snap, tip: 'Report: MoveInsAndMoveOuts.\nFields: MovedInArea, MovedOutArea.\nCalculation: Σ MovedInArea (rows flagged MoveIn) and Σ MovedOutArea (rows flagged MoveOut) for the selected window, summed across sites; Out shown negative.', tiles: [{ value: snapshotMetricsAvailable ? (intFmt(totals.sqftIn) + ' ft²') : 'N/A', label: 'In', delta: null, dir: null }, { value: snapshotMetricsAvailable ? ('-' + intFmt(totals.sqftOut) + ' ft²') : 'N/A', label: 'Out', delta: null, dir: null }] },
         // Reserved Scheduled Sqft — the standalone card that used to sit here (task #353, then #367)
         // was REMOVED 21 Jul 2026 (Michael: "reserved scheduled sqft is still showing 460, remove the
         // 460 and move the sqft to the enquiries and reservations widget..."). Its live "Reservations
@@ -4682,7 +4784,14 @@ export default function PortalV2Page() {
           ],
           rows: siteRows.length
             ? siteRows
-            : [{ store: (snap && Array.isArray(snap.sites) && anySelectedSnapshot) ? '(no snapshot rows match this store filter)' : '(run npm run pull:snapshot for per-store data)', enquiries: null, reservations: null, moveIns: null, moveOuts: null, sqftIn: null, sqftOut: null }],
+            : [{
+                store: !snap
+                  ? '(selected snapshot period has no stored rows yet)'
+                  : (Array.isArray(snap.sites) && anySelectedSnapshot)
+                    ? '(no snapshot rows match this store filter)'
+                    : '(snapshot per-store rows are unavailable for this period)',
+                enquiries: null, reservations: null, moveIns: null, moveOuts: null, sqftIn: null, sqftOut: null,
+              }],
           totals: siteRows.length ? { enquiries: totals.enquiries, reservations: totals.reservations, moveIns: totals.moveIns, moveOuts: totals.moveOuts, sqftIn: totals.sqftIn, sqftOut: totals.sqftOut } : null,
           totalsLabel: 'Total' },
       ];
@@ -4787,17 +4896,9 @@ export default function PortalV2Page() {
       groupRows.sort((a, b) => a.store.localeCompare(b.store) || a.type.localeCompare(b.type) || a.area - b.area);
 
       const haveData = !!liveSites;
-      if (!haveData) debugWarn('[portal-v2] District Manager page rendering with mock data (no live unitRows/rentalActivityByTypeSize yet — run npm run pull).');
-      const mockDiscounted = [
-        { store: 'Bicester', unit: 'OFF3', type: 'Self Storage', area: 50, typeArea: 'Self Storage · 50 ft²', stdRate: 62.50, rent: 48.00, discountPct: 23.2 },
-        { store: 'Newbury', unit: 'A114', type: 'Self Storage', area: 75, typeArea: 'Self Storage · 75 ft²', stdRate: 88.00, rent: 70.40, discountPct: 20.0 },
-      ];
-      const mockGroups = [
-        { store: 'Bicester', type: 'Self Storage', area: 50, typeArea: 'Self Storage · 50 ft²', totalUnits: 40, occupied: 40, vacant: 0, occPct: 100, standardRate: 30.5, effectiveRate: 27.8, grossPotential: 61000, avgStay: 412 },
-        { store: 'Newbury', type: 'Drive Up', area: 100, typeArea: 'Drive Up · 100 ft²', totalUnits: 22, occupied: 20, vacant: 2, occPct: 90.9, standardRate: 24.0, effectiveRate: 22.1, grossPotential: 52800, avgStay: 305 },
-      ];
-      const dRows = haveData ? discountedRows : mockDiscounted;
-      const gRows = haveData ? groupRows : mockGroups;
+      if (!haveData) debugWarn('[portal-v2] District Manager page rendering with unavailable states (live unitRows/rentalActivityByTypeSize are missing — run npm run pull).');
+      const dRows = discountedRows;
+      const gRows = groupRows;
 
       // Unit Groups — Stay & Re-Lease widget-local filters (14 Jul 2026, Michael: "condense... add a
       // filter for that specific widget to filter by location and by type or both, all of them or
@@ -4848,8 +4949,8 @@ export default function PortalV2Page() {
       );
 
       out.statCards = [
-        { title: 'Discounted Units in Full Groups', live: haveData && dmSingleMonth && hasUnitRowData && hasRentalActivityGroupData, tip: 'Report: RentalActivity; RentRoll.\nFields: TotalUnits, Vacant, StandardRate (RentalActivity, group-level); dcStdRate, dcRent (RentRoll, per unit).\nCalculation: Units in a (type, size) group where Vacant = 0 (100% full) and the unit\'s own dcRent < dcStdRate — count across selected stores.\nNote: only valid for a single selected month. RentRoll\'s unitRows are a month-end/current snapshot, not a true multi-month range history, so this card is intentionally unavailable for multi-month ranges rather than mixing a last-month unit snapshot into a range total.', tiles: [{ value: intFmt((haveData && dmSingleMonth && hasUnitRowData && hasRentalActivityGroupData) ? dRows.length : 0), label: 'Units', delta: null, dir: null }] },
-        { title: 'Groups Analyzed', live: haveData && hasRentalActivityGroupData, tip: 'Report: RentalActivity.\nFields: Type, Area.\nCalculation: Count of distinct (store, Type, rounded Area) groups across the selected stores.', tiles: [{ value: intFmt((haveData && hasRentalActivityGroupData) ? gRows.length : 0), label: '(store, type, size) groups', delta: null, dir: null }] },
+        { title: 'Discounted Units in Full Groups', live: haveData && dmSingleMonth && hasUnitRowData && hasRentalActivityGroupData, tip: 'Report: RentalActivity; RentRoll.\nFields: TotalUnits, Vacant, StandardRate (RentalActivity, group-level); dcStdRate, dcRent (RentRoll, per unit).\nCalculation: Units in a (type, size) group where Vacant = 0 (100% full) and the unit\'s own dcRent < dcStdRate — count across selected stores.\nNote: only valid for a single selected month. RentRoll\'s unitRows are a month-end/current snapshot, not a true multi-month range history, so this card is intentionally unavailable for multi-month ranges rather than mixing a last-month unit snapshot into a range total.', tiles: [{ value: haveData ? (dmSingleMonth && hasUnitRowData && hasRentalActivityGroupData ? intFmt(dRows.length) : 'N/A') : 'N/A', label: 'Units', delta: null, dir: null }] },
+        { title: 'Groups Analyzed', live: haveData && hasRentalActivityGroupData, tip: 'Report: RentalActivity.\nFields: Type, Area.\nCalculation: Count of distinct (store, Type, rounded Area) groups across the selected stores.', tiles: [{ value: (haveData && hasRentalActivityGroupData) ? intFmt(gRows.length) : 'N/A', label: '(store, type, size) groups', delta: null, dir: null }] },
       ];
       out.chartCards = [];
       out.tables = [
@@ -4869,7 +4970,9 @@ export default function PortalV2Page() {
             { key: 'discountPct', label: 'Discount %', type: 'pct', align: 'right' },
           ],
           rows: dRowsFiltered.length ? dRowsFiltered : [{
-            store: !dmSingleMonth
+            store: !haveData
+              ? '(district-manager unit-level data is unavailable right now)'
+              : !dmSingleMonth
               ? '(available only for a single selected month)'
               : hasUnitRowData
                 ? (hasRentalActivityGroupData ? '(no discounted units match this filter)' : '(group-level rental-activity data is not available for this period)')
@@ -4891,7 +4994,7 @@ export default function PortalV2Page() {
             { key: 'effectiveRate', label: 'Effective Rate (£/ft²/yr)', type: 'money2', align: 'right' },
             { key: 'avgStay', label: 'Avg Stay (days)', type: 'int', align: 'right' },
           ],
-          rows: gRowsFiltered.length ? gRowsFiltered : [{ store: hasRentalActivityGroupData ? '(no groups match this filter)' : '(group-level rental-activity data is not available for this period)', typeArea: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
+          rows: gRowsFiltered.length ? gRowsFiltered : [{ store: !haveData ? '(district-manager group-level data is unavailable right now)' : (hasRentalActivityGroupData ? '(no groups match this filter)' : '(group-level rental-activity data is not available for this period)'), typeArea: null, totalUnits: null, occPct: null, standardRate: null, effectiveRate: null, avgStay: null }],
         },
       ];
 
@@ -4914,12 +5017,7 @@ export default function PortalV2Page() {
         const curPct = occupancyPctForSite(s), prevPct = occupancyPctForSite(prev);
         return { store: s.name, curPct, prevPct, change: R2(curPct - prevPct) };
       }).filter(Boolean).sort((a, b) => a.change - b.change) : [];
-      const mockOccDecline = [
-        { store: 'Newmarket', curPct: 61.1, prevPct: 66.4, change: -5.3 },
-        { store: 'Enfield', curPct: 31.7, prevPct: 35.0, change: -3.3 },
-        { store: 'Bicester', curPct: 96.0, prevPct: 94.5, change: 1.5 },
-      ];
-      const occDeclineFinal = occDeclineHave ? occDeclineRows : (haveData ? [] : mockOccDecline);
+      const occDeclineFinal = occDeclineHave ? occDeclineRows : [];
       const sitesDecliningCount = occDeclineFinal.filter((r) => r.change < 0).length;
 
       // Delinquency by Site — same ManagementSummary delinquent_30plus_* fields as the Financials
@@ -4932,15 +5030,11 @@ export default function PortalV2Page() {
           rentRollPct: debtorRentRollPctForSite(s),
         }))
         .sort((a, b) => ((b.rentRollPct ?? -Infinity) - (a.rentRollPct ?? -Infinity)));
-      const mockDelinquency = [
-        { store: 'Sittingbourne', accounts: 14, total: 3200, tenantPct: 4.2, rentRollPct: 3.1 },
-        { store: 'Letchworth', accounts: 9, total: 2100, tenantPct: 2.8, rentRollPct: 2.0 },
-      ];
-      const delinquencyFinal = haveData ? delinquencyRows : mockDelinquency;
+      const delinquencyFinal = haveData ? delinquencyRows : [];
 
       out.statCards.push(
-        { title: 'Sites Losing Occupancy', live: occDeclineHave, tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: occPC = Occupied ÷ TotalUnits × 100, per site, for the selected month vs its prior month (same snapshot every "vs last month" delta on this page uses). Count of sites where the selected month\'s occPC is lower.', tiles: [{ value: intFmt(sitesDecliningCount), label: 'Sites declining', delta: null, dir: null }] },
-        { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary, same source as the Financials page\'s Debtor Levels card.\nFields: dcDlqntTot, iDelUnits, Period ("Unpaid" ageing table).\nCalculation: Count of sites with iDelUnits > 0 summed across the 30+ day buckets (31-60 through 361+; 0-10/11-30 excluded).', tiles: [{ value: intFmt(delinquencyFinal.length), label: 'Sites flagged', delta: null, dir: null }] },
+        { title: 'Sites Losing Occupancy', live: occDeclineHave, tip: 'Report: OccupancyStatistics.\nFields: Occupied, TotalUnits.\nCalculation: occPC = Occupied ÷ TotalUnits × 100, per site, for the selected month vs its prior month (same snapshot every "vs last month" delta on this page uses). Count of sites where the selected month\'s occPC is lower.', tiles: [{ value: occDeclineHave ? intFmt(sitesDecliningCount) : 'N/A', label: 'Sites declining', delta: null, dir: null }] },
+        { title: 'Sites with Delinquent Accounts', live: haveData, tip: 'Report: ManagementSummary, same source as the Financials page\'s Debtor Levels card.\nFields: dcDlqntTot, iDelUnits, Period ("Unpaid" ageing table).\nCalculation: Count of sites with iDelUnits > 0 summed across the 30+ day buckets (31-60 through 361+; 0-10/11-30 excluded).', tiles: [{ value: haveData ? intFmt(delinquencyFinal.length) : 'N/A', label: 'Sites flagged', delta: null, dir: null }] },
       );
       out.tables.push(
         // NARROWED 21 Jul 2026 (Michael: "make all the big tables narrower... put them next to
@@ -4954,7 +5048,7 @@ export default function PortalV2Page() {
             { key: 'prevPct', label: 'Occupancy % (Prior Month)', type: 'pct', align: 'right' },
             { key: 'change', label: 'Change (pts)', type: 'pct', align: 'right', color: 'delta' },
           ],
-          rows: occDeclineFinal.length ? occDeclineFinal : [{ store: '(no prior-month data available yet — run npm run pull again next month)', curPct: null, prevPct: null, change: null }],
+          rows: occDeclineFinal.length ? occDeclineFinal : [{ store: !haveData ? '(district-manager occupancy data is unavailable right now)' : '(no prior-month data available yet — run npm run pull again next month)', curPct: null, prevPct: null, change: null }],
         },
         { title: 'Watchdog — Delinquency by Site', live: haveData, pageSize: 20, collapsible: true,
           tip: 'Report: ManagementSummary, same source as the Financials page\'s Debtor Levels card, broken out per site.\nFields: dcDlqntTot, iDelUnits ("Unpaid" ageing table, 30+ day buckets only).\nCalculation: % of Tenants = delinquent accounts ÷ occupied units × 100. % of Rent Roll = delinquent balance ÷ occupied rent roll × 100. Sorted worst Rent Roll % first. If a site has no occupied units or no occupied rent in scope, the corresponding percentage is left blank rather than shown as a fake 0%.',
@@ -4965,7 +5059,7 @@ export default function PortalV2Page() {
             { key: 'tenantPct', label: '% of Tenants', type: 'pct', align: 'right' },
             { key: 'rentRollPct', label: '% of Rent Roll', type: 'pct', align: 'right' },
           ],
-          rows: delinquencyFinal.length ? delinquencyFinal : [{ store: '(no delinquent accounts in this period)', accounts: null, total: null, tenantPct: null, rentRollPct: null }],
+          rows: delinquencyFinal.length ? delinquencyFinal : [{ store: haveData ? '(no delinquent accounts in this period)' : '(district-manager delinquency data is unavailable right now)', accounts: null, total: null, tenantPct: null, rentRollPct: null }],
         },
       );
 
@@ -4978,14 +5072,12 @@ export default function PortalV2Page() {
       const haveCockpitDataset = liveCockpit !== null;
       if (!cockpitOk) {
         if (haveCockpitDataset) debugWarn('[portal-v2] Cockpit Charting has no daily rows for the selected month/store scope.');
-        else debugWarn('[portal-v2] Cockpit Charting rendering with mock data (no daily_financial_snapshot rows yet — run npm run pull:cockpit, then again daily to build up the curve).');
+        else debugWarn('[portal-v2] Cockpit Charting rendering with an unavailable state (no daily_financial_snapshot rows yet — run npm run pull:cockpit, then again daily to build up the curve).');
       }
       const cockpitMonthKey = liveCockpit && liveCockpit.month ? liveCockpit.month : monthKeyOf(monthTo);
       const cockpitCurve = cockpitOk
         ? padDailyMonthCurve(liveCockpit.curve, cockpitMonthKey, () => ({ total_charge: 0 }))
-        : haveCockpitDataset
-          ? []
-          : Array.from({ length: 14 }, (_, i) => ({ date: `mock-${i + 1}`, total_charge: 3200 * (i + 1) + (i % 3) * 400 }));
+        : [];
       const cockpitSelectedCodes = (() => {
         return (pageHasSelectedStores && liveSites && liveSites.length) ? new Set(liveSites.map((s) => s.code)) : null;
       })();
@@ -5015,7 +5107,8 @@ export default function PortalV2Page() {
       // substituting unrelated portfolio data -- the stat tile and chart below both handle that null
       // explicitly (an honest "N/A" / an omitted pace line, rather than a fabricated number).
       const cockpitAvgRate = (() => {
-        if (!cockpitSelectedCodes) return haveCockpitDataset ? liveCockpit?.avgDailyRate ?? null : 3400;
+        if (!haveCockpitDataset) return null;
+        if (!cockpitSelectedCodes) return liveCockpit?.avgDailyRate ?? null;
         if (!liveMonthly) return null;
         const prevKeys = [1, 2, 3].map((n) => monthKeyOf(indexOfMonthKey(cockpitMonthKey) - n));
         const dailyRates = prevKeys.map((mk) => {
@@ -5064,7 +5157,7 @@ export default function PortalV2Page() {
               : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No cockpit daily rows for the selected store scope this month yet.</div>)
           : haveCockpitDataset
             ? <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>No cockpit daily rows for the selected month yet.</div>
-            : <LineChart series={cockpitPace ? [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }, { name: '3-month avg pace', color: C.blue, dashed: true, values: cockpitPace }] : [{ name: `${cockpitMonthLabel} (cumulative)`, color: C.blue, values: cockpitActual }]} opts={{ labels: cockpitLabels, zero: true }} />,
+            : <div style={{ padding: '32px 12px', textAlign: 'center', color: C.slate, fontSize: 13 }}>Cockpit daily data is unavailable right now.</div>,
       });
     }
 
@@ -5128,43 +5221,55 @@ export default function PortalV2Page() {
     if (totals) aoa.push(keys.map((k, i) => (i === 0 ? totalsLabel : (totals[k] ?? ''))));
     return aoa;
   }
-  const sumBy = (rows, fn) => rows.reduce((a, row) => a + fn(row), 0);
-  const occupancyPctForSite = (s) => (s.tot ? +((((s.occ || 0) / s.tot) * 100).toFixed(1)) : 0);
-  const claPctForSite = (s) => s.claA
-    ? +((((s.occA || 0) / s.claA) * 100).toFixed(1))
-    : (s.totA ? +((((s.occA || 0) / s.totA) * 100).toFixed(1)) : 0);
-  const ssOccupancyPctForSite = (s) => (s.ss?.tot ? +((((s.ss?.occ || 0) / s.ss.tot) * 100).toFixed(1)) : null);
-  const officesOccupancyPctForSite = (s) => (s.offices?.tot ? +((((s.offices?.occ || 0) / s.offices.tot) * 100).toFixed(1)) : null);
-  const economicOccPctForSite = (s) => (s.gpot ? +((((s.occActualRent || 0) / s.gpot) * 100).toFixed(1)) : 0);
-  const debtorTenantPctForSite = (s) => s.occ ? +(((((s.debtors && s.debtors.accounts) || 0) / s.occ) * 100).toFixed(1)) : null;
-  const debtorRentRollPctForSite = (s) => s.occActualRent ? +(((((s.debtors && s.debtors.total) || 0) / s.occActualRent) * 100).toFixed(1)) : null;
-  const insurancePenetrationForSite = (s) => s.occ ? +(((((s.insurance && s.insurance.insured) || 0) / s.occ) * 100).toFixed(1)) : null;
-  const moveInRateForSite = (s) => (s.moveInAreaSum ? R2((s.moveInRateSum || 0) / s.moveInAreaSum * 12) : null);
-  const moveInVarianceRawPctForSite = (s) => (s.moveInStdRateSum ? R2((s.moveInVarianceSum || 0) / s.moveInStdRateSum * 100) : null);
-  const stayCountForSite = (s) => (s.stayCount ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.occ : 0)) || 0;
-  const stayDaysSumForSite = (s) => (s.stayDaysSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.avgStayDays * s.occ : 0)) || 0;
-  const stayRentSumForSite = (s) => (s.stayRentSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.rent : 0)) || 0;
-  const avgStayRawForSite = (s) => {
+  // FIXED 11 Aug 2026 (live "Cannot access 'occupancyPctForSite' before initialization" crash,
+  // task #465): these were `const x = (s) => ...` arrow functions declared here, but called from
+  // several places much earlier in buildPage() (e.g. the Portfolio Occupancy table ~line 2776, the
+  // KPIs occupancy-by-store table ~line 3260, the occupancy-change table ~line 5017) — since `const`
+  // bindings stay in the Temporal Dead Zone until their own declaration line executes, every one of
+  // those earlier call sites threw ReferenceError as soon as real (non-mock) data reached this render
+  // path, taking down the entire /portal-v2 page. Converting to `function` declarations hoists both
+  // the binding AND the implementation to the top of buildPage(), so it no longer matters that the
+  // call sites appear before this block textually. Purely mechanical change — same bodies, same
+  // return values, no `this`/arrow-specific behavior was in use.
+  function sumBy(rows, fn) { return rows.reduce((a, row) => a + fn(row), 0); }
+  function occupancyPctForSite(s) { return s.tot ? +((((s.occ || 0) / s.tot) * 100).toFixed(1)) : 0; }
+  function claPctForSite(s) {
+    return s.claA
+      ? +((((s.occA || 0) / s.claA) * 100).toFixed(1))
+      : (s.totA ? +((((s.occA || 0) / s.totA) * 100).toFixed(1)) : 0);
+  }
+  function ssOccupancyPctForSite(s) { return s.ss?.tot ? +((((s.ss?.occ || 0) / s.ss.tot) * 100).toFixed(1)) : null; }
+  function officesOccupancyPctForSite(s) { return s.offices?.tot ? +((((s.offices?.occ || 0) / s.offices.tot) * 100).toFixed(1)) : null; }
+  function economicOccPctForSite(s) { return s.gpot ? +((((s.occActualRent || 0) / s.gpot) * 100).toFixed(1)) : 0; }
+  function debtorTenantPctForSite(s) { return s.occ ? +(((((s.debtors && s.debtors.accounts) || 0) / s.occ) * 100).toFixed(1)) : null; }
+  function debtorRentRollPctForSite(s) { return s.occActualRent ? +(((((s.debtors && s.debtors.total) || 0) / s.occActualRent) * 100).toFixed(1)) : null; }
+  function insurancePenetrationForSite(s) { return s.occ ? +(((((s.insurance && s.insurance.insured) || 0) / s.occ) * 100).toFixed(1)) : null; }
+  function moveInRateForSite(s) { return s.moveInAreaSum ? R2((s.moveInRateSum || 0) / s.moveInAreaSum * 12) : null; }
+  function moveInVarianceRawPctForSite(s) { return s.moveInStdRateSum ? R2((s.moveInVarianceSum || 0) / s.moveInStdRateSum * 100) : null; }
+  function stayCountForSite(s) { return (s.stayCount ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.occ : 0)) || 0; }
+  function stayDaysSumForSite(s) { return (s.stayDaysSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.avgStayDays * s.occ : 0)) || 0; }
+  function stayRentSumForSite(s) { return (s.stayRentSum ?? (((s.avgStayDays > 0) && (s.occ || 0) > 0) ? s.rent : 0)) || 0; }
+  function avgStayRawForSite(s) {
     const stayCount = stayCountForSite(s);
     return stayCount > 0 ? (stayDaysSumForSite(s) / stayCount) : null;
-  };
-  const avgCustomerValueForSite = (s) => {
+  }
+  function avgCustomerValueForSite(s) {
     const avgStayRaw = avgStayRawForSite(s);
     const stayCount = stayCountForSite(s);
     return avgStayRaw != null
       ? R2(((stayRentSumForSite(s) / stayCount) * (avgStayRaw / 30.43)))
       : null;
-  };
-  const autobillConversionForSite = (s) => (s.autobillNewTotal ? +((((s.autobillNewCountExact ?? s.autobillNewCount) || 0) / s.autobillNewTotal) * 100).toFixed(1) : null);
-  const insuranceConversionForSite = (s) => (s.moveIns ? Math.min(100, +((((s.insuredNewCustomers && s.insuredNewCustomers.count) || 0) / s.moveIns) * 100).toFixed(1)) : null);
-  const insuranceContentsAvgForSite = (s) => {
+  }
+  function autobillConversionForSite(s) { return s.autobillNewTotal ? +((((s.autobillNewCountExact ?? s.autobillNewCount) || 0) / s.autobillNewTotal) * 100).toFixed(1) : null; }
+  function insuranceConversionForSite(s) { return s.moveIns ? Math.min(100, +((((s.insuredNewCustomers && s.insuredNewCustomers.count) || 0) / s.moveIns) * 100).toFixed(1)) : null; }
+  function insuranceContentsAvgForSite(s) {
     const count = (s.insuredNewCustomers && s.insuredNewCustomers.count) || 0;
     return count ? R2((s.insuredNewCustomers.coverageSum || 0) / count) : null;
-  };
-  const insurancePremiumWeeklyForSite = (s) => (s.moveIns ? R2((((s.insuredNewCustomers && s.insuredNewCustomers.premiumSum) || 0) / s.moveIns) / 4) : null);
-  const merchandiseSalesForSite = (s) => (s.merchandise && s.merchandise.chargeFromFinancial) || 0;
-  const merchandiseIncomePerNewCustomerForSite = (s) => (s.moveIns ? R2(merchandiseSalesForSite(s) / s.moveIns) : null);
-  const discountTotalForSite = (s) => (s.discountPlans || []).reduce((a, row) => a + (row.discount || 0), 0);
+  }
+  function insurancePremiumWeeklyForSite(s) { return s.moveIns ? R2((((s.insuredNewCustomers && s.insuredNewCustomers.premiumSum) || 0) / s.moveIns) / 4) : null; }
+  function merchandiseSalesForSite(s) { return (s.merchandise && s.merchandise.chargeFromFinancial) || 0; }
+  function merchandiseIncomePerNewCustomerForSite(s) { return s.moveIns ? R2(merchandiseSalesForSite(s) / s.moveIns) : null; }
+  function discountTotalForSite(s) { return (s.discountPlans || []).reduce((a, row) => a + (row.discount || 0), 0); }
   const exportPortfolioEnquiries = (sites) => {
     if (!sites) return null;
     const selectedLiveNames = new Set(
@@ -5706,9 +5811,9 @@ export default function PortalV2Page() {
   const mainFreshnessAt = rangePullAt || lastPullAt;
   const freshnessAt = (() => {
     const mainFreshness = mainFreshnessAt;
-    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || null;
+    if (page === 'snapshot') return (liveSnapshot && (liveSnapshot.lastRefreshAt || liveSnapshot.generatedAt)) || null;
     if (page === 'districtManager') {
-      const candidates = [mainFreshness, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && liveCockpit.generatedAt]
+      const candidates = [mainFreshness, liveFloorOcc && liveFloorOcc.generatedAt, liveCockpit && (liveCockpit.lastRefreshAt || liveCockpit.generatedAt)]
         .filter(Boolean)
         .map((v) => new Date(v).getTime())
         .filter((v) => !Number.isNaN(v));
@@ -5718,7 +5823,7 @@ export default function PortalV2Page() {
     return mainFreshness;
   })();
   const rangeFreshnessAt = (() => {
-    if (page === 'snapshot') return (liveSnapshot && liveSnapshot.generatedAt) || null;
+    if (page === 'snapshot') return (liveSnapshot && (liveSnapshot.lastRefreshAt || liveSnapshot.generatedAt)) || null;
     if (!liveTotals) return null;
     return mainFreshnessAt;
   })();
@@ -5772,8 +5877,8 @@ export default function PortalV2Page() {
       }
       if (!liveSnapshot) {
         return {
-          label: 'Mock data',
-          title: 'No stored snapshot payload is available yet, so this page is showing fallback mock values.',
+          label: 'Data unavailable',
+          title: 'No stored snapshot payload is available yet. Fallback mock values are suppressed on the live portal.',
           fg: '#B42318',
           bg: '#FEECEB',
           dot: '#F04438',
@@ -5791,7 +5896,7 @@ export default function PortalV2Page() {
       if (!scopedSnapshot) {
         return {
           label: 'Partial data',
-          title: 'Snapshot data exists for some periods, but not for this selected snapshot period yet, so this page is showing fallback mock values for the current selection.',
+          title: 'Snapshot data exists for some periods, but not for this selected snapshot period yet, so this page is showing unavailable states for the current selection rather than fabricated values.',
           fg: '#B54708',
           bg: '#FFFAEB',
           dot: '#F79009',
@@ -5810,6 +5915,12 @@ export default function PortalV2Page() {
       const cockpitMonthHasAnyRows = !!(liveCockpit && Array.isArray(liveCockpit.curve) && liveCockpit.curve.length > 0);
       const floorComplete = liveFloorOcc?.complete !== false;
       const cockpitComplete = liveCockpit?.complete !== false;
+      const cockpitSelectedMonthKey = liveCockpit?.month || monthKeyOf(monthTo);
+      const cockpitCurrentMonthKey = (() => {
+        const anchor = reportingAnchorDate();
+        return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+      })();
+      const cockpitSelectedMonthLabel = monthLbl(monthTo);
       if (loading && !liveTotals && !liveFloorOcc && !liveCockpit) {
         return {
           label: 'Loading data',
@@ -5821,8 +5932,8 @@ export default function PortalV2Page() {
       }
       if (!liveTotals && !liveFloorOcc && !liveCockpit) {
         return {
-          label: 'Mock data',
-          title: 'Live district-manager data is unavailable right now, so this page is showing fallback mock values.',
+          label: 'Data unavailable',
+          title: 'Live district-manager data is unavailable right now. Fallback mock values are suppressed on the live portal.',
           fg: '#B42318',
           bg: '#FEECEB',
           dot: '#F04438',
@@ -5835,9 +5946,11 @@ export default function PortalV2Page() {
             ? 'The latest floor-occupancy import is incomplete for one or more stores, so this page is showing the freshest available partial district-manager data instead of stale prior-day floor rows.'
             : !cockpitComplete
               ? (cockpitMonthHasAnyRows
-                  ? 'The latest cockpit daily financial refresh did not yet produce a complete current-month latest-day point, so this page is showing the freshest available partial district-manager data instead of stale prior-day cockpit rows.'
-                  : 'No stored cockpit daily rows exist for the selected month yet, so this page is showing the freshest available partial district-manager data instead of inventing a daily curve for that period.')
-              : 'Some district-manager sources are available, but others are still missing or have no stored rows for the selected month yet, so parts of this page may still be using fallback content. Figures are not real-time intraday.',
+                  ? (cockpitSelectedMonthKey === cockpitCurrentMonthKey
+                      ? 'The stored cockpit daily financial curve is missing one or more complete-day rows for the visible current month, so this page is showing the freshest available partial district-manager data instead of pretending the cockpit history is fully complete.'
+                      : `The stored cockpit daily financial curve for ${cockpitSelectedMonthLabel} is incomplete, so this page is showing the freshest available partial district-manager data for that selected month instead of treating the missing days as a complete history.`)
+                  : 'No stored cockpit daily rows exist for the selected month yet, so this page is leaving the cockpit widget unavailable for that period rather than inventing a daily curve.')
+              : 'Some district-manager sources are available, but others are still missing or have no stored rows for the selected month yet, so affected widgets are shown as unavailable rather than filled with fabricated values. Figures are not real-time intraday.',
           fg: '#B54708',
           bg: '#FFFAEB',
           dot: '#F79009',
@@ -5862,17 +5975,24 @@ export default function PortalV2Page() {
     }
     if (!liveTotals) {
       return {
-        label: 'Mock data',
-        title: 'Live portal data is unavailable right now, so this page is showing fallback mock values.',
+        label: 'Data unavailable',
+        title: 'Live portal data is unavailable right now. Fallback mock values are suppressed on the live portal.',
         fg: '#B42318',
         bg: '#FEECEB',
         dot: '#F04438',
       };
     }
     if (liveMetadataPartial) {
+      const partialTitle = (
+        liveMetadataReason === 'stored-current-slice-fallback' || liveMetadataReason === 'stored-current-slice-probe-fallback' || liveMetadataReason === 'current-slice-rescue'
+          ? 'The portal is serving a fresh current-month fallback from the stored current-slice sidecar because the full stored history read failed, so current-month totals should still be current while some range/trend widgets may remain limited until the next successful refresh.'
+          : liveMetadataReason === 'live-current-only'
+            ? 'The portal is serving a current-month-only fallback because the historical payload could not be recovered, so current-month widgets should still be usable while trend/history widgets may remain limited until the next successful refresh.'
+            : 'The portal is showing the freshest available current-month fallback because one or more freshness reads failed, so some current-month widgets may be slightly stale and some range/trend views may remain limited until the next successful refresh.'
+      );
       return {
         label: 'Partial data',
-        title: 'The live current-month portal slice loaded, but the broader stored metadata/history read failed, so current-month widgets are live while some range/trend views may remain limited until the next successful metadata refresh.',
+        title: partialTitle,
         fg: '#B54708',
         bg: '#FFFAEB',
         dot: '#F79009',
@@ -5901,6 +6021,22 @@ export default function PortalV2Page() {
       dot: '#08875D',
     };
   })();
+  const unavailablePageContent = !loading && dataStatus.label === 'Data unavailable'
+    ? (
+        <div style={{ background: '#fff', border: '1px solid #FECACA', borderRadius: '16px', boxShadow: '0 1px 3px rgba(16,24,40,.07),0 2px 6px rgba(16,24,40,.08)', padding: '28px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#F04438', flex: 'none' }} />
+            <span style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '.02em', color: '#B42318' }}>Live data unavailable</span>
+          </div>
+          <div style={{ fontSize: '14px', color: '#475467', lineHeight: 1.6 }}>
+            {dataStatus.title}
+          </div>
+          <div style={{ fontSize: '13px', color: '#667085', marginTop: '12px' }}>
+            Refresh after the next successful data pull, or sign in again if your session expired.
+          </div>
+        </div>
+      )
+    : null;
   // FIXED 8 Jul 2026: fs.length was always the mock STORES count (27), even in live mode — with 29
   // real sites now configured, the subtitle would keep showing the stale "27" regardless. Can't
   // reuse buildPage()'s own `liveSites` const here — this block is a SEPARATE, outer scope (that
@@ -5909,6 +6045,7 @@ export default function PortalV2Page() {
   const snapshotStoreRows = (liveSnapshot && liveSnapshot[snapshotPeriod] && Array.isArray(liveSnapshot[snapshotPeriod].sites))
     ? liveSnapshot[snapshotPeriod].sites.map((s) => ({ name: s.store || (liveCurrentSitesRaw || []).find((site) => site.code === s.code)?.name || SITE_NAME_BY_CODE[s.code] || (liveSitesRaw || []).find((site) => site.code === s.code)?.name || s.code, code: s.code }))
     : null;
+  const showMockStoreChrome = false;
   const visibleSelectedCount = page === 'snapshot'
     ? (snapshotStoreRows
         ? snapshotStoreRows.filter((s) => selected[s.name]).length
@@ -5919,12 +6056,13 @@ export default function PortalV2Page() {
   const liveSiteCount = page === 'snapshot'
     ? (snapshotStoreRows
         ? (pageAnySel ? snapshotStoreRows.filter((s) => selected[s.name]).length : snapshotStoreRows.length)
-        : (liveSitesRaw ? (pageAnySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : null))
-    : (liveSitesRaw ? (pageAnySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : null);
+        : (liveSitesRaw ? (pageAnySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : (showMockStoreChrome ? fs.length : null)))
+    : (liveSitesRaw ? (pageAnySel ? liveSitesRaw.filter((s) => selected[s.name]).length : liveSitesRaw.length) : (showMockStoreChrome ? fs.length : null));
   const snapshotViewLabel = { daily: 'Yesterday', weekly: 'Last 7 days', quarterly: 'Quarter to date' }[snapshotPeriod] || 'Snapshot';
+  const portfolioScopeLabel = liveSiteCount == null ? 'portfolio' : `portfolio (${liveSiteCount})`;
   const subtitle = page === 'snapshot'
-    ? storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + snapshotViewLabel
-    : storeSummary + ' · portfolio (' + (liveSiteCount ?? fs.length) + ') · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
+    ? storeSummary + ' · ' + portfolioScopeLabel + ' · ' + snapshotViewLabel
+    : storeSummary + ' · ' + portfolioScopeLabel + ' · ' + rangeLabel + (viewLive ? '' : ' (viewing)');
   // Restrict the FROM/TO dropdowns to months that actually have data once it's loaded, instead of
   // the full static 24-month placeholder list (which includes months nobody has pulled yet).
   const AVAILABLE_MONTHS = liveMonths && liveMonths.length ? liveMonths.map((mk) => ({ value: indexOfMonthKey(mk), label: monthLbl(indexOfMonthKey(mk)) })) : MONTHS;
@@ -6015,11 +6153,13 @@ export default function PortalV2Page() {
         name: s.name, region: null, checked: !!selected[s.name],
         onToggle: () => { setSelected((p) => ({ ...p, [s.name]: !p[s.name] })); },
       }))
-    : STORES.filter((st) => effectiveRegion === 'All' || st.region === effectiveRegion).map((st) => ({
-        name: st.name, region: st.region, checked: !!selected[st.name],
-        onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); },
-      }));
-  const regionChips = (liveSitesRaw ? ['All'] : ['All', ...REGIONS]).map((r) => ({
+    : (showMockStoreChrome
+        ? STORES.filter((st) => effectiveRegion === 'All' || st.region === effectiveRegion).map((st) => ({
+            name: st.name, region: st.region, checked: !!selected[st.name],
+            onToggle: () => { setSelected((p) => ({ ...p, [st.name]: !p[st.name] })); },
+          }))
+        : []);
+  const regionChips = ['All'].map((r) => ({
     label: r,
     onClick: () => { setRegion(r); setSelected({}); },
     active: effectiveRegion === r,
@@ -6228,6 +6368,14 @@ export default function PortalV2Page() {
                   {page === 'snapshot' ? 'Snapshot updated ' : page === 'districtManager' ? 'Oldest source updated ' : 'Auto-updated '}{freshnessLabel}
                 </span>
               )}
+              {appBuildInfo?.label && (
+                <span
+                  title={`Frontend build ${appBuildInfo.label}${appBuildInfo.branch ? ` on ${appBuildInfo.branch}` : ''}${appBuildInfo.deploymentId ? ` · deployment ${appBuildInfo.deploymentId}` : ''}`}
+                  style={{ fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}
+                >
+                  Build {appBuildInfo.label}
+                </span>
+              )}
               {spin && <span style={{ fontSize: '12px', color: '#98A2B3', whiteSpace: 'nowrap' }}>Refreshing…</span>}
               <button onClick={() => { setSpin(true); reload(); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: '#344054', background: '#fff', border: '1px solid #E4E7EC', borderRadius: '9px', padding: '8px 11px', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', animation: spin ? 'spin .65s linear' : 'none' }}>
@@ -6280,7 +6428,7 @@ export default function PortalV2Page() {
             )}
 
             {!loading && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              unavailablePageContent || <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
                 {kpiRow.length > 0 && (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '14px' }}>

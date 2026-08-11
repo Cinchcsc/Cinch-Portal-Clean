@@ -19,6 +19,7 @@
 //
 // Run:  node --env-file=.env scripts/probe-portalpayload-insurance-check.js [siteName]
 import { admin } from '../lib/supabaseAdmin.js';
+import { decodePortalPayloadStorageValue } from '../lib/portalPayload.js';
 
 const siteQuery = (process.argv[2] || 'Bicester').toLowerCase();
 
@@ -26,7 +27,7 @@ const { data, error } = await admin.from('portal_payload').select('payload,gener
 if (error) { console.error('Fetch error:', error.message); process.exit(1); }
 if (!data?.payload) { console.log('No portal_payload row found.'); process.exit(0); }
 
-const payload = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload;
+const payload = decodePortalPayloadStorageValue(data.payload);
 console.log(`portal_payload generated_at: ${data.generated_at}`);
 console.log(`current_month: ${payload.current_month}\n`);
 

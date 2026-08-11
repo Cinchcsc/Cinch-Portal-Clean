@@ -16,6 +16,7 @@
 //   node --env-file=.env scripts/reparse-report.js management 2026-06 (just June 2026)
 import { admin } from '../lib/supabaseAdmin.js';
 import { REPORTS } from '../lib/reportMap.js';
+import { lastCompleteDay } from '../lib/reportingPeriod.js';
 import { extractRows } from '../lib/sitelink.js';
 import { runRebuildPayload } from '../lib/rebuildPayload.js';
 
@@ -93,7 +94,9 @@ for (const r of idRows) {
     // SiteLink's end bound is exclusive. Otherwise a reparse could keep reinforcing missing-last-day
     // behaviour in any parser that uses start/end to trim raw rows.
     const closedMonthEndExclusive = new Date(y, m, 1);
-    const endDate = isCurrentMonth ? now : closedMonthEndExclusive;
+    // Current-month reparses must honor the same represented-business-day cap as the live portal:
+    // the last complete day in London, never today's partial intraday data.
+    const endDate = isCurrentMonth ? lastCompleteDay(now) : closedMonthEndExclusive;
 
     // One small SELECT per row instead of one big one up front (see comment above) — the whole point
     // of the fix, so a heavy/degraded DB fails (and retries) one row at a time, not all-or-nothing.

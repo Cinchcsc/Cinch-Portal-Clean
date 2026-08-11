@@ -23,6 +23,8 @@ create table if not exists raw_report (
   unique (site_code, month, report)
 );
 create index if not exists raw_report_lookup on raw_report (report, month);
+create index if not exists raw_report_report_month_id on raw_report (report, month, id);
+create index if not exists raw_report_month_pulled_at on raw_report (month, pulled_at desc);
 
 -- ADDED 7 Jul 2026: stores the untouched SiteLink SOAP response (before extractRows()'s "biggest
 -- table wins" pick and before reportMap.js's parse()), alongside the already-parsed `data` column.
@@ -41,6 +43,10 @@ create table if not exists portal_payload (
   payload jsonb not null,
   constraint single_row check (id = 1)
 );
+alter table portal_payload add column if not exists current_month text;
+alter table portal_payload add column if not exists current_slice jsonb;
+alter table portal_payload add column if not exists build_version text;
+alter table portal_payload add column if not exists current_month_slice_version text;
 
 create table if not exists refresh_log (
   id bigserial primary key,
@@ -53,6 +59,8 @@ create table if not exists refresh_log (
 -- Snapshot pull. Both share ONE lock (see lib/pullLock.js) since they hit the same SiteLink account —
 -- existing rows all default to 'pull', which is correct, they're all from the main pull.
 alter table refresh_log add column if not exists kind text not null default 'pull';
+create index if not exists refresh_log_status_started_at on refresh_log (status, started_at desc);
+create index if not exists refresh_log_started_at on refresh_log (started_at desc);
 
 -- ADDED 9 Jul 2026: Autobill Conversion cross-references a month's move-ins against RentRoll's
 -- autobill set, but RentRoll is a live "today only" snapshot (SiteLink has no true historical "as of"

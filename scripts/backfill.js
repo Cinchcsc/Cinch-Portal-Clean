@@ -10,7 +10,7 @@
 import { admin } from '../lib/supabaseAdmin.js';
 import { pullReport, REPORTS } from '../lib/reportMap.js';
 import { buildPayload } from '../lib/buildPayload.js';
-import { normalizePortalPayloadForStorage } from '../lib/portalPayload.js';
+import { writePortalPayload } from '../lib/portalPayload.js';
 
 const MONTHS = Number(process.argv[2] || process.env.BACKFILL_MONTHS || 36);
 const reportKeys = (process.env.BACKFILL_REPORTS || Object.keys(REPORTS).join(','))
@@ -105,7 +105,7 @@ try {
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const payload = await buildPayload(currentMonthStart, prevMonthStart);
-  await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload: normalizePortalPayloadForStorage(payload) });
+  await writePortalPayload(payload, { generatedAt: new Date().toISOString() });
   console.log(`Done. Payload now spans ${payload.months?.length || '?'} months.`);
 } catch (e) { console.error('Payload rebuild failed (data is saved; run `npm run rebuild`):', e.message); }
 process.exit(fail > ok ? 1 : 0);

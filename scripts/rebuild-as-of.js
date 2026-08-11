@@ -13,7 +13,7 @@
 // Example: node --env-file=.env scripts/rebuild-as-of.js 2026-06
 import { admin } from '../lib/supabaseAdmin.js';
 import { buildPayload } from '../lib/buildPayload.js';
-import { normalizePortalPayloadForStorage } from '../lib/portalPayload.js';
+import { writePortalPayload } from '../lib/portalPayload.js';
 
 const monthArg = process.argv[2] || '2026-06';
 const [y, m] = monthArg.split('-').map(Number);
@@ -21,8 +21,12 @@ const cur = new Date(y, m - 1, 1);        // pinned "current" month (June)
 const prev = new Date(y, m - 2, 1);       // its own previous complete month (May) — drives MoM deltas
 
 const payload = await buildPayload(cur, prev);
-const { error } = await admin.from('portal_payload').upsert({ id: 1, generated_at: new Date().toISOString(), payload: normalizePortalPayloadForStorage(payload) });
-if (error) { console.error('rebuild-as-of failed:', error.message); process.exit(1); }
+try {
+  await writePortalPayload(payload, { generatedAt: new Date().toISOString() });
+} catch (error) {
+  console.error('rebuild-as-of failed:', error.message);
+  process.exit(1);
+}
 console.log(`Payload pinned to ${monthArg} — ${payload.months.length} months stored, ${payload.sites.length} sites, current_month=${payload.current_month}.`);
 console.log('NOTE: every widget (including the normally-live ones) now shows this month. Run `npm run rebuild` to go back to live current-month behavior.');
 process.exit(0);

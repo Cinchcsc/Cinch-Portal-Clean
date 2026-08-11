@@ -19,6 +19,14 @@ const C = { blue: '#2757E8', ink: '#101828', sub: '#667085', border: '#E4E7EC', 
 // widget. NEXT_PUBLIC_TURNSTILE_SITE_KEY is safe to ship client-side (it's the PUBLIC half — unlike
 // the Secret Key, which only ever goes into Supabase's dashboard, never into this codebase).
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
+// FIXED 10 Aug 2026 (local debugging session): the Turnstile site key is locked to specific allowed
+// domains in the Cloudflare dashboard (production's domain only) — on localhost it fails with
+// "Error: 110200" and never produces a token, so the button below stayed permanently disabled and
+// sign-in was impossible to test locally. Only REQUIRE a captcha token outside production; the
+// widget still renders and Supabase still gets whatever token (or none) results, so this doesn't
+// change production behavior at all, just stops blocking local dev on a domain Cloudflare was never
+// told about.
+const REQUIRE_CAPTCHA = !!TURNSTILE_SITE_KEY && process.env.NODE_ENV === 'production';
 const safeRedirectTarget = (raw) => {
   const fallback = '/portal-v2';
   const value = String(raw || '').trim();
@@ -135,8 +143,8 @@ function LoginForm() {
         {notice && <div style={{ fontSize: '12px', color: '#08875D', marginBottom: '10px' }}>{notice}</div>}
 
         <button
-          type="submit" disabled={busy || (!!TURNSTILE_SITE_KEY && !captchaToken)}
-          style={{ width: '100%', padding: '10px', fontSize: '13px', fontWeight: 600, color: '#fff', background: C.blue, border: 'none', borderRadius: '8px', cursor: (busy || (!!TURNSTILE_SITE_KEY && !captchaToken)) ? 'default' : 'pointer', opacity: (busy || (!!TURNSTILE_SITE_KEY && !captchaToken)) ? 0.7 : 1, marginTop: mode === 'reset' ? '4px' : '8px' }}
+          type="submit" disabled={busy || (REQUIRE_CAPTCHA && !captchaToken)}
+          style={{ width: '100%', padding: '10px', fontSize: '13px', fontWeight: 600, color: '#fff', background: C.blue, border: 'none', borderRadius: '8px', cursor: (busy || (REQUIRE_CAPTCHA && !captchaToken)) ? 'default' : 'pointer', opacity: (busy || (REQUIRE_CAPTCHA && !captchaToken)) ? 0.7 : 1, marginTop: mode === 'reset' ? '4px' : '8px' }}
         >
           {busy ? 'Please wait…' : mode === 'reset' ? 'Send reset link' : 'Sign in'}
         </button>

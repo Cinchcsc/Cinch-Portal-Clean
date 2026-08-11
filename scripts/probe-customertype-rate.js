@@ -21,6 +21,7 @@
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/probe-customertype-rate.js
 import { admin } from '../lib/supabaseAdmin.js';
 import { writeFileSync } from 'fs';
+import { decodePortalPayloadStorageValue } from '../lib/portalPayload.js';
 
 const now = new Date();
 const curMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
@@ -68,7 +69,7 @@ const { data: pr, error: prErr } = await admin
   .from('portal_payload').select('payload,generated_at').eq('id', 1)
   .order('generated_at', { ascending: false }).limit(1);
 let livePayload = pr?.[0]?.payload;
-if (typeof livePayload === 'string') { try { livePayload = JSON.parse(livePayload); } catch { livePayload = null; } }
+livePayload = decodePortalPayloadStorageValue(livePayload);
 const live = livePayload?.totals?.customerType || null;
 
 const out = {

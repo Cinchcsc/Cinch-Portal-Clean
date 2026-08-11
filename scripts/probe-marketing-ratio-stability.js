@@ -42,13 +42,17 @@ if (miss.length) { console.error('Missing env:', miss.join(', ')); process.exit(
 
 const str = (v) => String(v ?? '').trim();
 const yes = (v) => v === true || v === 1 || /^(1|true|yes|y)$/i.test(String(v ?? ''));
-const dayOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const inWindow = (dateVal, start, end) => {
-  if (!dateVal) return false;
-  const d = new Date(dateVal);
-  if (Number.isNaN(d.getTime())) return false;
-  const day = dayOnly(d);
-  return day >= dayOnly(start) && day <= dayOnly(end);
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const sourceDayKey = (v) => {
+  const raw = str(v);
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : ymd(d);
+};
+const inSourceDayWindow = (dateVal, start, end) => {
+  const key = sourceDayKey(dateVal);
+  return !!key && key >= ymd(start) && key <= ymd(end);
 };
 const isVisibleMarketingChannel = (label) => {
   const k = str(label).toLowerCase();
@@ -76,7 +80,7 @@ async function countsForSite(site, start, end) {
   const activityRows = extractNamedTable(raw, 'Activity');
   let base = 0, convertedFlag1Only = 0, convertedOR = 0;
   for (const r of activityRows) {
-    if (!inWindow(r.dPlaced, start, end)) continue;
+    if (!inSourceDayWindow(r.dPlaced, start, end)) continue;
     if (!isVisibleMarketingChannel(r.sInquiryType)) continue;
     base++;
     const flag1 = yes(r.iInquiryConvertedToLease);

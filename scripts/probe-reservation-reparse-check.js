@@ -26,14 +26,18 @@ import { admin } from '../lib/supabaseAdmin.js';
 import { extractNamedTable } from '../lib/sitelink.js';
 
 const str = (v) => String(v ?? '').trim();
-const dayOnly = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const sourceDayKey = (v) => {
+  const raw = str(v);
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : ymd(d);
+};
 const isReservationStage = (r) => str(r.sRentalType).toLowerCase() === 'reservation';
-const inWindow = (dateVal, start, end) => {
-  if (!dateVal) return false;
-  const d = new Date(dateVal);
-  if (Number.isNaN(d.getTime())) return false;
-  const day = dayOnly(d);
-  return day >= dayOnly(start) && day <= dayOnly(end);
+const inSourceDayWindow = (dateVal, start, end) => {
+  const key = sourceDayKey(dateVal);
+  return !!key && key >= ymd(start) && key <= ymd(end);
 };
 
 const juneStart = new Date(2026, 5, 1), juneEnd = new Date(2026, 5, 30);
@@ -55,7 +59,7 @@ for (const r of rows) {
   const activityRows = extractNamedTable(r.raw_response, 'Activity');
   let phone = 0, walkin = 0, web = 0, email = 0, resCurrent = 0, resProposed = 0;
   for (const row of activityRows) {
-    const placedInWindow = inWindow(row.dPlaced, juneStart, juneEnd);
+    const placedInWindow = inSourceDayWindow(row.dPlaced, juneStart, juneEnd);
     if (placedInWindow) {
       const k = str(row.sInquiryType).toLowerCase();
       if (k === 'phone') phone++;
@@ -64,7 +68,7 @@ for (const r of rows) {
       else if (k === 'email') email++;
       if (isReservationStage(row)) resCurrent++;
     }
-    if (isReservationStage(row) && inWindow(row.dConverted_ToRsv, juneStart, juneEnd)) resProposed++;
+    if (isReservationStage(row) && inSourceDayWindow(row.dConverted_ToRsv, juneStart, juneEnd)) resProposed++;
   }
   const enquiries = phone + walkin + web + email;
   totalEnq += enquiries; totalResCurrent += resCurrent; totalResProposed += resProposed;

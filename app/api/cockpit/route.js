@@ -2,7 +2,7 @@
 // pattern — reads already-stored data, no live SiteLink calls (those only happen in
 // lib/pullCockpit.js via `npm run pull:cockpit` or GET /api/pull-cockpit).
 import { NextResponse } from 'next/server';
-import { readCockpitData } from '../../../lib/cockpitData.js';
+import { readCockpitData, readLatestCockpitRefreshAt } from '../../../lib/cockpitData.js';
 import { reportingCurrentMonthStart } from '../../../lib/reportingPeriod.js';
 
 export const runtime = 'nodejs';
@@ -61,7 +61,10 @@ export async function GET(req) {
         return NextResponse.json({ configured: false, complete: false, error: `Future months are not available yet; latest reportable month is ${latestMonth}` }, { status: 400, headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });
       }
     }
-    const data = await readCockpitData(month);
+    const [data, lastRefreshAt] = await Promise.all([
+      readCockpitData(month),
+      readLatestCockpitRefreshAt().catch(() => null),
+    ]);
     const curve = normalizeCockpitCurve(data?.curve);
     const configured = curve.length > 0;
     if (!configured) {
@@ -73,11 +76,14 @@ export async function GET(req) {
           curve: [],
           avgDailyRate: data?.avgDailyRate == null ? null : Number(data.avgDailyRate),
           generated_at: data?.generated_at || null,
+          last_refresh_at: lastRefreshAt,
+          synced_portal_generated_at: data?.synced_portal_generated_at || null,
           closedMonthsUsed: Number(data?.closedMonthsUsed) || 0,
         },
         { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } },
       );
     }
+    const cacheHealthyCockpit = data?.complete !== false;
     return NextResponse.json({
       configured: true,
       complete: data?.complete !== false,
@@ -85,8 +91,10 @@ export async function GET(req) {
       curve,
       avgDailyRate: data?.avgDailyRate == null ? null : Number(data.avgDailyRate),
       generated_at: data?.generated_at || null,
+      last_refresh_at: lastRefreshAt,
+      synced_portal_generated_at: data?.synced_portal_generated_at || null,
       closedMonthsUsed: Number(data?.closedMonthsUsed) || 0,
-    }, { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });
+    }, { headers: { 'Cache-Control': cacheHealthyCockpit ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } });
   } catch (error) {
     return NextResponse.json({ configured: false, complete: false, error: error.message }, { status: 500, headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });
   }

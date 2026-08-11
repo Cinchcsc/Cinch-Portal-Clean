@@ -3,13 +3,13 @@
 // numbers can be checked against the actual UI rather than the stored portal_payload row alone.
 // npm run pull
 import { runPull } from '../lib/pull.js';
-import { readPortalPayloadFreshCurrentMonth } from '../lib/portalPayload.js';
+import { readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
 
 const result = await runPull();
 console.log('PULL RESULT:', JSON.stringify(result, null, 2));
 
 try {
-  const fresh = await readPortalPayloadFreshCurrentMonth();
+  const fresh = await readPortalPayloadFreshCurrentMonthStable();
   const p = fresh?.payload;
   if (p?.sites?.length) {
     console.log(`\nReconciliation — ${p.current_month} · generated ${fresh?.generatedAt || p.generated_at || 'unknown'} · Rate/ft² annualised (compare SS rate to your live portal):`);

@@ -5,7 +5,7 @@
 // its own numbers client-side.
 import { NextResponse } from 'next/server';
 import { admin } from '../../../lib/supabaseAdmin.js';
-import { readPortalPayload, readPortalPayloadFreshCurrentMonth, summarizeHistoricalMonthlyCoverage } from '../../../lib/portalPayload.js';
+import { readPortalPayload, readPortalPayloadFreshCurrentMonthStable, summarizeHistoricalMonthlyCoverage } from '../../../lib/portalPayload.js';
 import { aggregateTotals, buildPayloadRange } from '../../../lib/buildPayload.js';
 import { reportingCurrentMonthStart } from '../../../lib/reportingPeriod.js';
 import { extractNamedTable } from '../../../lib/sitelink.js';
@@ -242,7 +242,7 @@ export async function GET(request) {
       // current-month raw_response scan here was still exposing picker clicks to intermittent
       // statement-timeout / 52x failures for no user-visible benefit.
       if (from === realCurrentMonth && to === realCurrentMonth) {
-        const result = await readPortalPayloadFreshCurrentMonth();
+        const result = await readPortalPayloadFreshCurrentMonthStable();
         const payload = slicePortfolioPayloadToRange(result?.payload, from, to, { includeMonthly });
         if (!payload) {
           return NextResponse.json(
@@ -251,9 +251,16 @@ export async function GET(request) {
           );
         }
         const completeness = summarizePortfolioCompleteness(payload, { monthlyDetailAvailable: includeMonthly });
+        const cacheHealthyCurrentSlice = result?.freshness_degraded !== true && completeness.complete !== false;
         return NextResponse.json(
-          { configured: true, ...completeness, ...payload },
-          { headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } },
+          {
+            configured: true,
+            freshness_degraded: result?.freshness_degraded === true,
+            freshness_reason: result?.freshness_reason || null,
+            ...completeness,
+            ...payload,
+          },
+          { headers: { 'Cache-Control': cacheHealthyCurrentSlice ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } },
         );
       }
       const payload = normalizePortfolioPayload(await buildPayloadRange(fromStart, toStart, { includeMonthly }));
@@ -277,9 +284,10 @@ export async function GET(request) {
       // the rebuild/pull crons, and the auth middleware still gates every request regardless of
       // whether Vercel's edge serves this from cache or hits the route itself.
       const touchesCurrentMonth = to === realCurrentMonth;
+      const cacheClosedHistoricalRange = !touchesCurrentMonth && completeness.complete !== false;
       return NextResponse.json(
         { configured: true, ...completeness, ...payload },
-        { headers: { 'Cache-Control': touchesCurrentMonth ? AUTHENTICATED_NO_STORE : 'public, s-maxage=120, stale-while-revalidate=600' } },
+        { headers: { 'Cache-Control': cacheClosedHistoricalRange ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } },
       );
     }
 
@@ -290,7 +298,7 @@ export async function GET(request) {
     // `statement timeout` / stale-morning behavior. Current-month page data already comes from the
     // separate live buildPayloadRange() path above, so user reads should not own rebuild freshness.
     // Scheduled /api/rebuild-payload crons own keeping portal_payload fresh instead.
-    const result = await readPortalPayloadFreshCurrentMonth();
+    const result = await readPortalPayloadFreshCurrentMonthStable();
     if (!result?.payload) {
       return NextResponse.json(
         { configured: false, complete: false, missing_sites: [], incomplete_months: [], generated_at: null, current_month: null, months: [], sites: [], totals: null, history: [], monthly: {} },
@@ -312,9 +320,21 @@ export async function GET(request) {
     // first added on 16 Jul 2026. readPortalPayloadFreshCurrentMonth() already merges a live current-
     // month slice in before this point, so the cached response is never staler than that merge — this
     // cache only avoids re-paying for that same work on every repeat view within the window.
+    //
+    // Continued audit hardening (10 Aug 2026): only cache the HEALTHY default payload. If the read
+    // path explicitly says freshness is degraded or the stored history is incomplete, edge-caching
+    // that partial fallback can make a transient incident look like a sticky data bug even after the
+    // backend recovers moments later. Healthy responses still keep the low-egress cache win.
+    const cacheHealthyDefaultPayload = result?.freshness_degraded !== true && completeness.complete !== false;
     return NextResponse.json(
-      { configured: true, ...completeness, ...payload },
-      { headers: { 'Cache-Control': 'public, s-maxage=120, stale-while-revalidate=600' } },
+      {
+        configured: true,
+        freshness_degraded: result?.freshness_degraded === true,
+        freshness_reason: result?.freshness_reason || null,
+        ...completeness,
+        ...payload,
+      },
+      { headers: { 'Cache-Control': cacheHealthyDefaultPayload ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } },
     );
   } catch (error) {
     return NextResponse.json({ configured: false, complete: false, missing_sites: [], incomplete_months: [], error: error.message }, { status: 500, headers: { 'Cache-Control': AUTHENTICATED_NO_STORE } });

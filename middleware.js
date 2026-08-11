@@ -1,7 +1,9 @@
 // Task #202 (13 Jul 2026, Michael: "password protect the site so each individual puts their own
 // unique email and password into it"). Gates every page/API route behind a real Supabase Auth
 // session, EXCEPT:
-//   - /api/pull, /api/pull-snapshot, /api/pull-cockpit, and /api/rebuild-payload — Vercel's own cron
+//   - The cron/API refresh routes — including the scheduled retry and hour-suffixed aliases Vercel
+//     actually hits (`/api/pull-snapshot-retry`, `/api/pull-cockpit-retry`,
+//     `/api/pull-floor-occupancy-retry`, `/api/rebuild-payload-05/-09/-14/-15`) — Vercel's own cron
 //     hits these directly with no browser/cookies at all; they're already protected by their own
 //     CRON_SECRET bearer-token check (see those route.js files). Gating them here too would just
 //     break the daily auto-update.
@@ -32,7 +34,20 @@ import { NextResponse } from 'next/server';
 const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '');
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const CRON_PATHS = ['/api/pull', '/api/pull-snapshot', '/api/pull-cockpit', '/api/rebuild-payload', '/api/pull-floor-occupancy'];
+const CRON_PATHS = [
+  '/api/pull',
+  '/api/pull-snapshot',
+  '/api/pull-snapshot-retry',
+  '/api/pull-cockpit',
+  '/api/pull-cockpit-retry',
+  '/api/pull-floor-occupancy',
+  '/api/pull-floor-occupancy-retry',
+  '/api/rebuild-payload',
+  '/api/rebuild-payload-05',
+  '/api/rebuild-payload-09',
+  '/api/rebuild-payload-14',
+  '/api/rebuild-payload-15',
+];
 const PUBLIC_PATHS = ['/login', '/auth/confirm'];
 const pathMatches = (pathname, base) => pathname === base || pathname.startsWith(`${base}/`);
 

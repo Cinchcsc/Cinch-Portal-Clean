@@ -11,10 +11,10 @@
 // spreadsheet/Go-Live Plan) so it doesn't need to be pasted into chat.
 //
 // Run: cd cinch-portal-clean && node --env-file=.env scripts/export-reconciliation-data.js
-import { readPortalPayloadFreshCurrentMonth } from '../lib/portalPayload.js';
+import { readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
 import { writeFileSync } from 'fs';
 
-const result = await readPortalPayloadFreshCurrentMonth();
+const result = await readPortalPayloadFreshCurrentMonthStable();
 const payload = result?.payload;
 if (!payload) { console.error('Fetch failed: no usable portal payload'); process.exit(1); }
 const rows = payload.sites.map((s) => ({
