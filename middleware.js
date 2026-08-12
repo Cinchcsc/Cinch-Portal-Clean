@@ -113,6 +113,22 @@ export async function middleware(request) {
         setTimeout(() => reject(new Error(`supabase.auth.getUser() timed out after ${AUTH_CHECK_TIMEOUT_MS}ms`)), AUTH_CHECK_TIMEOUT_MS);
       }),
     ]);
+    // ADDED 12 Aug 2026 (Michael: live "Your session could not be verified" on a plain page load with
+    // NO bearer token at all, i.e. this was the single cookie-based getUser() call below timing out,
+    // not the bearer path) — one retry rides out the same class of transient Supabase Auth slowness
+    // already handled everywhere else in this codebase (reparse-report.js's withRetry,
+    // runRebuildPayload's retry-with-backoff, task #330) instead of bouncing a genuinely signed-in
+    // user to /login on the first slow response. Only the cookie path retries, not the bearer path,
+    // to keep worst-case latency bounded: this tops out at ~16s, the same combined worst case the
+    // bearer+cookie double-attempt already had before today, which hasn't itself caused a new
+    // MIDDLEWARE_INVOCATION_TIMEOUT incident since the 10 Aug fix.
+    const withAuthRetry = async (fn, attempts = 2) => {
+      let lastErr;
+      for (let i = 0; i < attempts; i++) {
+        try { return await withAuthTimeout(fn()); } catch (err) { lastErr = err; }
+      }
+      throw lastErr;
+    };
     let data = null;
     if (bearerToken) {
       const bearerResult = await withAuthTimeout(supabase.auth.getUser(bearerToken));
@@ -120,7 +136,7 @@ export async function middleware(request) {
       user = data?.user || null;
     }
     if (!user) {
-      const cookieResult = await withAuthTimeout(supabase.auth.getUser());
+      const cookieResult = await withAuthRetry(() => supabase.auth.getUser());
       data = cookieResult?.data || null;
       user = data?.user || null;
     }
