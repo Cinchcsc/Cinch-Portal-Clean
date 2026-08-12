@@ -6014,7 +6014,7 @@ export default function PortalV2Page() {
       };
     }
     return {
-      label: 'Stored data',
+      label: 'Live data',
       title: 'Stored portal data for completed periods, refreshed by the daily pull. Not real-time intraday activity.',
       fg: '#08875D',
       bg: '#E7F6EF',
