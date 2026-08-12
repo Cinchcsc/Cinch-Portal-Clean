@@ -5,7 +5,14 @@
 // direct buildPayload()+upsert flow.
 import { runRebuildPayload } from '../lib/rebuildPayload.js';
 
-const result = await runRebuildPayload({ forceHistoricalRepair: true, skipLockCheck: true });
+const triggerLabel = process.argv.slice(2)
+  .find((arg) => arg.startsWith('--trigger-label='))
+  ?.slice('--trigger-label='.length) || process.env.PORTAL_TRIGGER_LABEL || 'cli:npm-run-rebuild';
+const result = await runRebuildPayload({
+  forceHistoricalRepair: true,
+  skipLockCheck: true,
+  triggerLabel,
+});
 if (result.status === 'error') {
   console.error(`rebuild failed: ${result.message || 'unknown error'}`);
   process.exit(1);

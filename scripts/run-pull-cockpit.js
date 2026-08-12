@@ -3,6 +3,10 @@
 // npm run pull:cockpit
 import { runCockpitPull } from '../lib/pullCockpit.js';
 
-const result = await runCockpitPull();
+const args = new Set(process.argv.slice(2));
+const result = await runCockpitPull({
+  triggerLabel: 'cli:npm-run-pull-cockpit',
+  skipLockCheck: args.has('--skip-lock-check'),
+});
 console.log('COCKPIT PULL RESULT:', JSON.stringify(result, null, 2));
 process.exit(result.status === 'error' ? 1 : 0);

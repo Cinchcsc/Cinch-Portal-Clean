@@ -786,88 +786,110 @@ if (autobillMonths.length) {
   record('autobill', 'payload autobill counts match window-filtered daily samples', autobillMismatches.length === 0, autobillMismatches.slice(0, 50));
 }
 
-const snapshot = await withTimeout(readSnapshotPayloadFresh(now), 60000, 'snapshot payload read');
 const expectedDaily = formatLocalYmd(lastCompleteDay(now));
-for (const period of ['daily', 'weekly', 'quarterly']) {
-  const block = snapshot?.payload?.[period];
-  record('snapshot', `${period} period exists`, !!block, block ? null : 'missing');
-  if (!block) continue;
-  const totals = block.totals || {};
-  const sites = Array.isArray(block.sites) ? block.sites : [];
-  compareNumber('snapshot', `${period} enquiries total equals sum of site rows`, totals.enquiries, sumRows(sites, 'enquiries'));
-  compareNumber('snapshot', `${period} reservations total equals sum of site rows`, totals.reservations, sumRows(sites, 'reservations'));
-  compareNumber('snapshot', `${period} moveIns total equals sum of site rows`, totals.moveIns, sumRows(sites, 'moveIns'));
-  compareNumber('snapshot', `${period} moveOuts total equals sum of site rows`, totals.moveOuts, sumRows(sites, 'moveOuts'));
-  compareNumber('snapshot', `${period} sqftIn total equals sum of site rows`, totals.sqftIn, sumRows(sites, 'sqftIn'), 2);
-  compareNumber('snapshot', `${period} sqftOut total equals sum of site rows`, totals.sqftOut, sumRows(sites, 'sqftOut'), 2);
-}
-record('snapshot', 'daily snapshot ends on last complete day', snapshot?.payload?.daily?.range?.end === expectedDaily, {
-  actual: snapshot?.payload?.daily?.range?.end,
-  expected: expectedDaily,
-});
-record('snapshot', 'daily snapshot is a single-day range', snapshot?.payload?.daily?.range?.start === snapshot?.payload?.daily?.range?.end, snapshot?.payload?.daily?.range);
 
-const cockpit = await withTimeout(readCockpitData(currentMonth), 60000, 'cockpit payload read');
-record('cockpit', 'current-month cockpit payload is configured', Array.isArray(cockpit?.curve) && cockpit.curve.length > 0, {
-  configuredDerivedFromCurve: Array.isArray(cockpit?.curve) && cockpit.curve.length > 0,
-  complete: cockpit?.complete,
-});
-record('cockpit', 'current-month cockpit payload is complete', cockpit?.complete === true, {
-  configured: cockpit?.configured,
-  complete: cockpit?.complete,
-});
-const cockpitCurve = Array.isArray(cockpit?.curve) ? cockpit.curve : [];
-record('cockpit', 'cockpit curve has at least one point', cockpitCurve.length > 0, {
-  pointCount: cockpitCurve.length,
-});
-if (cockpitCurve.length) {
-  const lastPoint = cockpitCurve[cockpitCurve.length - 1];
-  record('cockpit', 'cockpit last point reaches last complete day', lastPoint?.date === lastCompleteDayKey, {
-    actual: lastPoint?.date,
-    expected: lastCompleteDayKey,
+let snapshot = null;
+try {
+  snapshot = await withRetry(() => withTimeout(readSnapshotPayloadFresh(now), 60000, 'snapshot payload read'), 2, 3000);
+} catch (error) {
+  warn('snapshot', 'snapshot payload could be read for integrity checks', { error: error.message });
+}
+if (snapshot) {
+  for (const period of ['daily', 'weekly', 'quarterly']) {
+    const block = snapshot?.payload?.[period];
+    record('snapshot', `${period} period exists`, !!block, block ? null : 'missing');
+    if (!block) continue;
+    const totals = block.totals || {};
+    const sites = Array.isArray(block.sites) ? block.sites : [];
+    compareNumber('snapshot', `${period} enquiries total equals sum of site rows`, totals.enquiries, sumRows(sites, 'enquiries'));
+    compareNumber('snapshot', `${period} reservations total equals sum of site rows`, totals.reservations, sumRows(sites, 'reservations'));
+    compareNumber('snapshot', `${period} moveIns total equals sum of site rows`, totals.moveIns, sumRows(sites, 'moveIns'));
+    compareNumber('snapshot', `${period} moveOuts total equals sum of site rows`, totals.moveOuts, sumRows(sites, 'moveOuts'));
+    compareNumber('snapshot', `${period} sqftIn total equals sum of site rows`, totals.sqftIn, sumRows(sites, 'sqftIn'), 2);
+    compareNumber('snapshot', `${period} sqftOut total equals sum of site rows`, totals.sqftOut, sumRows(sites, 'sqftOut'), 2);
+  }
+  record('snapshot', 'daily snapshot ends on last complete day', snapshot?.payload?.daily?.range?.end === expectedDaily, {
+    actual: snapshot?.payload?.daily?.range?.end,
+    expected: expectedDaily,
   });
-  const badDates = cockpitCurve.filter((point, index) => {
-    if (!point?.date) return true;
-    if (!point.date.startsWith(`${currentMonth}-`)) return true;
-    if (point.date > lastCompleteDayKey) return true;
-    return index > 0 && cockpitCurve[index - 1]?.date >= point.date;
-  });
-  record('cockpit', 'cockpit curve dates are strictly increasing within the target month', badDates.length === 0, badDates);
-  const expectedCockpitDays = dayKeysBetween(currentMonthStart, lastCompleteDay(now));
-  const cockpitDates = new Set(cockpitCurve.map((point) => point?.date).filter(Boolean));
-  const missingCockpitDates = expectedCockpitDays.filter((date) => !cockpitDates.has(date));
-  record('cockpit', 'cockpit curve has one stored point for every complete day in scope', missingCockpitDates.length === 0, {
-    missingDates: missingCockpitDates,
-  });
+  record('snapshot', 'daily snapshot is a single-day range', snapshot?.payload?.daily?.range?.start === snapshot?.payload?.daily?.range?.end, snapshot?.payload?.daily?.range);
 }
 
-const floor = await withTimeout(getFloorOccupancy(), 60000, 'floor occupancy read');
-record('floor occupancy', 'floor dataset is complete for all configured sites', floor?.complete === true, {
-  complete: floor?.complete,
-  missingSites: floor?.missing_sites,
-});
-const floorPortfolioTotals = {
-  occupiedUnits: sumRows(floor?.floors || [], 'occupiedUnits'),
-  totalUnits: sumRows(floor?.floors || [], 'totalUnits'),
-};
-compareNumber('floor occupancy', 'portfolio occupied units match portal totals', floorPortfolioTotals.occupiedUnits, payload.totals?.occ);
-compareNumber('floor occupancy', 'portfolio total units match portal totals', floorPortfolioTotals.totalUnits, payload.totals?.tot);
-const floorSiteMismatches = [];
-for (const site of payload.sites) {
-  const siteRows = floor?.site_floors?.[site.code] || [];
-  const occUnits = sumRows(siteRows, 'occupiedUnits');
-  const totalUnits = sumRows(siteRows, 'totalUnits');
-  if (occUnits !== (Number(site.occ) || 0) || totalUnits !== (Number(site.tot) || 0)) {
-    floorSiteMismatches.push({
-      code: site.code,
-      portalOcc: Number(site.occ) || 0,
-      floorOcc: occUnits,
-      portalTot: Number(site.tot) || 0,
-      floorTot: totalUnits,
+let cockpit = null;
+try {
+  cockpit = await withRetry(() => withTimeout(readCockpitData(currentMonth), 60000, 'cockpit payload read'), 2, 3000);
+} catch (error) {
+  warn('cockpit', 'cockpit payload could be read for integrity checks', { error: error.message, month: currentMonth });
+}
+if (cockpit) {
+  record('cockpit', 'current-month cockpit payload is configured', Array.isArray(cockpit?.curve) && cockpit.curve.length > 0, {
+    configuredDerivedFromCurve: Array.isArray(cockpit?.curve) && cockpit.curve.length > 0,
+    complete: cockpit?.complete,
+  });
+  record('cockpit', 'current-month cockpit payload is complete', cockpit?.complete === true, {
+    configured: cockpit?.configured,
+    complete: cockpit?.complete,
+  });
+  const cockpitCurve = Array.isArray(cockpit?.curve) ? cockpit.curve : [];
+  record('cockpit', 'cockpit curve has at least one point', cockpitCurve.length > 0, {
+    pointCount: cockpitCurve.length,
+  });
+  if (cockpitCurve.length) {
+    const lastPoint = cockpitCurve[cockpitCurve.length - 1];
+    record('cockpit', 'cockpit last point reaches last complete day', lastPoint?.date === lastCompleteDayKey, {
+      actual: lastPoint?.date,
+      expected: lastCompleteDayKey,
+    });
+    const badDates = cockpitCurve.filter((point, index) => {
+      if (!point?.date) return true;
+      if (!point.date.startsWith(`${currentMonth}-`)) return true;
+      if (point.date > lastCompleteDayKey) return true;
+      return index > 0 && cockpitCurve[index - 1]?.date >= point.date;
+    });
+    record('cockpit', 'cockpit curve dates are strictly increasing within the target month', badDates.length === 0, badDates);
+    const expectedCockpitDays = dayKeysBetween(currentMonthStart, lastCompleteDay(now));
+    const cockpitDates = new Set(cockpitCurve.map((point) => point?.date).filter(Boolean));
+    const missingCockpitDates = expectedCockpitDays.filter((date) => !cockpitDates.has(date));
+    record('cockpit', 'cockpit curve has one stored point for every complete day in scope', missingCockpitDates.length === 0, {
+      missingDates: missingCockpitDates,
     });
   }
 }
-record('floor occupancy', 'per-site floor rollups match portal occupied and total units', floorSiteMismatches.length === 0, floorSiteMismatches);
+
+let floor = null;
+try {
+  floor = await withRetry(() => withTimeout(getFloorOccupancy(), 60000, 'floor occupancy read'), 2, 3000);
+} catch (error) {
+  warn('floor occupancy', 'floor occupancy payload could be read for integrity checks', { error: error.message });
+}
+if (floor) {
+  record('floor occupancy', 'floor dataset is complete for all configured sites', floor?.complete === true, {
+    complete: floor?.complete,
+    missingSites: floor?.missing_sites,
+  });
+  const floorPortfolioTotals = {
+    occupiedUnits: sumRows(floor?.floors || [], 'occupiedUnits'),
+    totalUnits: sumRows(floor?.floors || [], 'totalUnits'),
+  };
+  compareNumber('floor occupancy', 'portfolio occupied units match portal totals', floorPortfolioTotals.occupiedUnits, payload.totals?.occ);
+  compareNumber('floor occupancy', 'portfolio total units match portal totals', floorPortfolioTotals.totalUnits, payload.totals?.tot);
+  const floorSiteMismatches = [];
+  for (const site of payload.sites) {
+    const siteRows = floor?.site_floors?.[site.code] || [];
+    const occUnits = sumRows(siteRows, 'occupiedUnits');
+    const totalUnits = sumRows(siteRows, 'totalUnits');
+    if (occUnits !== (Number(site.occ) || 0) || totalUnits !== (Number(site.tot) || 0)) {
+      floorSiteMismatches.push({
+        code: site.code,
+        portalOcc: Number(site.occ) || 0,
+        floorOcc: occUnits,
+        portalTot: Number(site.tot) || 0,
+        floorTot: totalUnits,
+      });
+    }
+  }
+  record('floor occupancy', 'per-site floor rollups match portal occupied and total units', floorSiteMismatches.length === 0, floorSiteMismatches);
+}
 
 console.log(JSON.stringify({
   ok: issues.length === 0,

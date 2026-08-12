@@ -2,6 +2,10 @@
 // key) so the KPI page's Occupancy by Floor widget can be refreshed outside the cron as needed.
 import { runFloorOccupancyPull } from '../lib/pullFloorOccupancy.js';
 
-const result = await runFloorOccupancyPull();
+const args = new Set(process.argv.slice(2));
+const result = await runFloorOccupancyPull({
+  triggerLabel: 'cli:npm-run-pull-floor-occupancy',
+  skipLockCheck: args.has('--skip-lock-check'),
+});
 console.log('FLOOR OCCUPANCY PULL RESULT:', JSON.stringify(result, null, 2));
 process.exit(result.status === 'error' ? 1 : 0);

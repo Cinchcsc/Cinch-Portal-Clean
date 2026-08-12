@@ -47,7 +47,8 @@ export async function GET(request) {
     const sp = new URL(request.url).searchParams;
     const triggerLabel = (() => {
       const u = new URL(request.url);
-      return `${u.pathname}${u.search || ''}`;
+      const ua = (request.headers.get('user-agent') || 'unknown').replace(/\s+/g, ' ').trim();
+      return `${u.pathname}${u.search || ''} ua=${ua}`;
     })();
     const full = sp.get('full') === '1';
     const custom = (sp.get('reports') || '').split(',').map(s => s.trim()).filter(Boolean);

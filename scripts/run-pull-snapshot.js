@@ -3,6 +3,10 @@
 // npm run pull:snapshot
 import { runSnapshotPull } from '../lib/pullSnapshot.js';
 
-const result = await runSnapshotPull();
+const args = new Set(process.argv.slice(2));
+const result = await runSnapshotPull({
+  triggerLabel: 'cli:npm-run-pull-snapshot',
+  skipLockCheck: args.has('--skip-lock-check'),
+});
 console.log('SNAPSHOT PULL RESULT:', JSON.stringify(result, null, 2));
 process.exit(result.status === 'error' ? 1 : 0);

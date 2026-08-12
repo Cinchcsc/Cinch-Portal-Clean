@@ -65,6 +65,12 @@ export async function GET(req) {
       readCockpitData(month),
       readLatestCockpitRefreshAt().catch(() => null),
     ]);
+    const effectiveLastRefreshAt = (() => {
+      const generatedAtMs = data?.generated_at ? new Date(data.generated_at).getTime() : 0;
+      const lastRefreshAtMs = lastRefreshAt ? new Date(lastRefreshAt).getTime() : 0;
+      if (generatedAtMs && (!lastRefreshAtMs || generatedAtMs > lastRefreshAtMs)) return data.generated_at;
+      return lastRefreshAt;
+    })();
     const curve = normalizeCockpitCurve(data?.curve);
     const configured = curve.length > 0;
     if (!configured) {
@@ -76,7 +82,7 @@ export async function GET(req) {
           curve: [],
           avgDailyRate: data?.avgDailyRate == null ? null : Number(data.avgDailyRate),
           generated_at: data?.generated_at || null,
-          last_refresh_at: lastRefreshAt,
+          last_refresh_at: effectiveLastRefreshAt,
           synced_portal_generated_at: data?.synced_portal_generated_at || null,
           closedMonthsUsed: Number(data?.closedMonthsUsed) || 0,
         },
@@ -91,7 +97,7 @@ export async function GET(req) {
       curve,
       avgDailyRate: data?.avgDailyRate == null ? null : Number(data.avgDailyRate),
       generated_at: data?.generated_at || null,
-      last_refresh_at: lastRefreshAt,
+      last_refresh_at: effectiveLastRefreshAt,
       synced_portal_generated_at: data?.synced_portal_generated_at || null,
       closedMonthsUsed: Number(data?.closedMonthsUsed) || 0,
     }, { headers: { 'Cache-Control': cacheHealthyCockpit ? 'public, s-maxage=120, stale-while-revalidate=600' : AUTHENTICATED_NO_STORE } });

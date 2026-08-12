@@ -64,7 +64,7 @@ try {
   if (latestLoggedSnapshotRefreshAt) {
     console.log(`latest successful snapshot refresh_log finish: ${latestLoggedSnapshotRefreshAt}`);
     if (snapshot.generatedAt && new Date(snapshot.generatedAt).getTime() > new Date(latestLoggedSnapshotRefreshAt).getTime()) {
-      console.log('note: snapshot_payload is newer than the latest logged snapshot pull, which means a read-time raw_report self-heal rewrote the stored row after the scheduled/manual snapshot job.');
+      console.log('note: snapshot_payload is newer than the latest logged snapshot pull, which can happen because a fresh raw_report self-heal rewrote the stored row or because the hardened snapshot cron completed without writing refresh_log first.');
     }
   }
   for (const period of ['daily', 'weekly', 'quarterly']) {

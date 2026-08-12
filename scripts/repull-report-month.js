@@ -70,6 +70,7 @@ const result = await runRebuildPayload({
   forceHistoricalRepair: isHistoricalMonth,
   repairMonths: isHistoricalMonth ? [monthArg] : [],
   skipLockCheck: true,
+  triggerLabel: `cli:repull-report-month:${reportKey}:${monthArg}`,
 });
 if (result.status !== 'ok') {
   console.error(`portal_payload rebuild failed: ${result.message || 'unknown error'}`);

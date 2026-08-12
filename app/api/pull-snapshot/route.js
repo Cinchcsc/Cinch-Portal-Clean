@@ -6,10 +6,10 @@
 import { NextResponse } from 'next/server';
 import { runSnapshotPull } from '../../../lib/pullSnapshot.js';
 
-export const runtime = 'nodejs';        // the SOAP client needs the Node runtime, not Edge
+export const runtime = 'nodejs';        // shared DB/service-role access stays on the Node runtime
 export const dynamic = 'force-dynamic';
-// 174 sequential SiteLink calls (3 periods x 2 reports x 29 sites) can take most of the available
-// function window, so keep the route on the full explicit budget.
+// Snapshot now rebuilds from stored raw_report rows, but keep the full explicit budget so transient
+// DB retry loops still have room to recover instead of truncating the morning refresh.
 export const maxDuration = 300;
 
 function statusCodeForJob(result) {
@@ -35,7 +35,10 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
     const u = new URL(request.url);
-    const result = await runSnapshotPull({ triggerLabel: `${u.pathname}${u.search || ''}` });
+    const result = await runSnapshotPull({
+      triggerLabel: `${u.pathname}${u.search || ''} ua=${(request.headers.get('user-agent') || 'unknown').replace(/\s+/g, ' ').trim()}`,
+      // Keep refresh_log parity with the payload write so scheduled snapshot runs remain auditable.
+    });
     return NextResponse.json(result, { status: statusCodeForJob(result) });
   } catch (e) {
     return NextResponse.json({ status: 'error', message: e.message }, { status: 500 });

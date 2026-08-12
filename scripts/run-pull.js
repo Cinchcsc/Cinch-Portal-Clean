@@ -5,7 +5,7 @@
 import { runPull } from '../lib/pull.js';
 import { readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
 
-const result = await runPull();
+const result = await runPull({ triggerLabel: 'cli:npm-run-pull' });
 console.log('PULL RESULT:', JSON.stringify(result, null, 2));
 
 try {

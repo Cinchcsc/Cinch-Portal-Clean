@@ -4,6 +4,8 @@
     { "path": "/api/pull?reports=management,move_ins_outs,past_due,scheduled_outs", "schedule": "0 1 * * *" },
     { "path": "/api/pull?reports=insurance_roll,insurance_activity,lead_funnel,marketing", "schedule": "0 2 * * *" },
     { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations", "schedule": "0 3 * * *" },
+    { "path": "/api/pull?reports=merchandise,financial,rate_changes,reservations&retry=1", "schedule": "40 3 * * *" },
+    { "path": "/api/rebuild-payload-0350", "schedule": "50 3 * * *" },
     { "path": "/api/pull-snapshot", "schedule": "0 4 * * *" },
     { "path": "/api/pull-snapshot-retry", "schedule": "20 4 * * *" },
     { "path": "/api/rebuild-payload-05", "schedule": "0 5 * * *" },

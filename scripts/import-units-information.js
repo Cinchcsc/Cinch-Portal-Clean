@@ -25,6 +25,9 @@ if (!locations.length) {
   process.exit(1);
 }
 
-const result = await runFloorOccupancyPull({ locations });
+const result = await runFloorOccupancyPull({
+  locations,
+  triggerLabel: 'cli:import-units-information',
+});
 console.log('FLOOR OCCUPANCY IMPORT RESULT:', JSON.stringify(result, null, 2));
 process.exit(result.status === 'error' ? 1 : 0);

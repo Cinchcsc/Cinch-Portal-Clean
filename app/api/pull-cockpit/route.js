@@ -32,7 +32,7 @@ export async function GET(request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
     const u = new URL(request.url);
-    const result = await runCockpitPull({ triggerLabel: `${u.pathname}${u.search || ''}` });
+    const result = await runCockpitPull({ triggerLabel: `${u.pathname}${u.search || ''} ua=${(request.headers.get('user-agent') || 'unknown').replace(/\s+/g, ' ').trim()}` });
     return NextResponse.json(result, { status: statusCodeForJob(result) });
   } catch (e) {
     return NextResponse.json({ status: 'error', message: e.message }, { status: 500 });

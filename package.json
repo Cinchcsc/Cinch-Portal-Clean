@@ -29,6 +29,7 @@
     "check:audit": "node --env-file=.env scripts/audit-portal-integrity.js",
     "check:refresh-log": "node --env-file=.env scripts/check-refresh-log.js",
     "check:snapshot": "node --env-file=.env scripts/check-snapshot.js",
+    "migrate:portal-sidecar": "node --env-file=.env scripts/apply-portal-sidecar-migration.js",
     "init:sites": "node --env-file=.env scripts/init-sites.js",
     "invite": "node --env-file=.env scripts/invite-user.js",
     "test:stortrack": "node --env-file=.env scripts/test-stortrack.js",
