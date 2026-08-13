@@ -2,8 +2,9 @@
 // merged view, so a current-month drift is obvious instead of silently inspecting the wrong layer.
 // npm run check
 import { admin } from '../lib/supabaseAdmin.js';
-import { decodePortalPayloadStorageValue, readPortalPayloadFreshCurrentMonthStable } from '../lib/portalPayload.js';
+import { decodePortalPayloadStorageValue, readPortalPayloadFreshCurrentMonthStable, summarizeHistoricalMonthlyCoverage } from '../lib/portalPayload.js';
 import { retryOnStatementTimeout } from '../lib/supabaseRetry.js';
+import { PORTAL_PAYLOAD_BUILD_VERSION } from '../lib/buildPayload.js';
 
 try {
   const pr = await retryOnStatementTimeout(async () => {
@@ -24,6 +25,27 @@ try {
     console.log('\nPortfolio totals:', JSON.stringify(p.totals));
   } else {
     console.log('portal_payload: no usable rows (count=' + (pr?.length || 0) + ')');
+  }
+
+  // 13 Aug 2026 (egress audit): surfaces whether the Aug 11 historical-slice repair has actually
+  // finished. Checks build_version's stamp AND independently re-runs the same structural coverage
+  // check rebuildPayload.js uses, so a false-positive stamp (a run that deferred some months but
+  // still wrote the "current" version tag — see lib/rebuildPayload.js's fullyRepairedThisRun fix)
+  // shows up here even though the stamp alone would look clean.
+  if (p) {
+    const versionCurrent = p.build_version === PORTAL_PAYLOAD_BUILD_VERSION;
+    console.log(`\nbuild_version: ${p.build_version || '(none)'} ${versionCurrent ? '(current)' : `(STALE — code expects ${PORTAL_PAYLOAD_BUILD_VERSION})`}`);
+    const coverage = summarizeHistoricalMonthlyCoverage(p, { excludeMonth: p.current_month });
+    if (coverage.incompleteMonths.length) {
+      console.log(`still-incomplete historical month(s) (${coverage.incompleteMonths.length}): ${coverage.incompleteMonths.slice(0, 12).join(', ')}${coverage.incompleteMonths.length > 12 ? ', …' : ''}`);
+      console.log(versionCurrent
+        ? '-> build_version says current but these months still fail the coverage check — repair is NOT actually complete; rebuild crons will keep re-scanning history.'
+        : '-> historical repair has not finished; rebuild crons will keep doing full-history reads until these clear.');
+    } else if (versionCurrent) {
+      console.log('-> historical repair looks complete: build_version is current and no month fails the structural coverage check.');
+    } else {
+      console.log('-> structurally the stored history looks fine, but build_version is still stale — the next rebuild will force one more full historical re-scan to confirm, then stamp it current.');
+    }
   }
 
   try {
