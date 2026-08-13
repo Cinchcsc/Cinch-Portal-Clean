@@ -1,15 +1,18 @@
 // Vercel cron (see vercel.json) triggers JUST the portal_payload rebuild, decoupled from
 // app/api/pull/route.js's SiteLink pulling — see lib/pull.js's `rebuildPayload` option comment and
-// lib/rebuildPayload.js for the full task #297 root-cause explanation. As of Tuesday, July 28, 2026,
-// this now runs multiple times daily at 03:50, 05:00, 09:00, 14:00, and 15:00 UTC. The added 03:50
-// slot (12 Aug 2026, audit follow-up) catches a successful 03:40 retry of the
-// merchandise/financial/rate_changes/reservations pull before the morning stored fallback payload can
-// sit stale for another hour. The 05:00 run still happens as soon as the core "yesterday flow"
-// reports plus Snapshot are in, so enquiries/reservations/move-ins/move-outs stop waiting for the
-// later true_revenue shard chain before the portal can look fresh in the morning. The later retries
-// still backstop transient DB/Supabase failures and refresh rate-sensitive widgets once the heavier
-// shards and floor snapshot have landed. Each rebuild keeps its own scheduled slot so the dependency
-// order stays robust even if platform cron timing drifts within the window.
+// lib/rebuildPayload.js for the full task #297 root-cause explanation. As of Thursday, 13 Aug 2026
+// (egress audit), this runs 3x daily at 05:00, 09:00, and 14:00 UTC. Briefly ran 5x/day (03:50 and
+// 15:00 were added 12 Aug 2026 for freshness) but both got trimmed back out the next day: each sat
+// within about an hour of a neighboring slot (03:50 next to 05:00, 15:00 next to 14:00), so they
+// bought little extra freshness while doubling as two more daily chances to re-trigger a full
+// historical raw_response scan during the Aug 11 historical-slice repair window (see
+// PORTAL_PAYLOAD_BUILD_VERSION in lib/buildPayload.js). The 05:00 run still happens as soon as the
+// core "yesterday flow" reports plus Snapshot are in, so enquiries/reservations/move-ins/move-outs
+// stop waiting for the later true_revenue shard chain before the portal can look fresh in the
+// morning. The 09:00 and 14:00 runs backstop transient DB/Supabase failures and refresh
+// rate-sensitive widgets once cockpit and the heavier true_revenue shards/floor snapshot have
+// landed. Each rebuild keeps its own scheduled slot so the dependency order stays robust even if
+// platform cron timing drifts within the window.
 // Mirrors app/api/pull/route.js's auth/runtime pattern exactly. Can still be run manually any time
 // via `npm run rebuild:payload`.
 import { NextResponse } from 'next/server';

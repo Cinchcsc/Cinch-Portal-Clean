@@ -3,11 +3,12 @@
 // session, EXCEPT:
 //   - The cron/API refresh routes — including the scheduled retry and hour-suffixed aliases Vercel
 //     actually hits (`/api/pull-snapshot-retry`, `/api/pull-cockpit-retry`,
-//     `/api/pull-floor-occupancy-retry`, `/api/rebuild-payload-0350`,
-//     `/api/rebuild-payload-05/-09/-14/-15`) — Vercel's own cron
+//     `/api/pull-floor-occupancy-retry`, `/api/rebuild-payload-05/-09/-14`) — Vercel's own cron
 //     hits these directly with no browser/cookies at all; they're already protected by their own
 //     CRON_SECRET bearer-token check (see those route.js files). Gating them here too would just
 //     break the daily auto-update.
+//     (13 Aug 2026: rebuild-payload-0350 and -15 were trimmed from vercel.json's schedule — egress
+//     audit — and removed from this list along with their now-dead route.js files.)
 //   - FIXED 20 Jul 2026: /api/rebuild-payload (task #297, added 17 Jul) was never added to this list
 //     when it was created, so this middleware's catch-all matcher intercepted every cron invocation
 //     FIRST, found no Supabase session (Vercel's cron request has no browser cookies), and returned
@@ -44,11 +45,9 @@ const CRON_PATHS = [
   '/api/pull-floor-occupancy',
   '/api/pull-floor-occupancy-retry',
   '/api/rebuild-payload',
-  '/api/rebuild-payload-0350',
   '/api/rebuild-payload-05',
   '/api/rebuild-payload-09',
   '/api/rebuild-payload-14',
-  '/api/rebuild-payload-15',
 ];
 const PUBLIC_PATHS = ['/login', '/auth/confirm'];
 const pathMatches = (pathname, base) => pathname === base || pathname.startsWith(`${base}/`);
