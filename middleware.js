@@ -141,12 +141,34 @@ export async function middleware(request) {
       user = data?.user || null;
     }
   } catch (error) {
-    console.error('[middleware] supabase.auth.getUser failed or timed out — failing closed:', error?.message || error);
-    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    const loginUrl = new URL('/login', request.url);
-    if (pathname !== '/') loginUrl.searchParams.set('redirectTo', `${pathname}${search || ''}`);
-    loginUrl.searchParams.set('error', 'Your session could not be verified — please sign in again.');
-    return NextResponse.redirect(loginUrl);
+    // ADDED 12 Aug 2026 (Michael: still locked out after the retry fix above - BOTH attempts failing,
+    // not just one slow one, meaning Supabase Auth's live getUser() check is genuinely degraded right
+    // now rather than borderline-slow. Michael's explicit call, made live during this incident: rather
+    // than lock every already-signed-in user out of the portal for the duration of that outage with no
+    // ETA, fall back once to getSession() - verifies the JWT's signature/expiry locally instead of
+    // revalidating against Supabase's server. Trade-off: a session explicitly revoked server-side
+    // (password changed, user disabled) could still pass here until it naturally expires, instead of
+    // being caught immediately. Accepted given the alternative (full lockout, unknown duration) and
+    // that this is a small set of individually-logged-in employees, not a public consumer app. Own
+    // short 4s cap so this fallback attempt can't meaningfully add to the existing worst-case latency.
+    console.error('[middleware] supabase.auth.getUser failed or timed out after retry - trying local getSession() fallback:', error?.message || error);
+    try {
+      const sessionResult = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('getSession() fallback timed out after 4000ms')), 4000)),
+      ]);
+      user = sessionResult?.data?.session?.user || null;
+      if (user) console.warn('[middleware] admitted via degraded getSession() fallback (live getUser() check unavailable) for', pathname);
+    } catch (fallbackError) {
+      console.error('[middleware] getSession() fallback also failed:', fallbackError?.message || fallbackError);
+    }
+    if (!user) {
+      if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+      const loginUrl = new URL('/login', request.url);
+      if (pathname !== '/') loginUrl.searchParams.set('redirectTo', `${pathname}${search || ''}`);
+      loginUrl.searchParams.set('error', 'Your session could not be verified — please sign in again.');
+      return NextResponse.redirect(loginUrl);
+    }
   }
 
   if (!user) {
