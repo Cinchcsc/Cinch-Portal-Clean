@@ -21,6 +21,7 @@
     "reparse:current-fast-path": "node --env-file=.env scripts/reparse-current-fast-path-reports.js",
     "repull:month": "node --env-file=.env scripts/repull-report-month.js",
     "repull:all": "node --env-file=.env scripts/repull-report-all-months.js",
+    "cleanup:raw-response-retention": "node --env-file=.env scripts/null-stale-raw-response.js",
     "backfill:rentroll-gaps": "node --env-file=.env scripts/backfill-rentroll-gaps.js",
     "import:unit-status": "node --env-file=.env scripts/import-unit-status.js",
     "import:units-information": "node --env-file=.env scripts/import-units-information.js",
